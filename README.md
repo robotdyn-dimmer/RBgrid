@@ -1,6 +1,7 @@
 # RBgrid - ESP32 Power Monitoring System
 
 **ESP32-based power monitoring solution with real-time data collection, statistics, and analytics.**
+**Visit to [rbgrid.io](https://www.rbgrid.io) for details.**
 
 ## Features
 
