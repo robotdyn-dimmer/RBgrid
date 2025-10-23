@@ -1,0 +1,66 @@
+# Build files
+build/
+*.bin
+*.elf
+*.map
+
+# ESP-IDF
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+
+# Development files
+*.rar
+release_temp/
+node_modules/
+.vscode/
+.claude/
+
+# Temporary files
+*.old
+*.backup
+nul
+temp_*.c
+
+# Documentation drafts (keep only published docs)
+*_REPORT.md
+*_FIX*.md
+*_FIX*.txt
+*_INSTRUCTIONS.md
+fix_*.patch
+metadata_fixes.txt
+agents_config.yaml
+
+# Old code
+*_old.cpp
+*_new.cpp
+main.rar
+components.rar
+*.rar
+
+# Web apps (if not part of library)
+rbgrid-app/
+rbgrid-app-v2/
+rbgrid-app-v2.rar
+web-template/
+user-guide-website/
+
+# Keep user-docs but ignore C:UsersshavkDocumentsESP-PROJECTSADC_testhello_worlddocuments
+C:UsersshavkDocumentsESP-PROJECTSADC_testhello_worlddocuments/
+
+# Node
+package.json
+package-lock.json
+
+# Keep only published library code structure
+components/rbpower/*
+!components/rbpower/README.md
+
+# Main source (keep for now as example)
+# main/
+
+# Project files to keep
+!CMakeLists.txt
+!partitions.csv
+!sdkconfig.defaults
