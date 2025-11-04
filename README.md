@@ -16,24 +16,25 @@
 
 Ready-to-use firmware binaries are available in [Releases](https://github.com/robotdyn-dimmer/RBgrid/releases).
 
-Latest version: [v1.0.0](https://github.com/robotdyn-dimmer/RBgrid/releases/tag/v1.0.0)
+Latest version: [v1.0.1](https://github.com/robotdyn-dimmer/RBgrid/releases/tag/v1.0.1)
 
 ### Flashing Instructions
 
-Download `RBgrid_v1.0.0.zip` from Releases and extract it. The archive contains:
+Download `RBgrid_v1.0.1.zip` from Releases and extract it. The archive contains:
 
 - `main.bin` - Main application firmware
 - `bootloader.bin` - ESP32 bootloader
 - `partition-table.bin` - Partition table
 - `ota_data_initial.bin` - OTA data partition
 
-Flash using esptool or ESP-IDF tools.
+See [detailed flashing guide](docs/FLASHING.md) for step-by-step instructions using esptool.
 
 ## Repository Structure
 
 - `/components/rbpower` - Core power monitoring library (coming soon)
 - `/examples` - Example firmware implementations (coming soon)
-- `/docs` - Documentation (coming soon)
+- `/docs` - Documentation
+  - [FLASHING.md](docs/FLASHING.md) - Detailed firmware flashing guide
 
 ## Development Status
 
