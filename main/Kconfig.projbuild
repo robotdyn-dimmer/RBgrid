@@ -1,0 +1,26 @@
+menu "RBgrid"
+
+config RBGRID_DEBUG_BRIDGE
+    bool "Enable rbbench debug bridge console (HW test/debug)"
+    default n
+    help
+        Compile the rbbench debug-bridge console into RBgrid (the test-rig
+        harness). Exposes a UART0 BRIDGE_SHELL line protocol with i2c/load/meter
+        verbs plus RBgrid introspection verbs, for hardware-in-the-loop testing
+        (load sweeps, reference meter, flash diagnostics). Off in production.
+        When enabled, RBgrid also starts the rbAmp bridge (to provide the shared
+        sensor I2C bus handle) and lowers the log level so the console stays clean.
+
+config RBGRID_BENCH_FULL
+    bool "Unified bench build (rbbench console + wifi/telemetry together)"
+    default n
+    help
+        Compile the rbbench debug-bridge console (load/meter/i2cscan
+        verbs) ALONGSIDE the full wifi/telemetry/MQTT stack in one image. PSRAM
+        removed the RAM/console split that used to force them apart, so the stand
+        can drive controlled loads AND validate the live telemetry pipeline from a
+        single build. Unlike RBGRID_DEBUG_BRIDGE this keeps wifi ON. Off in
+        production. Set ESP_CONSOLE_NONE so rbbench owns the UART0 driver (app logs
+        still emit via the ROM printf path).
+
+endmenu

@@ -1,0 +1,49 @@
+# RBgrid firmware — Doxygen configuration (publication prep, 2026-10-13).
+# Scope = the PUBLISHED surface: public headers + src + main. Test fixtures are excluded. Run `doxygen` from the repo root; warnings land in
+# _archive/doxygen_warnings.log — the release-cut criterion is zero warnings on this input set.
+
+PROJECT_NAME           = "RBgrid"
+PROJECT_BRIEF          = "ESP32 power monitoring hub — aggregation & billing host for rbAmp metering modules"
+PROJECT_NUMBER         =
+OUTPUT_DIRECTORY       = _archive/doxygen
+CREATE_SUBDIRS         = NO
+
+INPUT                  = components/rbpower/include \
+                         components/rbpower/src \
+                         main
+EXCLUDE_PATTERNS       = */archive/* \
+                         *_test.c \
+                         *_test.h \
+                         */wifi_secrets.h \
+                         */espnow_keys.h \
+                         *.pem \
+                         */ap_provision.h
+FILE_PATTERNS          = *.h *.c *.cpp
+RECURSIVE              = YES
+
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = NO
+HIDE_UNDOC_MEMBERS     = NO
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+MARKDOWN_SUPPORT       = YES
+
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES
+WARN_LOGFILE           = _archive/doxygen_warnings.log
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+GENERATE_MAN           = NO
+
+SOURCE_BROWSER         = NO
+ALPHABETICAL_INDEX     = YES
+GENERATE_TREEVIEW      = YES
+
+PREDEFINED             = CONFIG_SPIRAM=1 "__attribute__(x)=" IRAM_ATTR= DRAM_ATTR= RTC_NOINIT_ATTR= EXT_RAM_BSS_ATTR=
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES

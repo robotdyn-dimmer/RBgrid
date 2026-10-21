@@ -1,0 +1,10 @@
+menu "RBgrid bench_kit (bench-only load control)"
+
+config RBGRID_BENCH_KIT
+    bool "Compile bench_kit (one-ESP32 bench: load control + YP9830 reference)"
+    default n
+    help
+        Bench variant only (sdkconfig.bench). Production and public builds keep this off:
+        the component then registers headers-free and zero-footprint.
+
+endmenu

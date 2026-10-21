@@ -1,0 +1,87 @@
+# RBgrid hub — default (product) configuration for ESP-IDF v5.4.1, target esp32 (ESP32-WROVER with PSRAM).
+# Development images add sdkconfig.dev.defaults (debug console), e.g.
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.dev.defaults" build
+
+# RTOS tick 1000 Hz (timing of the statistics and polling tasks)
+CONFIG_FREERTOS_HZ=1000
+
+# 16 MB internal flash (ESP32-WROVER 16 MB): two OTA slots plus storage, see partitions.csv
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x10000
+
+# A task-watchdog timeout resets the hub instead of hanging
+CONFIG_ESP_TASK_WDT_PANIC=y
+# Interrupt watchdog
+CONFIG_ESP_INT_WDT_TIMEOUT_MS=300
+
+# OTA rollback: a new image that does not confirm itself reverts to the previous slot on the next reset
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# RTC memory kept across resets for the boot / crash marker
+CONFIG_BOOTLOADER_RESERVE_RTC_MEM=y
+CONFIG_BOOTLOADER_CUSTOM_RESERVE_RTC=y
+CONFIG_BOOTLOADER_CUSTOM_RESERVE_RTC_IN_CRC=y
+CONFIG_BOOTLOADER_CUSTOM_RESERVE_RTC_SIZE=0x1024
+CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=y
+
+# rbAmp modules: I2C device speed 50 kHz (the library default), a stalled transaction is capped at
+# 30 ms, and the I2C ISR stays alive during flash writes
+CONFIG_RBAMP_DEFAULT_I2C_FREQ_HZ=50000
+CONFIG_RBAMP_I2C_TIMEOUT_MS=30
+CONFIG_I2C_ISR_IRAM_SAFE=y
+
+# Power management off: frequency scaling would drift the APB-clocked UART and I2C timing
+# CONFIG_PM_ENABLE is not set
+
+# PSRAM is required: large buffers and the Wi-Fi/lwIP pools live in external RAM.
+# GPIO16/17 are used by the PSRAM.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+CONFIG_SPIRAM_SPEED_40M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+# CONFIG_ESP_WIFI_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+
+# No ESP-IDF console on UART0: product images print no logs on the USB port (only the ROM boot banner).
+# For ESP-IDF logs on UART0, set CONFIG_ESP_CONSOLE_UART_DEFAULT=y (and unset CONFIG_ESP_CONSOLE_NONE).
+CONFIG_ESP_CONSOLE_NONE=y
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+# CONFIG_ESP_CONSOLE_UART is not set
+# CONFIG_RBGRID_BENCH_FULL is not set
+
+# Main task
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
+
+# HTTP server: browser client hints plus a Bearer token exceed the default header size;
+# long /history queries need a longer URI; WebSocket telemetry (/ws-telemetry)
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+CONFIG_HTTPD_MAX_URI_LEN=1024
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# About 10 concurrent WebSocket clients (httpd 12 open sockets + listen/control)
+CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_LWIP_SO_RCVBUF=y
+CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4
+
+# Wi-Fi receive buffers (PSRAM build)
+CONFIG_ESP_WIFI_RX_BA_WIN=6
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+
+# Task stacks sized from measured headroom: the 3-s telemetry JSON is built on the esp_timer task,
+# Wi-Fi event callbacks run on the system event task
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=6144
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=3584
+
+# pthreads on core 0
+CONFIG_PTHREAD_DEFAULT_CORE_0=y
+CONFIG_PTHREAD_TASK_CORE_DEFAULT=0

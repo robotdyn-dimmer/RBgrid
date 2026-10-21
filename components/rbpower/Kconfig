@@ -1,0 +1,16 @@
+menu "RBPower Configuration"
+
+    config RBPOWER_VERBOSE_DEBUG
+        bool "Enable RBPower Verbose Debug Logging"
+        default n
+        help
+            Enable extremely detailed verbose debug logging for RBPower modules:
+            - Flash operations: detailed buffer state, sector transitions
+            - Runtime config: slot allocation, metadata operations
+            - Statistics: record-level tracking and cache operations
+
+            WARNING: This produces MASSIVE log output and should ONLY be
+            enabled when debugging specific Flash or statistics issues.
+            This will significantly impact performance.
+
+endmenu # RBPower Configuration

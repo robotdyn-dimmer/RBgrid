@@ -1,12 +1,14 @@
 # Build files
-build/
+build*/
 *.bin
 *.elf
 *.map
 
-# ESP-IDF
+# ESP-IDF (generated sdkconfig files; the sdkconfig*.defaults inputs stay tracked)
 sdkconfig
-sdkconfig.old
+sdkconfig.*
+!sdkconfig.defaults
+!sdkconfig.*.defaults
 dependencies.lock
 managed_components/
 
@@ -16,6 +18,11 @@ release_temp/
 node_modules/
 .vscode/
 .claude/
+
+# Secrets — bench WiFi creds etc. (NEVER commit; provision locally only)
+wifi_secrets.h
+main/wifi_secrets.h
+*.secret
 
 # Temporary files
 *.old
@@ -46,16 +53,18 @@ rbgrid-app-v2.rar
 web-template/
 user-guide-website/
 
-# Keep user-docs but ignore C:UsersshavkDocumentsESP-PROJECTSADC_testhello_worlddocuments
-C:UsersshavkDocumentsESP-PROJECTSADC_testhello_worlddocuments/
 
 # Node
 package.json
 package-lock.json
 
-# Keep only published library code structure
-components/rbpower/*
-!components/rbpower/README.md
+# rbpower component: all sources are published; local-only material and private keys stay out
+components/rbpower/documents/
+components/rbpower/release/
+components/rbpower/wifi/
+components/rbpower/certs/*.pem
+*key.pem
+__pycache__/
 
 # Main source (keep for now as example)
 # main/
@@ -64,3 +73,19 @@ components/rbpower/*
 !CMakeLists.txt
 !partitions.csv
 !sdkconfig.defaults
+
+# ESP-NOW dev keys (PMK/pairing key) — never commit
+espnow_keys.h
+main/espnow_keys.h
+
+# Session tooling / local artifacts (never for the public tree) — 2026-10-15
+_archive/
+.cache/
+.mcp.json
+documents/.mcp.json
+CLAUDE.md
+documents/CLAUDE.md
+SKILLS.md
+FLOWS.md
+LESSONS.md
+components/rbpower/include/ap_provision.h

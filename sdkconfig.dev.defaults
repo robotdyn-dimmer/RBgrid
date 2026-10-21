@@ -1,0 +1,4 @@
+# Development / bench image overrides (applied after sdkconfig.defaults).
+# Adds the rbbench USB console (appw, rbampcfg, ctmodel, selftest, ...) and the remote
+# POST /api/v1/debug/cmd endpoint to the Wi-Fi image. Not for production.
+CONFIG_RBGRID_BENCH_FULL=y

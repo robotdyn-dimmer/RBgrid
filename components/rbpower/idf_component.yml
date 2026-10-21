@@ -1,0 +1,3 @@
+description: RB-POWER detection library for ESP32
+version: 1.0.0
+# arduino-esp32 dependency REMOVED 2026-10-11 — rbpower is pure IDF (see main/idf_component.yml).

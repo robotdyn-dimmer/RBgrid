@@ -1,0 +1,27 @@
+# RBgrid partition table — 16 MB internal flash (ESP32-WROVER, 16 MB).
+# Was 4MB-cramped (factory/ota_0 1472KB each, app 2.6% free). 16MB gives generous app+OTA slots
+# for the device family (TFT/relays/dimmers firmware growth) + large SPIFFS for web-UI/TFT assets
+# and on-device stats (when the external W25Q is absent). FULL reflash required after this change
+# (FLASHSIZE 4MB->16MB rebuilds the bootloader header): bootloader@0x1000 + partition-table@0x10000
+# + app@0x20000.
+# Name,   Type, SubType,  Offset,    Size,     Flags
+nvs,      data, nvs,      0x11000,   0x6000,
+otadata,  data, ota,      0x17000,   0x2000,
+phy_init, data, phy,      0x19000,   0x1000,
+# Application — two OTA slots, 3MB each (older layouts had factory + ota_0 at the same offsets).
+# Two OTA slots (no factory app): with factory + ONE ota slot every second OTA had to overwrite
+# factory WITHOUT rollback. Two OTA slots = every update has bootloader rollback. Same offsets/sizes
+# as before, data partitions untouched → stats/config/logs/storage survive the table change (USB once:
+# partition-table @0x10000 + otadata @0x17000 + app @0x20000).
+ota_0,    app,  ota_0,    0x20000,   0x300000,
+ota_1,    app,  ota_1,    0x320000,  0x300000,
+# Statistics rings — PRIMARY stats store (internal-first; the external W25Q NOR
+# is an optional extension). Raw partition, custom subtype 0x81; served by rbstorage_media.
+# 4MB = 19 unit slots of 208KB (same capacity as the 4MB external test chip).
+stats,    data, 0x81,     0x620000,  0x400000,
+# Internal SPIFFS — web-UI/TFT assets (was 9MB; 4MB ceded to `stats`)
+storage,  data, spiffs,   0xA20000,  0x500000,
+# Logs — 512KB
+logs,     data, spiffs,   0xF20000,  0x80000,
+# Config — 384KB
+config,   data, spiffs,   0xFA0000,  0x60000,

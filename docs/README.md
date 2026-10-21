@@ -1,13 +1,6 @@
 # Documentation
 
-🚧 **Coming Soon**
+This directory holds [FLASHING.md](FLASHING.md) — the USB flashing procedure.
 
-Comprehensive documentation will be available here including:
-
-- Hardware setup guide
-- Firmware installation instructions
-- API reference
-- Configuration options
-- Troubleshooting guide
-
-For now, see the main [README](../README.md) for quick start instructions.
+The full documentation (hardware setup, configuration, REST/WebSocket API, MQTT, troubleshooting) is
+published at https://www.rbgrid.io/rbgrid-doc-overview.
