@@ -801,6 +801,45 @@ char* rbgrid_json_create_hardware_config(const rbpower_hardware_config_t* hardwa
         cJSON_AddItemToObject(root, "data", data);
     }
 
+    /* Config FILE only: the ADC-typed sensor definitions. There is no on-chip ADC; these are the legacy
+     * definitions that the default units 0x0006 / 0x0007 bind to (the rbAmp bridge feeds them), and
+     * rbgrid_storage_load_units resolves a unit's sensor through them on the next boot. Without them a
+     * hub whose config was first saved by this firmware lost both default units after the first reboot.
+     * The API message (with a context) stays network-only. */
+    if (!context) {
+        cJSON* adc = cJSON_CreateObject();
+        if (adc) {
+            cJSON* channels = cJSON_CreateArray();
+            for (int i = 0; i < hardware_config->adc.channels_count && i < RBPOWER_MAX_CHANNELS; i++) {
+                cJSON_AddItemToArray(channels, cJSON_CreateNumber(hardware_config->adc.channels[i]));
+            }
+            cJSON_AddItemToObject(adc, "channels", channels);
+            cJSON_AddNumberToObject(adc, "channels_count", hardware_config->adc.channels_count);
+            cJSON_AddNumberToObject(adc, "sampling_frequency", hardware_config->adc.sampling_frequency);
+            cJSON_AddNumberToObject(adc, "adc_resolution", hardware_config->adc.adc_resolution);
+            cJSON_AddNumberToObject(adc, "adc_attenuation", hardware_config->adc.adc_attenuation);
+            cJSON_AddItemToObject(data, "adc", adc);
+        }
+        cJSON* adc_sensors = cJSON_CreateObject();
+        if (adc_sensors) {
+            cJSON* channels = cJSON_CreateArray();
+            for (int i = 0; i < hardware_config->adc.channels_count && i < RBPOWER_MAX_CHANNELS; i++) {
+                const rbpower_sensor_channel_config_t* sensor = &hardware_config->adc_sensors.channels[i];
+                cJSON* channel = cJSON_CreateObject();
+                if (!channel) continue;
+                cJSON_AddBoolToObject(channel, "enabled", sensor->enabled);
+                const char* sensor_type_str = "UNKNOWN";
+                if (sensor->type >= 0 && sensor->type < RBSENSOR_TYPE_UNKNOWN) sensor_type_str = rbsensor_type_text[sensor->type];
+                cJSON_AddStringToObject(channel, "type", sensor_type_str);
+                cJSON_AddStringToObject(channel, "name", sensor->name);
+                cJSON_AddNumberToObject(channel, "scale_factor", sensor->scale_factor);
+                cJSON_AddNumberToObject(channel, "zero_offset", sensor->zero_offset);
+                cJSON_AddItemToArray(channels, channel);
+            }
+            cJSON_AddItemToObject(adc_sensors, "channels", channels);
+            cJSON_AddItemToObject(data, "adc_sensors", adc_sensors);
+        }
+    }
 
     // === NETWORK: mains nominal frequency (Hz) and voltage (V) ===
     cJSON* network = cJSON_CreateObject();

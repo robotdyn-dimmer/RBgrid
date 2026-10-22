@@ -2927,6 +2927,16 @@ extern "C" void app_main(void) {
     bool have_saved_hw_units = littlefs_raw_exists("/hardware.json") && littlefs_raw_exists("/units.json");
     if (have_saved_hw_units) {
         esp_err_t lh = rbgrid_storage_load_hardware(base_hardware_config);
+        /* Repair: a /hardware.json saved by a build that did not write the ADC-typed definitions has none, and
+         * load_units then drops the default units 0x0006/0x0007 that bind to them. Put the two legacy
+         * definitions back (no ADC is sampled; the rbAmp bridge feeds these units) and re-save the file. */
+        if (lh == ESP_OK && base_hardware_config->adc.channels_count == 0) {
+            rbgrid_unit_uid_t v = rbgrid_config_add_adc_sensor(config_handle, GPIO_NUM_35, RBSENSOR_TYPE_VOLTAGE_ZMPT107_1);
+            rbgrid_unit_uid_t c = rbgrid_config_add_adc_sensor(config_handle, GPIO_NUM_34, RBSENSOR_TYPE_CURRENT_SCT013_10A);
+            esp_err_t sh = rbgrid_storage_save_hardware(base_hardware_config);
+            rbpower_diag_printf("config: /hardware.json had no sensor definitions for the default units — restored "
+                                "(0x%04X, 0x%04X), saved: %s", (unsigned)v, (unsigned)c, esp_err_to_name(sh));
+        }
         esp_err_t lu = rbgrid_storage_load_units(config_handle);
         ESP_LOGI(TAG, "✅ Sensor+unit config LOADED from flash (hardware:%s units:%s) — supplies recreated by load_units",
                  esp_err_to_name(lh), esp_err_to_name(lu));

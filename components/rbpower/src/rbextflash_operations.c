@@ -2037,8 +2037,9 @@ esp_err_t rbpower_flash_read_records(rbpower_unit_id_t unit_id,
         output_ptr += buffer->record_size;
         records_read++;
 
-        // Reset the watchdog every 10 records (avoids a timeout on large ranges)
-        if ((i + 1) % 10 == 0) {
+        // Reset the watchdog every 10 records (avoids a timeout on large ranges). Only when the
+        // calling task is subscribed: HTTP handlers are not, and an unsubscribed reset logs an error.
+        if ((i + 1) % 10 == 0 && esp_task_wdt_status(NULL) == ESP_OK) {
             esp_task_wdt_reset();
         }
     }

@@ -938,7 +938,9 @@ static void ct_limit_check(uint8_t m, const rbamp_snapshot_t *s)
         uint8_t hits = (uint8_t)__builtin_popcount(s_ct_peak_hits[m][e]);
         uint8_t st = (irms >= fs || hits >= 3) ? 2 : (irms >= 0.9f * fs) ? 1 : 0;
         if (s_line[m] == 0 && !isnan(pch) && !isnan(s->voltage)) {   /* BASIC: reversed CT → flow not accounted */
-            bool neg = pch < -(0.015f * nom * s->voltage);
+            /* Without line voltage (< 50 V) P is noise around 0 and says nothing about direction;
+             * the 1 W floor keeps a near-zero reading from counting as reverse flow. */
+            bool neg = s->voltage >= 50.0f && pch < -fmaxf(0.015f * nom * s->voltage, 1.0f);
             s_rev_hits[m][e] = (uint8_t)(((s_rev_hits[m][e] << 1) | (neg ? 1 : 0)) & 0x1F);
             bool rev = __builtin_popcount(s_rev_hits[m][e]) >= 3;
             if (rev != s_rev_state[m][e]) {
@@ -1285,11 +1287,12 @@ static void inject_module(uint8_t mod, const rbamp_module_cfg_t *mc, const rbamp
              * reach the overview / system sum / HA / MQTT either (it would show "exporting" on a module that cannot
              * export). The reversed CT is reported as `reversed` + an event + hour q REVERSE_LOST. */
             if (s_line[mod] == 0 && !virt_is(mod) && p < 0.0f) { p = 0.0f; pf = 0.0f; }
-            if (s_line[mod] == 0 && !virt_is(mod)) {   /* BASIC accuracy floor (rbAmp spec): below 1.5 % of the CT nominal
-                                                        * current / U × that power the reading is noise → 0 (live only) */
+            if (s_line[mod] == 0 && !virt_is(mod)) {   /* BASIC display floor (a hub threshold, not a module specification):
+                                                        * below this fraction of the CT nominal current / U × that power the live
+                                                        * reading is treated as noise → 0 (live only) */
                 float nom = 0, fs_ = 0, pk_ = 0;
                 if (rbamp_sensor_model_limits(s_sensor_class[mod], en->ct_code, &nom, &fs_, &pk_) && nom > 0) {
-                    float i_floor = (s_sensor_class[mod] == 1) ? 0.015f * nom : 0.043f * nom;   /* SCT- 1.5 %, CT- ~4.3 % */
+                    float i_floor = (s_sensor_class[mod] == 1) ? 0.015f * nom : 0.043f * nom;   /* hub thresholds: SCT- 1.5 %, CT- ~4.3 % of nominal */
                     if (i < i_floor) { i = 0.0f; p = 0.0f; pf = 0.0f; }
                     else if (p < u * i_floor) { p = 0.0f; }
                 }

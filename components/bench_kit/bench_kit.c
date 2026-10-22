@@ -35,7 +35,8 @@ static i2c_master_bus_handle_t s_bus;
 static i2c_master_dev_handle_t s_dev[NB];
 static uint8_t s_port[NB];
 static SemaphoreHandle_t s_mx;
-static esp_timer_handle_t s_deadman;
+static esp_timer_handle_t s_deadman;   /* idle: re-armed by every load command / kick */
+static esp_timer_handle_t s_cap;       /* hard cap: started when the load turns ON, never re-armed */
 static TaskHandle_t s_prog;
 static volatile bool s_prog_stop;
 
@@ -61,7 +62,12 @@ bool bench_kit_load_on(void)
 static void arm_deadman(void)
 {
     esp_timer_stop(s_deadman);
-    if (bench_kit_load_on()) esp_timer_start_once(s_deadman, (uint64_t)s_cfg.max_on_s * 1000000ULL);
+    if (bench_kit_load_on()) {
+        esp_timer_start_once(s_deadman, (uint64_t)s_cfg.idle_s * 1000000ULL);
+        if (!esp_timer_is_active(s_cap)) esp_timer_start_once(s_cap, (uint64_t)s_cfg.max_on_s * 1000000ULL);
+    } else {
+        esp_timer_stop(s_cap);
+    }
 }
 
 void bench_kit_all_off(const char *why)
@@ -71,11 +77,13 @@ void bench_kit_all_off(const char *why)
     /* load banks first, loops last */
     write_bank(B24, 0); write_bank(B25, 0); write_bank(B21, 0); write_bank(B27, 0);
     esp_timer_stop(s_deadman);
+    esp_timer_stop(s_cap);
     xSemaphoreGive(s_mx);
     if (why) ESP_LOGW(TAG, "all relay banks OFF (%s)", why);
 }
 
-static void deadman_cb(void *arg) { bench_kit_all_off("dead-man timeout"); }
+static void deadman_cb(void *arg) { bench_kit_all_off("dead-man: no command or kick within idle_s"); }
+static void cap_cb(void *arg) { bench_kit_all_off("dead-man: max_on_s of continuous load reached"); }
 static void shutdown_hook(void) { bench_kit_all_off("restart"); }
 
 void bench_kit_kick(void)
@@ -149,7 +157,10 @@ static void prog_task(void *arg)
     do {
         for (int i = 0; i < pg->n && !s_prog_stop; i++) {
             bench_kit_preset(pg->steps[i].preset);
-            for (uint32_t t = 0; t < pg->steps[i].seconds * 10 && !s_prog_stop; t++) vTaskDelay(pdMS_TO_TICKS(100));
+            for (uint32_t t = 0; t < pg->steps[i].seconds * 10 && !s_prog_stop; t++) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                if (t % 50 == 49) bench_kit_kick();   /* the program is alive: hold the load every 5 s */
+            }
         }
     } while (pg->repeat && !s_prog_stop);
     bench_kit_all_off("program end");
@@ -289,10 +300,13 @@ esp_err_t bench_kit_init(const bench_kit_config_t *cfg)
 {
     if (s_mx) return ESP_ERR_INVALID_STATE;
     s_cfg = cfg ? *cfg : (bench_kit_config_t)BENCH_KIT_CONFIG_DEFAULT();
-    if (!s_cfg.max_on_s) s_cfg.max_on_s = 7200;
+    if (!s_cfg.idle_s) s_cfg.idle_s = 60;
+    if (!s_cfg.max_on_s) s_cfg.max_on_s = 14400;
     s_mx = xSemaphoreCreateMutex();
     const esp_timer_create_args_t ta = { .callback = deadman_cb, .name = "bk_deadman" };
     ESP_ERROR_CHECK(esp_timer_create(&ta, &s_deadman));
+    const esp_timer_create_args_t tc = { .callback = cap_cb, .name = "bk_cap" };
+    ESP_ERROR_CHECK(esp_timer_create(&tc, &s_cap));
 
     const i2c_master_bus_config_t bc = {
         .i2c_port = s_cfg.relay_i2c_port, .sda_io_num = RELAY_SDA, .scl_io_num = RELAY_SCL,
@@ -308,8 +322,8 @@ esp_err_t bench_kit_init(const bench_kit_config_t *cfg)
     }
     bench_kit_all_off(NULL);                    /* 0x27 powers up ALL-ON */
     esp_register_shutdown_handler(shutdown_hook);
-    ESP_LOGI(TAG, "relay banks found %d/%d (0x21 %s 0x24 %s 0x25 %s 0x27 %s), all OFF, dead-man %" PRIu32 " s", found, NB,
-             s_dev[B21] ? "ok" : "-", s_dev[B24] ? "ok" : "-", s_dev[B25] ? "ok" : "-", s_dev[B27] ? "ok" : "-", s_cfg.max_on_s);
+    ESP_LOGI(TAG, "relay banks found %d/%d (0x21 %s 0x24 %s 0x25 %s 0x27 %s), all OFF, dead-man idle %" PRIu32 " s / cap %" PRIu32 " s", found, NB,
+             s_dev[B21] ? "ok" : "-", s_dev[B24] ? "ok" : "-", s_dev[B25] ? "ok" : "-", s_dev[B27] ? "ok" : "-", s_cfg.idle_s, s_cfg.max_on_s);
 
     if (s_cfg.dut_pins) {
         gpio_config_t o = { .pin_bit_mask = (1ULL << DUT_STRAP) | (1ULL << DUT_MODE), .mode = GPIO_MODE_OUTPUT };

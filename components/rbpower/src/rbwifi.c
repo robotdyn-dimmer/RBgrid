@@ -76,6 +76,14 @@ static rbwifi_context_t g_wifi_ctx = {0};
 #define RBWIFI_NVS_KEY_SSID "ssid"    ///< NVS key: STA SSID
 #define RBWIFI_NVS_KEY_PASS "pass"    ///< NVS key: STA password
 
+/* STA with no saved network: do not call esp_wifi_connect(). With an empty SSID it scans for "any AP" forever
+ * (a DISCONNECTED event every ~0.5 s), and while it does, esp_wifi_scan_start() fails — the setup page's
+ * network scan then never answers. rbwifi_update_sta_config() connects once the user saves a network. */
+static bool sta_has_network(void)
+{
+    return g_wifi_ctx.config.ssid[0] != '\0';
+}
+
 /**
  * @brief WiFi event handler
  */
@@ -83,14 +91,17 @@ static void rbwifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        if (g_wifi_ctx.config.enable_sta) {
+        if (g_wifi_ctx.config.enable_sta && sta_has_network()) {
             esp_wifi_connect();
             g_wifi_ctx.status = RBWIFI_STATUS_CONNECTING;
             ESP_LOGI(TAG, "WiFi STA started, connecting...");
+        } else if (g_wifi_ctx.config.enable_sta) {
+            g_wifi_ctx.status = RBWIFI_STATUS_DISCONNECTED;
+            ESP_LOGI(TAG, "WiFi STA started, no saved network — waiting for setup (AP only)");
         }
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (g_wifi_ctx.config.enable_sta) {
+        if (g_wifi_ctx.config.enable_sta && sta_has_network()) {
             if (g_wifi_ctx.ever_connected) {
                 /* RUNTIME drop (we had an IP) — an always-on device (an HA MQTT sensor must stay up
                  * for days) must NEVER give up: reconnect indefinitely so a transient AP/RF

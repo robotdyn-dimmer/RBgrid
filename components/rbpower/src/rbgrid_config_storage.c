@@ -245,9 +245,8 @@ esp_err_t rbgrid_storage_check_files(void)
     
     if (littlefs_raw_exists(CONFIG_FILE_COMPACT)) {
         // Get file size
-        char buffer[64];
         size_t size = 0;
-        if (littlefs_raw_read(CONFIG_FILE_COMPACT, buffer, sizeof(buffer), &size) == ESP_OK) {
+        if (littlefs_raw_size(CONFIG_FILE_COMPACT, &size) == ESP_OK) {
             ESP_LOGI(TAG, "  [✓] %s (%zu bytes)", CONFIG_FILE_COMPACT, size);
         } else {
             ESP_LOGI(TAG, "  [✓] %s (exists)", CONFIG_FILE_COMPACT);

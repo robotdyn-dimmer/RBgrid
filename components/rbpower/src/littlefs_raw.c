@@ -348,12 +348,19 @@ esp_err_t littlefs_raw_write(const char *path, const void *data, size_t size)
 }
 
 /* Read a whole file into `data` (up to max_size). Assumes g_mutex HELD. ESP_OK + *out_read on
- * success; ESP_ERR_NOT_FOUND if absent; ESP_FAIL on read error. */
+ * success; ESP_ERR_NOT_FOUND if absent; ESP_ERR_INVALID_SIZE if the file is larger than max_size
+ * (nothing is read — a truncated read must not be mistaken for corruption); ESP_FAIL on read error. */
 static esp_err_t lfs_read_file_locked(const char *path, void *data, size_t max_size, lfs_ssize_t *out_read)
 {
     lfs_file_t file;
     int err = lfs_file_open(&g_lfs, &file, path, LFS_O_RDONLY);
     if (err) return ESP_ERR_NOT_FOUND;
+    lfs_soff_t fsize = lfs_file_size(&g_lfs, &file);
+    if (fsize >= 0 && (size_t)fsize > max_size) {
+        lfs_file_close(&g_lfs, &file);
+        *out_read = fsize;
+        return ESP_ERR_INVALID_SIZE;
+    }
     lfs_ssize_t br = lfs_file_read(&g_lfs, &file, data, max_size);
     lfs_file_close(&g_lfs, &file);
     if (br < 0) return ESP_FAIL;
@@ -402,6 +409,14 @@ esp_err_t littlefs_raw_read(const char *path, void *data, size_t max_size, size_
     // 1. Primary — accept only if it reads and the CRC sidecar (if any) matches.
     lfs_ssize_t br = 0;
     esp_err_t rc = lfs_read_file_locked(path, data, max_size, &br);
+    if (rc == ESP_ERR_INVALID_SIZE) {
+        /* Too large for the caller's buffer: report the size, not corruption, and skip the .bak
+         * fallback — the backup is the same size and would fail the same way. */
+        xSemaphoreGive(g_mutex);
+        ESP_LOGE(TAG, "%s is %ld bytes, larger than the %zu-byte read buffer — not read",
+                 path, (long)br, max_size);
+        return ESP_ERR_INVALID_SIZE;
+    }
     if (rc == ESP_OK && br > 0 && lfs_crc_ok_locked(path, data, (size_t)br)) {
         if (actual_size) *actual_size = (size_t)br;
         xSemaphoreGive(g_mutex);
@@ -454,6 +469,23 @@ esp_err_t littlefs_raw_remove(const char *path)
     }
 
     ESP_LOGI(TAG, "Removed %s (+companions)", path);
+    return ESP_OK;
+}
+
+/* Size of a file in bytes, without reading it (documented in littlefs_raw.h). */
+esp_err_t littlefs_raw_size(const char *path, size_t *size)
+{
+    if (!g_mounted || !path || !size) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(g_mutex, portMAX_DELAY);
+    struct lfs_info info;
+    int err = lfs_stat(&g_lfs, path, &info);
+    xSemaphoreGive(g_mutex);
+    if (err || info.type != LFS_TYPE_REG) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    *size = info.size;
     return ESP_OK;
 }
 

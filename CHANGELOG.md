@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.1.1 — 2026-10-22
+
+Fixes for a hub installed from scratch (USB flash on an erased chip). Hubs updated over the air from
+v1.1.0 keep their configuration; a hub that already lost its default units gets them back on update.
+
+### First start
+- The default measurement points (main input and voltage bus) are kept across restarts. In v1.1.0 a hub
+  whose configuration was first saved by v1.1.0 lost both after its first restart; this version
+  restores them on update.
+- The network scan on the setup page (`192.168.4.1`) lists the networks. While no network was saved,
+  the hub kept trying to join one and the scan could not start; the page also did not wait for the
+  scan result.
+
+### Data quality
+- BASIC modules: a reading near zero with no line voltage is no longer reported as reverse flow, and
+  the hour is no longer marked as having lost reverse-flow energy.
+- A configuration file larger than the buffer it is read into is reported as too large, not as
+  corrupted, and is not replaced by its backup copy.
+
+### Log messages
+- No false "CRC MISMATCH" for `/config.json` at every start.
+- No "task not found" watchdog errors while history is read over HTTP.
+
+### Bench kit (development builds only)
+- Load relays switch off after 60 s without a command, and after 4 h of continuous load in any case.
+
 ## v1.1.0 — 2026-10-20
 
 First source release of the RBgrid hub firmware under the **PolyForm Noncommercial 1.0.0** licence

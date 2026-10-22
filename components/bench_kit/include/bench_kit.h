@@ -14,9 +14,11 @@
  *   DUT / rbAmp bus: I2C SDA25 / SCL26 (the app's own bus). Strap pins: IO21 HIGH = I2C transport,
  *     IO4 HIGH = production (maintenance strap off), IO22 = DUT NRST (open-drain, never drive HIGH).
  *
- * Safety: loads switch ON loop-first/load-second and OFF load-first/loop-second; a dead-man timer
- * forces everything OFF after max_on_s; esp_restart() also switches everything OFF (shutdown hook).
- * A crash leaves the PCF latched until the next boot, which clears it — keep max_on_s short.
+ * Safety: loads switch ON loop-first/load-second and OFF load-first/loop-second. Two dead-man levels,
+ * independent of whoever drives the bench: (1) idle — everything OFF when no load command or
+ * bench_kit_kick() arrives for idle_s while a load is ON (the program task kicks on its own);
+ * (2) cap — everything OFF after max_on_s of continuous load, kicks or not. esp_restart() also switches
+ * everything OFF (shutdown hook); a crash leaves the PCF latched until the next boot, which clears it.
  */
 #pragma once
 #include <stdbool.h>
@@ -29,13 +31,14 @@ extern "C" {
 
 typedef struct {
     int      relay_i2c_port;   /* default I2C_NUM_1 (the app keeps I2C_NUM_0 for rbAmp on 25/26) */
-    uint32_t max_on_s;         /* dead-man: forced OFF after this many seconds ON (0 = 7200) */
+    uint32_t idle_s;           /* dead-man: OFF after this many seconds ON without a command/kick (0 = 60) */
+    uint32_t max_on_s;         /* hard cap: OFF after this many seconds of continuous load (0 = 14400) */
     bool     allow_coarse;     /* permit 0x24 (>= 2.2 A per bit) — off by default */
     bool     yp_enable;        /* install UART2 for the YP9830 */
     bool     dut_pins;         /* drive IO21 HIGH, IO4 HIGH, release IO22 */
 } bench_kit_config_t;
 
-#define BENCH_KIT_CONFIG_DEFAULT() { .relay_i2c_port = 1, .max_on_s = 7200, .allow_coarse = false, \
+#define BENCH_KIT_CONFIG_DEFAULT() { .relay_i2c_port = 1, .idle_s = 60, .max_on_s = 14400, .allow_coarse = false, \
                                      .yp_enable = true, .dut_pins = true }
 
 /* Load presets at loop x1 (~222 V mains). Nominal power in the name. */
