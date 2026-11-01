@@ -5,28 +5,28 @@
 ![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-blue.svg)
 ![Platform: ESP32-WROVER](https://img.shields.io/badge/platform-ESP32--WROVER-orange.svg)
 
-RBgrid turns an ESP32-WROVER hub plus one or more rbAmp modules into a self-hosted energy monitor: real-time per-circuit power, statistics and history, a full time-of-use tariff/billing engine, and a web app — all served from the device, no cloud required.
+RBgrid turns an ESP32-WROVER hub plus one or more rbAmp modules into a self-hosted energy monitor: live per-circuit power, statistics and history, a full time-of-use tariff engine, and a web app — all served from the device, no cloud required.
 
 ## What it does
 
 - **Real-time measurement per circuit** — voltage, current, active power and power factor (reactive/apparent where the module provides them) — via rbAmp I²C modules
-- **Import / export (net-metering)** and per-zone cost and revenue
-- **Time-of-use tariffs** — multi-zone, weekend/holiday, fees, VAT, progressive steps; the full billing logic is in the source
+- **Import / export (net-metering)** with per-zone cost and export value
+- **Time-of-use tariffs** — multi-zone, weekend rates, fees, VAT, progressive steps; the full tariff logic is in the source
 - **3-second and 15-minute live data**, plus flash history (hourly … yearly)
 - **Web app**, REST + WebSocket API, and MQTT (with Home Assistant discovery)
-- **Single-phase and three-phase supplies** (validated on hardware)
+- **Grid:** single-phase and three-phase supplies. A three-phase supply is measured by one three-phase rbAmp module — one CT per phase — and appears as one measurement point with per-phase readings. Split-phase (two live legs sharing a neutral) is not covered.
 
 
 ## Hardware
 
 - **Hub:** ESP32-WROVER **with PSRAM** (required).
-- **Measurement:** rbAmp I²C modules — a separate product, see **https://www.rbamp.com**. RBgrid has no built-in ADC; the modules measure, the hub collects, computes and stores.
+- **Measurement:** rbAmp I²C modules — a separate product, see **[rbamp.com](https://www.rbamp.com/?utm_source=github&utm_medium=referral&utm_campaign=rbgrid)**. The ESP32 hub collects, computes and stores; the rbAmp modules are the supported measurement path.
 
 ## Build from source
 
 Requires **ESP-IDF v5.4.1** and `openssl`.
 
-> ⏳ **One dependency is publishing next:** a build from a fresh clone also needs the **rbAmp ESP-IDF component**, which is released separately — its publication **follows immediately after this release**. Until it lands, a clean clone won't resolve that dependency yet. (This note is removed once the component is public.)
+> ⏳ **Build dependency:** the rbAmp ESP-IDF component is public at [github.com/rb-amp/rbamp-esp-idf](https://github.com/rb-amp/rbamp-esp-idf). In this release `main/idf_component.yml` still points at a local checkout of it. To build from a fresh clone, replace the `rbamp` entry's `path:` line with `git: https://github.com/rb-amp/rbamp-esp-idf.git` and `version: v1.7.2`. The next release does this for you, and this note goes away then.
 
 ```bash
 git clone https://github.com/robotdyn-dimmer/RBgrid.git
@@ -43,10 +43,10 @@ Sensors and measurement points are **configured at runtime** from the web app or
 
 ## Documentation
 
-Full documentation: **https://www.rbgrid.io/rbgrid-doc-overview**
+Full documentation: **[rbgrid.io/rbgrid-doc-overview](https://www.rbgrid.io/rbgrid-doc-overview?utm_source=github&utm_medium=referral&utm_campaign=rbgrid)**
 
 ## License
 
-RBgrid firmware is **source-available** under the **PolyForm Noncommercial 1.0.0** licence: free to use, modify and build for **personal and non-commercial** use. **Commercial use is by licence** — contact **info@rbamp.com**. This is not an OSI "open source" licence; non-commercial use is free, commercial use is by permission. See [`LICENSE`](LICENSE), [`COMMERCIAL.md`](COMMERCIAL.md) and [`NOTICE`](NOTICE).
+RBgrid firmware is **source-available** under the **PolyForm Noncommercial 1.0.0** licence: free to use, modify and build for **personal and non-commercial** use. **Commercial use requires a licence** — contact **info@rbamp.com**. This is not an OSI "open source" licence; non-commercial use is free, commercial use is by permission. See [`LICENSE`](LICENSE), [`COMMERCIAL.md`](COMMERCIAL.md) and [`NOTICE`](NOTICE).
 
 The rbAmp measurement libraries are a separate product under the MIT licence; this licence does not cover them.
