@@ -292,7 +292,12 @@ static inline esp_err_t br_std_read_channel(uint8_t m, uint8_t c, rbamp_std_chan
 }
 static uint8_t s_sensor_class[RBAMP_MAX_MODULES];   /* REG_SENSOR_CLASS read at describe (0xFF unknown) */
 static uint8_t s_line[RBAMP_MAX_MODULES];           /* 0 BASIC, 1 STD (descriptor) */
-static inline bool ct_factory_paired(uint8_t m) { return m < RBAMP_MAX_MODULES && (s_sensor_class[m] == 2 || s_sensor_class[m] == 3); }
+/* CT- series (class 2/3), or an STD module whose class byte is unset: STD inputs are factory-calibrated per channel
+ * (the class byte is metadata, 0 on shipped U3I3 — rbamp-dev 2026-11-03), so nothing is provisioned on them */
+static inline bool ct_factory_paired(uint8_t m)
+{
+    return m < RBAMP_MAX_MODULES && (s_sensor_class[m] == 2 || s_sensor_class[m] == 3 || (s_line[m] == 1 && s_sensor_class[m] == 0));
+}
 static inline esp_err_t br_set_ct_model(uint8_t m, uint8_t ch, uint8_t code)
 {
     if (virt_is(m)) { if (ch < 3) s_virt[m].ct_code[ch] = code; return ESP_OK; }
@@ -2424,11 +2429,58 @@ void rbamp_bridge_unbind_unit(rbpower_unit_id_t unit_id)
     }
 }
 
+/* Group a phase module (STD-U3I3: >= 2 voltage and >= 2 current channels) as ONE three-phase unit fed by the bridge
+ * (the main input): the module's channel entries are replaced by a single RBAMP_ENTRY_PHASES entry carrying unit_id —
+ * the same /rbamp.json the console verb `rbampcfg phases <m> <hexunit> <ct>` writes. Every current channel entry of
+ * the module must be free or already carry this unit. Applied at the next boot (poll/inject structures are built from
+ * the fleet at start), so the caller reports requires_reboot; the running poll keeps the old entries until then.
+ * id/point/history stay with the unit.
+ * @return 1 saved (reboot to apply), 0 already grouped for this unit, -1 not a phase module / absent / save failed,
+ *         -2 a channel or the group carries another unit. */
+static int feed_group(rbpower_unit_id_t unit_id, uint8_t module)
+{
+    if (!s_dev[module] || virt_is(module) || s_line[module] != 1 || s_nv[module] < 2 || s_nc[module] < 2) return -1;
+    const rbamp_module_cfg_t *mod = &s_cfg.modules[module];
+    uint8_t ct = 0;
+    bool ct_set = false;
+    for (uint8_t e = 0; e < mod->entry_count && e < RBAMP_MAX_ENTRIES; ++e) {
+        const rbamp_entry_cfg_t *en = &mod->entries[e];
+        if (en->source == RBAMP_ENTRY_VOLTAGE) continue;
+        if (en->source == RBAMP_ENTRY_PHASES) {
+            if (en->unit_id == unit_id) return 0;
+            if (en->unit_id != 0) return -2;
+            continue;
+        }
+        if (en->unit_id != 0 && en->unit_id != unit_id) return -2;
+        if (en->source == 0 || !ct_set) { ct = en->ct_code; ct_set = true; }   /* the model the channel-0 entry carried */
+    }
+    rbamp_bridge_config_t next = s_cfg;   /* edit a copy — the live fleet stays as is until the reboot */
+    rbamp_module_cfg_t *nm = &next.modules[module];
+    rbamp_entry_cfg_t keep[RBAMP_MAX_ENTRIES];
+    uint8_t nk = 0;
+    for (uint8_t e = 0; e < nm->entry_count && e < RBAMP_MAX_ENTRIES; ++e)
+        if (nm->entries[e].source == RBAMP_ENTRY_VOLTAGE && nk < RBAMP_MAX_ENTRIES - 1) keep[nk++] = nm->entries[e];
+    keep[nk++] = (rbamp_entry_cfg_t){ .source = RBAMP_ENTRY_PHASES, .ct_code = ct, .unit_id = (uint16_t)unit_id, .ct_user = 0 };
+    memcpy(nm->entries, keep, sizeof(keep[0]) * nk);
+    nm->entry_count = nk;
+    for (uint8_t m = 0; m < next.module_count && m < RBAMP_MAX_MODULES; ++m) {   /* one source per unit */
+        if (m == module) continue;
+        for (uint8_t e = 0; e < next.modules[m].entry_count && e < RBAMP_MAX_ENTRIES; ++e)
+            if (next.modules[m].entries[e].unit_id == unit_id) next.modules[m].entries[e].unit_id = 0;
+    }
+    esp_err_t se = rbgrid_storage_save_rbamp(&next);
+    rbpower_diag_printf("unit 0x%04X -> m%u grouped as one three-phase input (L1-L3), /rbamp.json: %s — applies after a reboot",
+                        (unsigned)unit_id, module, esp_err_to_name(se));
+    return se == ESP_OK ? 1 : -1;
+}
+
 /* Rebind hook for a bridge-fed unit (e.g. a main input whose definition carries no rbAmp source): re-point the fleet entry from the
- * old channel to (module, ch). The target channel must exist and carry no point. id/point/history stay. */
+ * old channel to (module, ch). The target channel must exist and carry no point. id/point/history stay.
+ * ch == RBAMP_ENTRY_PHASES (254) groups a phase module as one three-phase unit (feed_group; 1 = saved, reboot to apply). */
 int rbamp_bridge_feed_rebind(rbpower_unit_id_t unit_id, uint8_t module, uint8_t ch)
 {
     if (unit_id == 0 || module >= s_cfg.module_count || module >= RBAMP_MAX_MODULES) return -1;
+    if (ch == RBAMP_ENTRY_PHASES) return feed_group(unit_id, module);
     rbamp_entry_cfg_t *tgt = NULL;
     for (uint8_t e = 0; e < s_cfg.modules[module].entry_count && e < RBAMP_MAX_ENTRIES; ++e)
         if (s_cfg.modules[module].entries[e].source == ch && ch < RBAMP_MAX_CHANNELS) tgt = &s_cfg.modules[module].entries[e];

@@ -1,5 +1,42 @@
 # Changelog
 
+## v1.1.2 — unreleased (pending the .139 hardware run)
+
+Built against the public rbAmp ESP-IDF component.
+
+### Build
+- The rbAmp component is fetched from its public repository
+  (`https://github.com/rb-amp/rbamp-esp-idf`, tag `v1.7.2`). A fresh clone builds without a separate
+  checkout of the component.
+
+### Measurement (from the rbAmp component 1.7.2)
+- SCT-013-060 and SCT-013-100 can be selected on rbAmp channels; the component refused them before.
+- The per-model current limits of the SCT-013 presets follow the component's updated values.
+
+### History
+- Flash history is kept for up to 12 measurement points, as the internal stats partition allows. Up to
+  v1.1.1 an internal table stopped at 8: points 9 to 12 showed live readings but kept no history.
+
+### Home Assistant
+- The system entities "Revenue (Total)" and "Revenue (Day)" are renamed "Export value (Total)" and
+  "Export value (Day)". Their unique IDs and the telemetry fields (`rev_total`, `rev_day`) do not change,
+  so Home Assistant keeps the existing entities and their history.
+- "Cost (Total)" and "Export value (Total)" are published with `state_class: total`. Before, they used
+  `total_increasing`, which Home Assistant does not accept for money, so they could not be chosen in the
+  Energy dashboard.
+
+### Three-phase input
+- An STD-U3I3 can be made the hub's input as one three-phase point:
+  `POST /api/v1/units/<input>/rebind {"module": <m>, "ch": 254}`.
+  - The reply carries `"requires_reboot": true`; the new layout applies after the hub restarts.
+  - The point keeps its id, name and history.
+  - Up to v1.1.1 this needed the USB console, and out of the box the input measured phase L1 only.
+- Errors:
+  - `409 SENSOR_BOUND`: another point uses a channel of the module.
+  - `400 NOT_PHASE_MODULE`: the target is not the input, or the module is not a present three-phase module.
+- An STD module is no longer reported as "uncalibrated" just because its sensor-class byte is unset, as it
+  is on shipped STD-U3I3 modules. It counts as uncalibrated only when its own calibration status says so.
+
 ## v1.1.1 — 2026-10-22
 
 Fixes for a hub installed from scratch (USB flash on an erased chip). Hubs updated over the air from
@@ -46,9 +83,9 @@ First source release of the RBgrid hub firmware under the **PolyForm Noncommerci
   the energy the module counted meanwhile.
 
 ### Statistics, tariffs, export
-- Flash history from 3 s up to yearly records; record format v4 with a non-destructive migration.
+- Live readings every 3 s; flash history from hourly up to yearly records; record format v4 with a non-destructive migration.
 - Time-of-use tariffs: multiple zones, weekend/holiday rules, fees, taxes, VAT, net-metering with credit
-  banking and progressive tiers; per-zone cost and revenue.
+  banking and progressive tiers; per-zone cost and export value.
 - `GET /api/v1/summary`, `GET /api/v1/export.csv`, `GET /api/v1/history` with time ranges.
 - One build: every feature is in the published source (no separate closed edition).
 

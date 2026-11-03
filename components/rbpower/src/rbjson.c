@@ -2345,9 +2345,18 @@ char* rbgrid_json_create_sensors_list(const rbgrid_json_context_t* context) {
             cJSON_AddStringToObject(o, "model", d.model);
             /* sensor family: SCT- = user picks the SCT-013 model per channel; CT- = CT shipped with
              * the module, calibrated in pair, model fixed per channel (not settable) */
-            if (d.sensor_class != 0xFF) cJSON_AddNumberToObject(o, "sensor_class", d.sensor_class);
-            cJSON_AddBoolToObject(o, "ct_settable", d.sensor_class == 1);   /* 0 = uncalibrated module, 2/3 = CT- (fixed) */
-            if (d.sensor_class == 0) cJSON_AddBoolToObject(o, "uncalibrated", true);
+            if (d.line) {
+                /* STD: the class byte (CFG_CLASS) is metadata the factory leaves at 0 (shipped U3I3 0x7E reads 0 —
+                 * rbamp-dev 2026-11-03); every STD input is factory-calibrated in its own calibration block. Not a
+                 * user-settable CT, and "uncalibrated" only when the module's own CAL_OK status says so. */
+                if (d.sensor_class != 0xFF && d.sensor_class != 0) cJSON_AddNumberToObject(o, "sensor_class", d.sensor_class);
+                cJSON_AddBoolToObject(o, "ct_settable", false);
+                if (d.cal == 0) cJSON_AddBoolToObject(o, "uncalibrated", true);
+            } else {
+                if (d.sensor_class != 0xFF) cJSON_AddNumberToObject(o, "sensor_class", d.sensor_class);
+                cJSON_AddBoolToObject(o, "ct_settable", d.sensor_class == 1);   /* 0 = uncalibrated module, 2/3 = CT- (fixed) */
+                if (d.sensor_class == 0) cJSON_AddBoolToObject(o, "uncalibrated", true);
+            }
             cJSON_AddNumberToObject(o, "variant", d.variant);
             cJSON_AddNumberToObject(o, "n_v", d.n_v);
             cJSON_AddNumberToObject(o, "n_i", d.n_i);
@@ -2634,15 +2643,16 @@ void rbgrid_json_publish_ha_discovery(void)
      * the telemetry payload's system{} block. uom = configured currency → HA monetary device_class. */
     {
         const char* cur = rbpower_tariff_currency();
-        ha_pub_entity(m, "system", "cost_total", "Cost (Total)", "system.cost_total", true, cur, "monetary", "total_increasing",
+        ha_pub_entity(m, "system", "cost_total", "Cost (Total)", "system.cost_total", true, cur, "monetary", "total",
                       m, "RBGrid System", NULL, state_t, avty_t, fw, NULL);
-        /* monetary allows only state_class `total` in HA — the daily reset needs last_reset, taken
-         * from system.day_start (local midnight, ISO) in the same payload */
+        /* monetary allows only state_class `total` in HA (total_increasing is rejected for it) — the
+         * lifetime totals carry no last_reset; the daily reset needs last_reset, taken from
+         * system.day_start (local midnight, ISO) in the same payload */
         ha_pub_entity(m, "system", "cost_day", "Cost (Day)", "system.cost_day", true, cur, "monetary", "total",
                       m, "RBGrid System", NULL, state_t, avty_t, fw, "LAST_RESET");
-        ha_pub_entity(m, "system", "revenue_total", "Revenue (Total)", "system.rev_total", true, cur, "monetary", "total_increasing",
+        ha_pub_entity(m, "system", "revenue_total", "Export value (Total)", "system.rev_total", true, cur, "monetary", "total",
                       m, "RBGrid System", NULL, state_t, avty_t, fw, NULL);
-        ha_pub_entity(m, "system", "revenue_day", "Revenue (Day)", "system.rev_day", true, cur, "monetary", "total",
+        ha_pub_entity(m, "system", "revenue_day", "Export value (Day)", "system.rev_day", true, cur, "monetary", "total",
                       m, "RBGrid System", NULL, state_t, avty_t, fw, "LAST_RESET");
         published += 4;
     }

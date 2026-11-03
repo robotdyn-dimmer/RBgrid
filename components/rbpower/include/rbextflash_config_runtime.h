@@ -34,7 +34,10 @@ extern "C"
  * ================================================================================================ */
 
 // Realistic runtime limits
-#define RBPOWER_RUNTIME_MAX_UNITS 8    ///< Maximum units in the manager (rbpower_runtime_add_unit() fails beyond it)
+/* Must not be lower than the number of stats slots (12 on the internal 4 MB partition, up to 64 on an
+ * external chip): a unit refused here keeps its slot but gets no flash buffers, so it silently has no
+ * history. Was 8 — units 9..12 lost history while slots were free. */
+#define RBPOWER_RUNTIME_MAX_UNITS 64   ///< Maximum units in the manager (rbpower_runtime_add_unit() fails beyond it); = RBPOWER_MAX_UNITS
 #define RBPOWER_RUNTIME_MAX_BUFFERS 50 ///< Nominal maximum of all buffers in all units (not enforced by rbpower_runtime_add_buffer())
 
 // Paths to JSON files
