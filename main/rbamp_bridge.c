@@ -1887,11 +1887,29 @@ static void rbamp_line_check(void)
     s_line_low_s = held;
 }
 
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+/* DIAG builds only: every 30 s print each task's stack high-water mark (bytes never used). */
+static void diag_stacks(void)
+{
+    static TaskStatus_t st[40];
+    UBaseType_t n = uxTaskGetSystemState(st, 40, NULL);
+    char line[600]; int k = snprintf(line, sizeof line, "STACKS");
+    for (UBaseType_t i = 0; i < n && k < (int)sizeof(line) - 24; ++i)
+        k += snprintf(line + k, sizeof(line) - k, " %s=%u", st[i].pcTaskName, (unsigned)st[i].usStackHighWaterMark);
+    printf("%s\n", line);
+}
+#endif
 static void rbamp_stall_supervisor_task(void *arg)
 {
     (void)arg;
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+    int diag_n = 0;
+#endif
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(5000));
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+        if (++diag_n % 6 == 0) diag_stacks();
+#endif
         const int64_t st = s_poll_stamp_us, now = esp_timer_get_time();
         const bool ota = (s_ota.state == MO_WRITING || s_ota.state == MO_COMMIT);
         const uint32_t age = (st > 0 && now > st) ? (uint32_t)((now - st) / 1000000LL) : 0;

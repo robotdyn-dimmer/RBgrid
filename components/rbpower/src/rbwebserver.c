@@ -1201,7 +1201,7 @@ rbpower_err_t rbwebserver_start()
         sslc.httpd.max_open_sockets = g_max_open_sockets;
         sslc.httpd.max_uri_handlers = 128;  // 72 overflowed — tail registrations (espnow GET/POST,
         // provisioning) failed SILENTLY and the CORS OPTIONS wildcard turned them into 405s. ~86 needed.
-        sslc.httpd.stack_size       = 10240;   // TLS handshake needs more stack than plain HTTP
+        sslc.httpd.stack_size       = 14336;   // TLS handshake needs more stack than plain HTTP (+4 KB as plain HTTP: see below)
         sslc.httpd.lru_purge_enable = true;
         sslc.httpd.uri_match_fn     = httpd_uri_match_wildcard;
 
@@ -1241,7 +1241,10 @@ rbpower_err_t rbwebserver_start()
         config.max_open_sockets = g_max_open_sockets;
         config.max_uri_handlers = 128; // 72 OVERFLOWED (espnow GET/POST fell off the table →
         // wildcard-OPTIONS made them 405). Count grew with history/export/backup/espnow; ~86 now, rest = headroom.
-        config.stack_size = 8192;
+        /* 12 KB: the handlers keep fleet copies (rbamp_bridge_config_t, ~2.5x larger since 8 modules) and big cJSON
+         * trees on this task; at 8 KB the high-water mark dropped to 144 bytes on .139 under the app + a time-zone save,
+         * and the hub panicked (stack overflow in httpd) or hung (2026-11-03). */
+        config.stack_size = 12288;
         config.lru_purge_enable = true;
         // Wildcard URI matching so REST path params work (e.g. DELETE /api/v1/units/{hexid}
         // registered as /api/v1/units/*). The wildcard matcher matches exact URIs identically, so all

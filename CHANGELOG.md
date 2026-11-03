@@ -39,6 +39,12 @@ Built against the public rbAmp ESP-IDF component.
 - An STD module is no longer reported as "uncalibrated" just because its sensor-class byte is unset, as it
   is on shipped STD-U3I3 modules. It counts as uncalibrated only when its own calibration status says so.
 
+### Stability
+- The web server task has a larger stack (12 KB, was 8 KB). With up to 8 modules, the app plus a settings save could
+  overflow it. The hub then restarted, or in one case hung with no watchdog reset (.139, 2026-11-03). Measured
+  headroom under the same load is now 4 KB (it was 144 bytes).
+- A crash record (`FAIL boot: reset=PANIC`) now names the task that crashed.
+
 ### Hub pages
 - The WEB-APP link on the hub's own pages (Wi-Fi setup, home) opens the web app the hub serves itself. On your home
   Wi-Fi it shows the hub's address (`http://<hub>/`). On the hub's own access point it opens the app there. It is
