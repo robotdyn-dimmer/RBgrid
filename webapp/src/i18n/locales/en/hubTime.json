@@ -1,0 +1,4 @@
+{
+  "differs": "Times on the screens follow the hub’s clock ({hub}); yours is {mine}. If the hub is where you are, set its time zone — otherwise the day, the hours and the tariff zones are shifted.",
+  "change": "Change the zone →"
+}

@@ -1,0 +1,12 @@
+{
+  "title": "Site",
+  "name": "Name",
+  "namePh": "e.g. My home",
+  "place": "Where it is",
+  "placePh": "e.g. Berlin",
+  "save": "Save",
+  "saving": "Saving…",
+  "saved": "Saved on the hub ✓",
+  "failed": "Couldn't save: the hub didn't answer or refused.",
+  "unsaved": "Not saved"
+}

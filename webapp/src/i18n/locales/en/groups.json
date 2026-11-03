@@ -1,0 +1,12 @@
+{
+  "title": "Consumer groups",
+  "intro": "Groups bundle points on the energy-flow schema (tabs). Add a point to a group on its page, field “Group”.",
+  "empty": "No groups yet.",
+  "name": "Group {id} name",
+  "points_one": "{count} point",
+  "points_other": "{count} points",
+  "remove": "Remove group {name}",
+  "add": "Add group",
+  "saved": "Groups saved on the device.",
+  "orphaned": "Removed groups still have points ({names}) — they will show without a group name. Take them out of the group on the point page."
+}

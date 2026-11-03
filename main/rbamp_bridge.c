@@ -46,6 +46,8 @@
 #include "esp_attr.h"              /* RTC_NOINIT_ATTR — virtual module counters survive a warm reboot */
 #include "rbstrutil.h"     /* rb_scat — bounded snprintf append */
 #include "esp_task_wdt.h"         /* bus_take feeds the TWDT of a subscribed waiter */
+#include "driver/gpio.h"          /* gpio_get_level — bus line-low check */
+#include "esp_rom_sys.h"          /* esp_rom_delay_us */
 
 #include "cJSON.h"
 #ifndef CONFIG_RBAMP_SCT_RATING_CORRECTION
@@ -63,6 +65,23 @@ static const char *TAG = "RBAMP_BRIDGE";
 /** @brief Number of I2C buses (ESP32 I2C controllers) the bridge can drive. */
 #define RBAMP_MAX_BUSES 2
 static rbamp_bridge_config_t   s_cfg;
+/* A three-phase grouping saved for the next boot (feed_group): every later save of the live s_cfg must keep it,
+ * or the next unrelated save (a bind, a CT change) would write the old layout back over it before the restart. */
+static struct { bool valid; uint8_t module, n; uint16_t unit; rbamp_entry_cfg_t e[RBAMP_MAX_ENTRIES]; } s_group_pending;
+/** Save the fleet: the live s_cfg with any pending grouping applied (see s_group_pending). */
+static esp_err_t save_cfg(void)
+{
+    if (!s_group_pending.valid) return rbgrid_storage_save_rbamp(&s_cfg);
+    rbamp_bridge_config_t next = s_cfg;
+    memcpy(next.modules[s_group_pending.module].entries, s_group_pending.e, sizeof(s_group_pending.e[0]) * s_group_pending.n);
+    next.modules[s_group_pending.module].entry_count = s_group_pending.n;
+    for (uint8_t m = 0; m < next.module_count && m < RBAMP_MAX_MODULES; ++m) {   /* one source per unit */
+        if (m == s_group_pending.module) continue;
+        for (uint8_t e = 0; e < next.modules[m].entry_count && e < RBAMP_MAX_ENTRIES; ++e)
+            if (next.modules[m].entries[e].unit_id == s_group_pending.unit) next.modules[m].entries[e].unit_id = 0;
+    }
+    return rbgrid_storage_save_rbamp(&next);
+}
 static i2c_master_bus_handle_t s_bush[RBAMP_MAX_BUSES] = { NULL };
 /** @brief Handle of bus 0 (the primary sensor bus). */
 #define s_bus (s_bush[0])
@@ -292,7 +311,12 @@ static inline esp_err_t br_std_read_channel(uint8_t m, uint8_t c, rbamp_std_chan
 }
 static uint8_t s_sensor_class[RBAMP_MAX_MODULES];   /* REG_SENSOR_CLASS read at describe (0xFF unknown) */
 static uint8_t s_line[RBAMP_MAX_MODULES];           /* 0 BASIC, 1 STD (descriptor) */
-static inline bool ct_factory_paired(uint8_t m) { return m < RBAMP_MAX_MODULES && (s_sensor_class[m] == 2 || s_sensor_class[m] == 3); }
+/* CT- series (class 2/3), or an STD module whose class byte is unset: STD inputs are factory-calibrated per channel
+ * (the class byte is metadata, 0 on shipped U3I3 — rbamp-dev 2026-11-03), so nothing is provisioned on them */
+static inline bool ct_factory_paired(uint8_t m)
+{
+    return m < RBAMP_MAX_MODULES && (s_sensor_class[m] == 2 || s_sensor_class[m] == 3 || (s_line[m] == 1 && s_sensor_class[m] == 0));
+}
 static inline esp_err_t br_set_ct_model(uint8_t m, uint8_t ch, uint8_t code)
 {
     if (virt_is(m)) { if (ch < 3) s_virt[m].ct_code[ch] = code; return ESP_OK; }
@@ -938,7 +962,9 @@ static void ct_limit_check(uint8_t m, const rbamp_snapshot_t *s)
         uint8_t hits = (uint8_t)__builtin_popcount(s_ct_peak_hits[m][e]);
         uint8_t st = (irms >= fs || hits >= 3) ? 2 : (irms >= 0.9f * fs) ? 1 : 0;
         if (s_line[m] == 0 && !isnan(pch) && !isnan(s->voltage)) {   /* BASIC: reversed CT → flow not accounted */
-            bool neg = pch < -(0.015f * nom * s->voltage);
+            /* Without line voltage (< 50 V) P is noise around 0 and says nothing about direction;
+             * the 1 W floor keeps a near-zero reading from counting as reverse flow. */
+            bool neg = s->voltage >= 50.0f && pch < -fmaxf(0.015f * nom * s->voltage, 1.0f);
             s_rev_hits[m][e] = (uint8_t)(((s_rev_hits[m][e] << 1) | (neg ? 1 : 0)) & 0x1F);
             bool rev = __builtin_popcount(s_rev_hits[m][e]) >= 3;
             if (rev != s_rev_state[m][e]) {
@@ -1285,11 +1311,12 @@ static void inject_module(uint8_t mod, const rbamp_module_cfg_t *mc, const rbamp
              * reach the overview / system sum / HA / MQTT either (it would show "exporting" on a module that cannot
              * export). The reversed CT is reported as `reversed` + an event + hour q REVERSE_LOST. */
             if (s_line[mod] == 0 && !virt_is(mod) && p < 0.0f) { p = 0.0f; pf = 0.0f; }
-            if (s_line[mod] == 0 && !virt_is(mod)) {   /* BASIC accuracy floor (rbAmp spec): below 1.5 % of the CT nominal
-                                                        * current / U × that power the reading is noise → 0 (live only) */
+            if (s_line[mod] == 0 && !virt_is(mod)) {   /* BASIC display floor (a hub threshold, not a module specification):
+                                                        * below this fraction of the CT nominal current / U × that power the live
+                                                        * reading is treated as noise → 0 (live only) */
                 float nom = 0, fs_ = 0, pk_ = 0;
                 if (rbamp_sensor_model_limits(s_sensor_class[mod], en->ct_code, &nom, &fs_, &pk_) && nom > 0) {
-                    float i_floor = (s_sensor_class[mod] == 1) ? 0.015f * nom : 0.043f * nom;   /* SCT- 1.5 %, CT- ~4.3 % */
+                    float i_floor = (s_sensor_class[mod] == 1) ? 0.015f * nom : 0.043f * nom;   /* hub thresholds: SCT- 1.5 %, CT- ~4.3 % of nominal */
                     if (i < i_floor) { i = 0.0f; p = 0.0f; pf = 0.0f; }
                     else if (p < u * i_floor) { p = 0.0f; }
                 }
@@ -1790,6 +1817,111 @@ static void phseq_poll(uint8_t m)
     s_phseq[m] = v; s_phseq_seen[m] = true;
 }
 
+/* ==== Bus stall supervisor ===================================================================
+ * An unpowered module left on the bus clamps SDA/SCL through its inputs; the I2C master then never returns
+ * (rbamp-dev bench 2026-11-03) and every module stops updating — silently, since the poll task is not on the
+ * task watchdog (module OTA legitimately holds the bus 10-14 s). The poll task stamps each cycle; a small
+ * supervisor on core 0 (the poll runs on core 1) reports a cycle older than RBAMP_STALL_AFTER_S as a FAIL line and
+ * through rbpower_i2c_bus_stalled_s() (/api/v1/sensors bus_stalled_s). The hung call does NOT return even after
+ * the module is unplugged (rbamp-dev bench, 175 s+), so the way out is: fix the wiring, then restart the hub (the
+ * app offers it). No automatic restart: while the module stays on the bus it would only loop.
+ * Module OTA in progress is not a stall. */
+#define RBAMP_STALL_AFTER_S 30u   ///< a poll cycle older than this = stalled
+static volatile int64_t  s_poll_stamp_us;   ///< esp_timer time of the last poll-cycle start (0 = not started)
+static volatile uint32_t s_stall_s;         ///< seconds stalled as last seen by the supervisor (0 = polling)
+
+uint32_t rbpower_i2c_bus_stalled_s(void) { return s_stall_s; }
+
+/* ==== Bus line held low ======================================================================
+ * A device that holds SDA or SCL low — a module wired without power, a module switched to another transport
+ * (an STD-U3I3 in Modbus RTU mode drives the SDA/SCL pins as UART RX/TX), or crossed wires — silences every
+ * module on the bus while the poll keeps running (the transactions fail fast, so it is not a stall). With the bus
+ * idle (lock held) the lines must read high through the pull-ups; the supervisor samples them every 5 s and a line
+ * low on RBAMP_LINE_LOW_CHECKS checks in a row becomes a FAIL line + rbpower_i2c_bus_line_low_s() (/api/v1/sensors
+ * bus_line_low_s). Released lines clear it; the healer then re-probes the absent modules by itself. The scan checks
+ * the same before walking addresses (a walk on a held bus is what can hang the ESP-IDF master). */
+#define RBAMP_LINE_LOW_CHECKS 3u   ///< consecutive low samples (5 s apart) before a hold is reported
+static volatile uint32_t s_line_low_s;     ///< seconds a bus-0 line has been held low (0 = lines idle high)
+static int64_t           s_line_low_t0_us; ///< when the current hold was first seen
+static uint8_t           s_line_low_n;     ///< consecutive low checks
+
+uint32_t rbpower_i2c_bus_line_low_s(void) { return s_line_low_s; }
+
+static int bus_pin(uint8_t b, bool scl);   /* below, with the /api/v1/i2c helpers */
+
+/** Sample bus b's idle line levels (caller holds the bus): true when SDA or SCL reads low in all 5 samples 200 µs
+ *  apart. *which = "SDA", "SCL" or "SDA and SCL". */
+static bool bus_line_low_locked(uint8_t b, const char **which)
+{
+    const int sda = bus_pin(b, false), scl = bus_pin(b, true);
+    if (sda < 0 || scl < 0) return false;
+    bool sda_low = true, scl_low = true;
+    for (int i = 0; i < 5; ++i) {
+        if (gpio_get_level((gpio_num_t)sda)) sda_low = false;
+        if (gpio_get_level((gpio_num_t)scl)) scl_low = false;
+        esp_rom_delay_us(200);
+    }
+    if (which) *which = (sda_low && scl_low) ? "SDA and SCL" : sda_low ? "SDA" : "SCL";
+    return sda_low || scl_low;
+}
+
+static void rbamp_line_check(void)
+{
+    if (!s_bus_lock || !s_bush[0] || xSemaphoreTake(s_bus_lock, pdMS_TO_TICKS(50)) != pdTRUE) return;   /* busy = not idle */
+    const char *which = "";
+    const bool low = bus_line_low_locked(0, &which);
+    xSemaphoreGive(s_bus_lock);
+    if (!low) {
+        if (s_line_low_s) rbpower_diag_printf("I2C bus 0 lines released after ~%lus", (unsigned long)s_line_low_s);
+        s_line_low_s = 0; s_line_low_n = 0;
+        return;
+    }
+    if (s_line_low_n == 0) s_line_low_t0_us = esp_timer_get_time();
+    if (s_line_low_n < 255) ++s_line_low_n;
+    if (s_line_low_n < RBAMP_LINE_LOW_CHECKS) return;
+    const uint32_t held = (uint32_t)((esp_timer_get_time() - s_line_low_t0_us) / 1000000LL) + 5u;
+    if (s_line_low_s == 0) {
+        rbpower_diag_printf("FAIL I2C bus 0: %s held low — a module may be without power, set to another mode (e.g. Modbus) "
+                            "or wired wrong: check the module connections", which);
+    }
+    s_line_low_s = held;
+}
+
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+/* DIAG builds only: every 30 s print each task's stack high-water mark (bytes never used). */
+static void diag_stacks(void)
+{
+    static TaskStatus_t st[40];
+    UBaseType_t n = uxTaskGetSystemState(st, 40, NULL);
+    char line[600]; int k = snprintf(line, sizeof line, "STACKS");
+    for (UBaseType_t i = 0; i < n && k < (int)sizeof(line) - 24; ++i)
+        k += snprintf(line + k, sizeof(line) - k, " %s=%u", st[i].pcTaskName, (unsigned)st[i].usStackHighWaterMark);
+    printf("%s\n", line);
+}
+#endif
+static void rbamp_stall_supervisor_task(void *arg)
+{
+    (void)arg;
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+    int diag_n = 0;
+#endif
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+        if (++diag_n % 6 == 0) diag_stacks();
+#endif
+        const int64_t st = s_poll_stamp_us, now = esp_timer_get_time();
+        const bool ota = (s_ota.state == MO_WRITING || s_ota.state == MO_COMMIT);
+        const uint32_t age = (st > 0 && now > st) ? (uint32_t)((now - st) / 1000000LL) : 0;
+        if (s_running && !ota && s_stall_s == 0) rbamp_line_check();   /* a stalled poll may hold the lock forever */
+        if (!s_running || ota || age < RBAMP_STALL_AFTER_S) continue;   /* the poll task clears s_stall_s itself */
+        if (s_stall_s == 0)
+            rbpower_diag_printf("FAIL I2C bus 0 stalled: no module poll for %lus — a problem on the bus (e.g. a module wired "
+                                "but without power): check the connections, then restart the hub", (unsigned long)age);
+        s_stall_s = age;
+    }
+}
+
 /** The poll task: healer, requested period collect, then per module read (DRDY-paced when configured), diagnostics,
  *  host energy integration, per-phase reads, grid voltage publish and the 200 ms inject; then sleep
  *  poll_period_ms. The bus lock is taken per transaction, never across an inject. */
@@ -1801,6 +1933,11 @@ static void rbamp_bridge_poll_task(void *arg)
 
     uint64_t next_reprobe_us = esp_timer_get_time() + RBAMP_REPROBE_PERIOD_US;
     while (s_running) {
+        s_poll_stamp_us = esp_timer_get_time();   /* stall supervisor heartbeat */
+        if (s_stall_s) {
+            rbpower_diag_printf("I2C bus 0 polling again after a stall of ~%lus", (unsigned long)s_stall_s);
+            s_stall_s = 0;
+        }
         /* Discovery self-heal: any configured module still absent gets re-probed every
          * RBAMP_REPROBE_PERIOD_US until it answers (see the healer block comment above). */
         if (esp_timer_get_time() >= next_reprobe_us) {
@@ -1846,7 +1983,7 @@ static void rbamp_bridge_poll_task(void *arg)
               if (err == ESP_OK && (++s_rst_poll[m] % 5) == 0) ct_user_reset_watch(m);
               PT_ADD(s_pt_rd); }
             bus_give();
-            if (s_ct_cfg_dirty) { s_ct_cfg_dirty = false; (void)rbgrid_storage_save_rbamp(&s_cfg); }
+            if (s_ct_cfg_dirty) { s_ct_cfg_dirty = false; (void)save_cfg(); }
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "module %u (0x%02X) read_all failed: %s",
                          m, s_cfg.modules[m].addr, rbamp_err_to_str(err));
@@ -2193,7 +2330,7 @@ static void provision_module(uint8_t m, const rbamp_module_cfg_t *mc)
                 adopted = true;
             }
         }
-        if (adopted || s_ct_cfg_dirty) { s_ct_cfg_dirty = false; (void)rbgrid_storage_save_rbamp(&s_cfg); }
+        if (adopted || s_ct_cfg_dirty) { s_ct_cfg_dirty = false; (void)save_cfg(); }
         if (ct_user_any(m)) {   /* a restart before this hub met the module (or a different model in it) */
             bus_take();
             uint8_t cur_ok = 1;
@@ -2208,7 +2345,7 @@ static void provision_module(uint8_t m, const rbamp_module_cfg_t *mc)
                 ct_user_reapply_locked(m, cur_ok ? "a module restart (seen at join)" : "join (model differs)");
             }
             bus_give();
-            if (s_ct_cfg_dirty) { s_ct_cfg_dirty = false; (void)rbgrid_storage_save_rbamp(&s_cfg); }
+            if (s_ct_cfg_dirty) { s_ct_cfg_dirty = false; (void)save_cfg(); }
         }
         return;
     }
@@ -2330,6 +2467,12 @@ esp_err_t rbamp_bridge_start(const rbamp_bridge_config_t *cfg)
         ESP_LOGE(TAG, "failed to create poll task");
         s_running = false; err = ESP_ERR_NO_MEM; goto fail_dev;
     }
+    {   /* bus stall supervisor on the other core (best effort: without it the hub just doesn't report a stall) */
+        static bool s_stall_sup_started = false;
+        if (!s_stall_sup_started &&
+            xTaskCreatePinnedToCore(rbamp_stall_supervisor_task, "rbamp_stall", 4096, NULL, tskIDLE_PRIORITY + 1, NULL, 0) == pdPASS)
+            s_stall_sup_started = true;
+    }
 
     // Register the unbind hook: DELETE-ing an rbAmp unit clears its fleet entry's
     // unit_id + persists /rbamp.json so the unit does NOT respawn on the next boot.
@@ -2415,17 +2558,57 @@ void rbamp_bridge_unbind_unit(rbpower_unit_id_t unit_id)
         }
     }
     if (changed) {
-        esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+        esp_err_t se = save_cfg();
         ESP_LOGW(TAG, "unbind unit 0x%04X → fleet entry cleared, /rbamp.json: %s",
                  (unsigned)unit_id, esp_err_to_name(se));
     }
 }
 
+/* Group a phase module (STD-U3I3: >= 2 voltage and >= 2 current channels) as ONE three-phase unit fed by the bridge
+ * (the main input): the module's channel entries are replaced by a single RBAMP_ENTRY_PHASES entry carrying unit_id —
+ * the same /rbamp.json the console verb `rbampcfg phases <m> <hexunit> <ct>` writes. Every current channel entry of
+ * the module must be free or already carry this unit. Applied at the next boot (poll/inject structures are built from
+ * the fleet at start), so the caller reports requires_reboot; the running poll keeps the old entries until then.
+ * id/point/history stay with the unit.
+ * @return 1 saved (reboot to apply), 0 already grouped for this unit, -1 not a phase module / absent / save failed,
+ *         -2 a channel or the group carries another unit. */
+static int feed_group(rbpower_unit_id_t unit_id, uint8_t module)
+{
+    if (!s_dev[module] || virt_is(module) || s_line[module] != 1 || s_nv[module] < 2 || s_nc[module] < 2) return -1;
+    const rbamp_module_cfg_t *mod = &s_cfg.modules[module];
+    uint8_t ct = 0;
+    bool ct_set = false;
+    for (uint8_t e = 0; e < mod->entry_count && e < RBAMP_MAX_ENTRIES; ++e) {
+        const rbamp_entry_cfg_t *en = &mod->entries[e];
+        if (en->source == RBAMP_ENTRY_VOLTAGE) continue;
+        if (en->source == RBAMP_ENTRY_PHASES) {
+            if (en->unit_id == unit_id) return 0;
+            if (en->unit_id != 0) return -2;
+            continue;
+        }
+        if (en->unit_id != 0 && en->unit_id != unit_id) return -2;
+        if (en->source == 0 || !ct_set) { ct = en->ct_code; ct_set = true; }   /* the model the channel-0 entry carried */
+    }
+    /* pending until the reboot: the live fleet keeps polling the old entries; every save from now on writes the group */
+    const rbamp_module_cfg_t *cm = &s_cfg.modules[module];
+    uint8_t nk = 0;
+    for (uint8_t e = 0; e < cm->entry_count && e < RBAMP_MAX_ENTRIES; ++e)
+        if (cm->entries[e].source == RBAMP_ENTRY_VOLTAGE && nk < RBAMP_MAX_ENTRIES - 1) s_group_pending.e[nk++] = cm->entries[e];
+    s_group_pending.e[nk++] = (rbamp_entry_cfg_t){ .source = RBAMP_ENTRY_PHASES, .ct_code = ct, .unit_id = (uint16_t)unit_id, .ct_user = 0 };
+    s_group_pending.n = nk; s_group_pending.module = module; s_group_pending.unit = (uint16_t)unit_id; s_group_pending.valid = true;
+    esp_err_t se = save_cfg();
+    rbpower_diag_printf("unit 0x%04X -> m%u grouped as one three-phase input (L1-L3), /rbamp.json: %s — applies after a reboot",
+                        (unsigned)unit_id, module, esp_err_to_name(se));
+    return se == ESP_OK ? 1 : -1;
+}
+
 /* Rebind hook for a bridge-fed unit (e.g. a main input whose definition carries no rbAmp source): re-point the fleet entry from the
- * old channel to (module, ch). The target channel must exist and carry no point. id/point/history stay. */
+ * old channel to (module, ch). The target channel must exist and carry no point. id/point/history stay.
+ * ch == RBAMP_ENTRY_PHASES (254) groups a phase module as one three-phase unit (feed_group; 1 = saved, reboot to apply). */
 int rbamp_bridge_feed_rebind(rbpower_unit_id_t unit_id, uint8_t module, uint8_t ch)
 {
     if (unit_id == 0 || module >= s_cfg.module_count || module >= RBAMP_MAX_MODULES) return -1;
+    if (ch == RBAMP_ENTRY_PHASES) return feed_group(unit_id, module);
     rbamp_entry_cfg_t *tgt = NULL;
     for (uint8_t e = 0; e < s_cfg.modules[module].entry_count && e < RBAMP_MAX_ENTRIES; ++e)
         if (s_cfg.modules[module].entries[e].source == ch && ch < RBAMP_MAX_CHANNELS) tgt = &s_cfg.modules[module].entries[e];
@@ -2439,7 +2622,7 @@ int rbamp_bridge_feed_rebind(rbpower_unit_id_t unit_id, uint8_t module, uint8_t 
     tgt->unit_id = (uint16_t)unit_id;
     apply_default_phase(module, tgt);
     rbpower_set_unit_rbamp_feed(unit_id, module, ch);
-    esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+    esp_err_t se = save_cfg();
     publish_presence();
     rbpower_diag_printf("unit 0x%04X moved to m%u ch%u (history kept), /rbamp.json: %s", (unsigned)unit_id, module, ch,
                         esp_err_to_name(se));
@@ -2471,7 +2654,7 @@ void rbamp_bridge_bind_unit(const rbpower_unit_definition_t *def)
         }
     }
     if (changed) {
-        esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+        esp_err_t se = save_cfg();
         ESP_LOGW(TAG, "bind unit 0x%04X (mod %u ch %u) → fleet entry set, /rbamp.json: %s",
                  (unsigned)def->unit_id, module, ch, esp_err_to_name(se));
     } else {
@@ -2514,7 +2697,7 @@ static esp_err_t rbamp_bridge_channel_set_ct(uint8_t m, rbamp_entry_cfg_t *en, u
         if (ue == ESP_OK) memcpy(s_cfg.modules[m].ct_uid, uid, 12);
         en->ct_user = 1;
     }
-    esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+    esp_err_t se = save_cfg();
     sct_publish(m);
     rbpower_diag_printf("m%u ch%u CT model -> %u (unit 0x%04X%s), /rbamp.json: %s", m, ch, ct_code,
                         (unsigned)unit_id, en->ct_user ? ", user choice — re-applied after a module restart" : "",
@@ -2561,7 +2744,7 @@ int rbamp_bridge_ctmodel(uint8_t m, uint8_t ch, uint8_t code, int mode, char *ou
             if (err == ESP_OK) {
                 en->ct_code = code; en->ct_user = 1;
                 if (ue == ESP_OK) memcpy(s_cfg.modules[m].ct_uid, uid, 12);
-                err = rbgrid_storage_save_rbamp(&s_cfg);
+                err = save_cfg();
             }
             uint8_t rb = 0xFF;
             (void)rbamp_bridge_read_ct_model(m, ch, &rb);
@@ -2577,7 +2760,7 @@ int rbamp_bridge_ctmodel(uint8_t m, uint8_t ch, uint8_t code, int mode, char *ou
             if (s_dev[m] == NULL) return snprintf(out, cap, "ctmodel: m%u not present", m);
             esp_err_t err = rbamp_bridge_set_ct_model(m, ch, code);
             if (err == ESP_OK) err = rbamp_bridge_save_user_config(m);
-            if (err == ESP_OK) { en->ct_code = code; en->ct_user = 0; err = rbgrid_storage_save_rbamp(&s_cfg); }
+            if (err == ESP_OK) { en->ct_code = code; en->ct_user = 0; err = save_cfg(); }
             uint8_t rb = 0xFF;
             (void)rbamp_bridge_read_ct_model(m, ch, &rb);
             rbpower_diag_printf("m%u ch%u CT model -> %u (factory calibration, reloaded at the module restart): %s", m, ch, code,
@@ -2612,7 +2795,7 @@ int rbamp_bridge_drdy(int set_gpio, bool do_set, char *out, size_t cap)
 {
     if (do_set) {
         s_cfg.drdy_gpio_p1 = (set_gpio >= 0 && set_gpio <= 39) ? (uint8_t)(set_gpio + 1) : 0;
-        (void)rbgrid_storage_save_rbamp(&s_cfg);
+        (void)save_cfg();
         for (uint8_t m = 0; m < s_dev_count; ++m) {
             if (s_cfg.drdy_gpio_p1) drdy_attach(m);
             else if (s_dev[m] && !virt_is(m)) (void)rbamp_set_drdy_gpio(s_dev[m], -1);
@@ -2794,7 +2977,9 @@ esp_err_t rbamp_bridge_save_user_config(uint8_t module)
  * Targets the 15-min slot; higher periods aggregate from accumulated 15-min results. */
 esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t period)
 {
-    static const char* const STG[RBAMP_MAX_MODULES] = { "collect m0", "collect m1", "collect m2" };
+    static const char* const STG[] = { "collect m0", "collect m1", "collect m2", "collect m3",
+                                       "collect m4", "collect m5", "collect m6", "collect m7" };
+    _Static_assert(sizeof(STG) / sizeof(STG[0]) >= RBAMP_MAX_MODULES, "one stage name per module");
     if (module < RBAMP_MAX_MODULES) rbpower_stats_stage(STG[module]);
     if (module >= RBAMP_MAX_MODULES || s_dev[module] == NULL) return ESP_ERR_INVALID_STATE;
     const rbamp_module_cfg_t *mc = &s_cfg.modules[module];
@@ -3251,15 +3436,54 @@ static const char *pin_blocked(int gpio, int self)
  * PCF8574 only returns its port and an EEPROM its current byte. i2c_master_probe (IDF 5.4.1 + the project driver
  * patches) was seen reporting empty addresses as present — the read path's NACK handling is the proven one. Bus
  * held by the caller. */
-static esp_err_t addr_answers_locked(uint8_t b, uint8_t addr)
+static esp_err_t addr_answers_byte_locked(uint8_t b, uint8_t addr, uint8_t *byte)
 {
     if (b >= RBAMP_MAX_BUSES || !s_bush[b]) return ESP_ERR_INVALID_STATE;
     i2c_device_config_t dc = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = addr, .scl_speed_hz = 100000 };
     i2c_master_dev_handle_t d;
-    uint8_t x = 0;
+    uint8_t x = 0xFF;
     esp_err_t e = i2c_master_bus_add_device(s_bush[b], &dc, &d);
     if (e == ESP_OK) { e = i2c_master_receive(d, &x, 1, 30); i2c_master_bus_rm_device(d); }
+    if (byte) *byte = x;
     return e;
+}
+static esp_err_t addr_answers_locked(uint8_t b, uint8_t addr) { return addr_answers_byte_locked(b, addr, NULL); }
+/** Identify the device at addr through the rbAmp library — the same path a module takes at join (rbamp_new +
+ *  rbamp_begin_resume: the library runs the STD identity probe before any 8-bit transaction and so tells the BASIC
+ *  and STD register formats apart; resume = no primer LATCH, a BASIC module keeps its accumulated window). The
+ *  temporary handle is released. Bus held by the caller. Returns true for an rbAmp module (BASIC or STD).
+ *  The hub's own raw 8-bit identity reads upset an STD module (it took the lone pointer byte as the high byte of
+ *  its 16-bit pointer and held the bus: .139, 2026-11-03), so they are no longer used here. */
+typedef struct { bool std; char model[16]; char fw[20]; uint8_t uid[12]; bool uid_ok; } lib_ident_t;
+static bool lib_identify_locked(uint8_t b, uint8_t addr, lib_ident_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (b >= RBAMP_MAX_BUSES || !s_bush[b]) return false;
+    rbamp_handle_t h = NULL;
+    if (rbamp_new(s_bush[b], addr, &h) != ESP_OK || !h) return false;
+    bool ok = rbamp_begin_resume(h) == ESP_OK;
+    if (ok) {
+        out->std = rbamp_line(h) == RBAMP_LINE_STD;
+        out->uid_ok = rbamp_read_uid(h, out->uid) == ESP_OK;
+        if (out->std) {
+            rbamp_std_info_t si; uint32_t iv = 0;
+            uint8_t var = (rbamp_std_info(h, &si) == ESP_OK) ? si.variant : 0;
+            if (var == 0x63) snprintf(out->model, sizeof out->model, "STD-U3I3");
+            else if (var == 0x11) snprintf(out->model, sizeof out->model, "STD-UI1");
+            else snprintf(out->model, sizeof out->model, "STD-0x%02X", var);
+            if (rbamp_std_read_image_version(h, &iv) == ESP_OK && iv) snprintf(out->fw, sizeof out->fw, "0x%08lX", (unsigned long)iv);
+            else snprintf(out->fw, sizeof out->fw, "map 0x%02X", rbamp_firmware_version(h));
+        } else {
+            const char *fn = rbamp_basic_fw_name(rbamp_firmware_version(h));
+            snprintf(out->fw, sizeof out->fw, "%s", fn ? fn : "?");
+            static const char *const VN[] = { NULL, "UI1", "UI2", "UI3", "I1", "I2", "I3", "UI5", "UI7" };
+            rbamp_variant_t v = rbamp_variant(h);
+            if ((unsigned)v >= 1 && (unsigned)v < sizeof(VN) / sizeof(VN[0])) snprintf(out->model, sizeof out->model, "BASIC-%s", VN[v]);
+            else snprintf(out->model, sizeof out->model, "BASIC");
+        }
+    }
+    rbamp_del(h);
+    return ok;
 }
 /** Raw BASIC register read at an address the hub does not own yet (8-bit register pointer). Bus held by the caller. */
 static esp_err_t raw_basic_read_locked(uint8_t b, uint8_t addr, uint8_t reg, uint8_t *buf, size_t n)
@@ -3336,37 +3560,52 @@ esp_err_t rbamp_bridge_i2c_scan(uint8_t b, cJSON *arr)
     if (b >= RBAMP_MAX_BUSES || !s_bush[b]) return ESP_ERR_INVALID_STATE;
     /* a slave stuck mid-byte holds SDA low and every address then "answers" (seen with internal pull-ups only):
      * clock it free first, and call a bus where every address answers stuck, not populated */
-    bus_take(); esp_err_t re = i2c_master_bus_reset(s_bush[b]); bus_give();
+    /* a held line: walking 112 addresses can hang the master. Sample the IDLE bus; only if a line reads low, clock the
+     * bus free (reset) and look again after the lines settle — sampling right after a reset read the rising lines as
+     * low on .139 (a false BUS_STUCK with a healthy bus, 2026-11-03). */
+    const char *held = "";
+    bus_take();
+    bool line_low = bus_line_low_locked(b, &held);
+    esp_err_t re = ESP_OK;
+    if (line_low) {
+        re = i2c_master_bus_reset(s_bush[b]);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        line_low = bus_line_low_locked(b, &held);
+    }
+    bus_give();
     if (re != ESP_OK) rbpower_diag_printf("FAIL I2C bus %u reset before scan: %s", b, esp_err_to_name(re));
+    if (line_low) {
+        rbpower_diag_printf("FAIL I2C bus %u scan refused: %s held low", b, held);
+        return ESP_ERR_INVALID_RESPONSE;   /* → 409 BUS_STUCK */
+    }
     int answered = 0;
     for (uint8_t a = 0x08; a <= 0x77; ++a) {
         bus_take();
-        esp_err_t pe = addr_answers_locked(b, a);
-        uint8_t ver = 0, prod = 0, uid[12] = {0};
-        bool id_ok = false;
+        uint8_t pb = 0xFF;
+        esp_err_t pe = addr_answers_byte_locked(b, a, &pb);
+        lib_ident_t id;
+        bool is_rbamp = false;
         int m = module_at(b, a);
-        if (pe == ESP_OK && a >= 0x50 && a <= 0x5F && !(m >= 0 && s_dev[m] && virt_is((uint8_t)m))) {
-            id_ok = raw_basic_read_locked(b, a, RBAMP_V2_REG_VERSION, &ver, 1) == ESP_OK &&
-                    raw_basic_read_locked(b, a, RBAMP_V2_REG_PRODUCT_ID, &prod, 1) == ESP_OK &&
-                    raw_basic_read_locked(b, a, RBAMP_V2_REG_UID, uid, 12) == ESP_OK;
-        }
+        if (pe == ESP_OK && a >= 0x50 && a <= 0x5F && !(m >= 0 && s_dev[m] && virt_is((uint8_t)m)))
+            is_rbamp = lib_identify_locked(b, a, &id);   /* the library's own identity (BASIC/STD), not raw reads */
         bus_give();
         if (pe != ESP_OK) continue;
+        /* phantom ACK: with an STD-U3I3 on the bus the hub board's bus front end ACKs addresses nobody owns and the
+         * read returns 0xFF (rbamp-dev, .110 2026-10-17 / .139 2026-11-03). An address counts only with real data, or
+         * when the library identified an rbAmp module there. */
+        if (!is_rbamp && pb == 0xFF) continue;
         if (++answered > 24) break;   /* no real bus carries this many devices: stuck SDA — reported by the caller */
         cJSON *o = cJSON_CreateObject();
         cJSON_AddNumberToObject(o, "addr", a);
         if (m >= 0) cJSON_AddNumberToObject(o, "module", m); else cJSON_AddNullToObject(o, "module");
-        const char *kind = "device";                      /* answered, not identified (outside 0x50-0x5F) */
-        if (a >= 0x50 && a <= 0x5F) {
-            if (id_ok && prod == 0x01 && rbamp_basic_fw_name(ver)) kind = "rbamp";
-            else if (id_ok && prod == 0x02) kind = "rbdimmer";
-            else kind = "unknown";
-        }
+        /* answered, not identified: "device" outside the rbAmp range 0x50-0x5F, "unknown" inside it */
+        const char *kind = is_rbamp ? "rbamp" : (a >= 0x50 && a <= 0x5F) ? "unknown" : "device";
         cJSON_AddStringToObject(o, "kind", kind);
-        if (!strcmp(kind, "rbamp")) {
-            char hx[25]; hex12(uid, hx);
-            cJSON_AddStringToObject(o, "fw", rbamp_basic_fw_name(ver));
-            cJSON_AddStringToObject(o, "uid", hx);
+        if (is_rbamp) {
+            cJSON_AddStringToObject(o, "line", id.std ? "std" : "basic");
+            cJSON_AddStringToObject(o, "model", id.model);
+            cJSON_AddStringToObject(o, "fw", id.fw);
+            if (id.uid_ok) { char hx[25]; hex12(id.uid, hx); cJSON_AddStringToObject(o, "uid", hx); }
         }
         cJSON_AddItemToArray(arr, o);
         vTaskDelay(1);
@@ -3388,14 +3627,13 @@ esp_err_t rbamp_bridge_i2c_add(uint8_t b, uint8_t addr, int *m_out, char *why, s
     if (addr < 0x08 || addr > 0x77) { snprintf(why, wn, "address out of 0x08-0x77"); return ESP_ERR_INVALID_ARG; }
     if (module_at(b, addr) >= 0) { snprintf(why, wn, "a module is already configured at 0x%02X on bus %u", addr, b); return ESP_ERR_INVALID_STATE; }
     if (s_cfg.module_count >= RBAMP_MAX_MODULES) { snprintf(why, wn, "module limit %u reached", RBAMP_MAX_MODULES); return ESP_ERR_NO_MEM; }
-    uint8_t prod = 0, ver = 0;
+    lib_ident_t id;
     bus_take();
     esp_err_t e = addr_answers_locked(b, addr);
-    if (e == ESP_OK) e = raw_basic_read_locked(b, addr, RBAMP_V2_REG_PRODUCT_ID, &prod, 1);
-    if (e == ESP_OK) e = raw_basic_read_locked(b, addr, RBAMP_V2_REG_VERSION, &ver, 1);
+    const bool is_rbamp = (e == ESP_OK) && lib_identify_locked(b, addr, &id);   /* the library tells BASIC / STD apart */
     bus_give();
     if (e != ESP_OK) { snprintf(why, wn, "nothing answers at 0x%02X on bus %u", addr, b); return ESP_ERR_NOT_FOUND; }
-    if (prod != 0x01 || !rbamp_basic_fw_name(ver)) { snprintf(why, wn, "the device at 0x%02X is not an rbAmp module", addr); return ESP_ERR_INVALID_RESPONSE; }
+    if (!is_rbamp) { snprintf(why, wn, "the device at 0x%02X is not an rbAmp module", addr); return ESP_ERR_INVALID_RESPONSE; }
     uint8_t m = s_cfg.module_count;
     memset(&s_cfg.modules[m], 0, sizeof(s_cfg.modules[m]));
     s_cfg.modules[m].addr = addr;
@@ -3404,7 +3642,7 @@ esp_err_t rbamp_bridge_i2c_add(uint8_t b, uint8_t addr, int *m_out, char *why, s
     pmin_reset(m);
     s_cfg.module_count++;
     if (s_dev_count < s_cfg.module_count) s_dev_count = s_cfg.module_count;
-    esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+    esp_err_t se = save_cfg();
     bool up = probe_module(m);
     classify_energy_modes(); publish_presence();
     rbpower_diag_printf("m%u added: bus %u 0x%02X (%s), /rbamp.json: %s", m, b, addr, up ? "joined" : "not joined yet", esp_err_to_name(se));
@@ -3448,7 +3686,11 @@ esp_err_t rbamp_bridge_i2c_set_addr(uint8_t m, uint8_t addr, char *why, size_t w
         rbpower_diag_printf("FAIL m%u address 0x%02X -> 0x%02X: %s", m, old, addr, why);
         return e != ESP_OK ? e : ESP_ERR_INVALID_RESPONSE;
     }
-    esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+    esp_err_t se = save_cfg();
+    {   /* the descriptor (/api/v1/sensors modules[].addr) follows the new address */
+        rbpower_module_desc_t md;
+        if (rbpower_get_module_desc(m, &md)) { md.addr = addr; rbpower_set_module_desc(m, &md); }
+    }
     drdy_attach(m);
     provision_module(m, &s_cfg.modules[m]);
     rbpower_diag_printf("m%u address 0x%02X -> 0x%02X on bus %u (UID kept), /rbamp.json: %s", m, old, addr, b, esp_err_to_name(se));
@@ -3472,7 +3714,7 @@ esp_err_t rbamp_bridge_i2c_set_bus(uint8_t m, uint8_t b, char *why, size_t wn)
     s_dev[m] = NULL;
     s_cfg.modules[m].bus = b;
     bus_give();
-    esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+    esp_err_t se = save_cfg();
     bool up = probe_module(m);
     classify_energy_modes(); publish_presence();
     rbpower_diag_printf("m%u moved to bus %u at 0x%02X (%s), /rbamp.json: %s", m, b, s_cfg.modules[m].addr,
@@ -3497,7 +3739,7 @@ esp_err_t rbamp_bridge_i2c_set_pins(uint8_t b, int sda, int scl, char *why, size
         if (b == 0) { s_cfg.sda_gpio = sda; s_cfg.scl_gpio = scl; }
         else { s_cfg.bus1_sda_p1 = (uint8_t)(sda + 1); s_cfg.bus1_scl_p1 = (uint8_t)(scl + 1); }
     }
-    esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+    esp_err_t se = save_cfg();
     if (se == ESP_OK) s_i2c_reboot_pending = true;
     rbpower_diag_printf("I2C bus %u pins -> SDA%d/SCL%d (applies after restart), /rbamp.json: %s", b, sda, scl, esp_err_to_name(se));
     return se;
@@ -3512,7 +3754,7 @@ esp_err_t rbamp_bridge_i2c_set_drdy(uint8_t m, int gpio, char *why, size_t wn)
         if (w && !(s_cfg.drdy_gpio_p1 && gpio == s_cfg.drdy_gpio_p1 - 1)) { snprintf(why, wn, "GPIO%d: %s", gpio, w); return ESP_ERR_INVALID_ARG; }
     }
     s_cfg.modules[m].drdy_p1 = gpio >= 0 ? (uint8_t)(gpio + 1) : 0;
-    esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+    esp_err_t se = save_cfg();
     if (s_dev[m]) { bus_take(); drdy_attach(m); bus_give(); }
     return se;
 }

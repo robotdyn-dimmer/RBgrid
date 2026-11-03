@@ -1,0 +1,7 @@
+# design-system build + sync machine state (sync inputs are committed; output is not)
+node_modules/
+dist/
+ds-bundle/
+.ds-sync/
+.design-sync/.cache/
+.design-sync/learnings/

@@ -1,0 +1,13 @@
+{
+  "title": "Interface",
+  "language": "Interface language",
+  "format": "Number and date format",
+  "formatAuto": "As the language",
+  "formatHelp": "Decimal mark, thousands separator, day/month order, 12/24 hours.",
+  "note": "The number and date format applies to this browser only.",
+  "languageHub": "Stored in the hub: the same for everyone who opens it. Applies at once, no restart.",
+  "languageNoHub": "This hub doesn't store a language — the browser's is used.",
+  "languageUnset": "Not set — browser language ({lang})",
+  "languageHubNo": "the hub has no texts in this language",
+  "languageFailed": "The hub didn't take the language (no connection, or an admin token is needed)."
+}

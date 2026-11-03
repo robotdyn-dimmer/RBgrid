@@ -1,0 +1,22 @@
+{
+  "imported": "Imported from the grid",
+  "exported": "Exported to the grid",
+  "currentHour": "Current / partial hour",
+  "gridImport": "Grid",
+  "gridExport": "Export to grid",
+  "solar": "Generation (solar)",
+  "loads": "Consumers",
+  "noData": "No data",
+  "unmetered": "No own sensor",
+  "fromSolar": "From solar",
+  "fromGrid": "From grid",
+  "parkingPower": "Parking power (hourly mean)",
+  "partialHour": "Partial hour (record shorter than an hour)",
+  "inputLimit": "Input limit",
+  "group": "Group of points",
+  "exportedDown": "Exported (down)",
+  "partialPeriod": "Incomplete period",
+  "yesterday": "Yesterday",
+  "house": "House used",
+  "solarProduced": "Solar produced"
+}

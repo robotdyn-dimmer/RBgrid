@@ -169,15 +169,21 @@ esp_err_t rbwebserver_wifi_config_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, html_header);
 
     // Build and send navigation with WEB-APP link
-    char nav_webapp[256];
-    bool sta_ip_valid = (sta_connected && strcmp(sta_ip, "0.0.0.0") != 0);
-
-    if (sta_ip_valid) {
+    /* WEB-APP = the web app this hub serves itself (UI kit in the storage partition), same origin: works on the hub's
+     * own access point with no internet and needs no CORS. It used to point at https://webapp.rbgrid.io, which a phone
+     * on the hub's AP can't reach and which a browser blocks anyway (HTTPS page → HTTP hub: mixed content + local
+     * network access), .139 2026-11-03. */
+    char nav_webapp[320];
+    const bool sta_ip_valid = (sta_connected && strcmp(sta_ip, "0.0.0.0") != 0);
+    if (!rbwebserver_ui_installed()) {
         snprintf(nav_webapp, sizeof(nav_webapp),
-            "                <a href=\"https://webapp.rbgrid.io/?esp32_ip=%s&force=1\" target=\"_blank\">WEB-APP</a>", sta_ip);
-    } else {
+            "                <a href=\"#\" class=\"disabled\" title=\"The web app is not installed on this hub\">WEB-APP</a>");
+    } else if (sta_ip_valid) {   /* on the home Wi-Fi: the app at the hub's home-network address */
         snprintf(nav_webapp, sizeof(nav_webapp),
-            "                <a href=\"#\" class=\"disabled\">WEB-APP</a>");
+            "                <a href=\"http://%s/\" title=\"On your home Wi-Fi open http://%s/\">WEB-APP (http://%s/)</a>",
+            sta_ip, sta_ip, sta_ip);
+    } else {                     /* only the hub's own access point: the app right here (192.168.4.1) */
+        snprintf(nav_webapp, sizeof(nav_webapp), "                <a href=\"/\">WEB-APP</a>");
     }
     httpd_resp_sendstr_chunk(req, nav_webapp);
 
@@ -257,32 +263,41 @@ esp_err_t rbwebserver_wifi_config_handler(httpd_req_t *req)
     "        <div id=\"status\"></div>"
     "    </div>"
     "    <script>"
-    "        function scanNetworks() {"
-    "            console.log('Scanning WiFi networks...');"
-    "            fetch('/wifi/scan')"
-    "                .then(response => response.json())"
-    "                .then(data => {"
-    "                    console.log('Scan results:', data);"
-    "                    var resultsDiv = document.getElementById('scanResults');"
-    "                    resultsDiv.innerHTML = '<h3>Available Networks:</h3>';"
-    "                    if (data.networks && data.networks.length > 0) {"
-    "                        data.networks.forEach(function(network) {"
-    "                            var div = document.createElement('div');"
-    "                            div.className = 'network-item';"
-    "                            div.textContent = network.ssid + ' (' + network.rssi + ' dBm)';"
-    "                            div.onclick = function() {"
-    "                                document.getElementById('ssid').value = network.ssid;"
-    "                            };"
-    "                            resultsDiv.appendChild(div);"
-    "                        });"
-    "                    } else {"
-    "                        resultsDiv.innerHTML += '<div>No networks found</div>';"
-    "                    }"
-    "                })"
-    "                .catch(error => {"
-    "                    console.error('Scan error:', error);"
-    "                    document.getElementById('status').innerHTML = '<div class=\"status error\">Scan failed</div>';"
+    "        function showNetworks(list) {"
+    "            var resultsDiv = document.getElementById('scanResults');"
+    "            resultsDiv.innerHTML = '<h3>Available Networks:</h3>';"
+    "            if (list && list.length > 0) {"
+    "                list.sort(function(a, b) { return b.rssi - a.rssi; });"
+    "                list.forEach(function(network) {"
+    "                    if (!network.ssid) return;"
+    "                    var div = document.createElement('div');"
+    "                    div.className = 'network-item';"
+    "                    div.textContent = network.ssid + ' (' + network.rssi + ' dBm)';"
+    "                    div.onclick = function() { document.getElementById('ssid').value = network.ssid; };"
+    "                    resultsDiv.appendChild(div);"
     "                });"
+    "            } else {"
+    "                resultsDiv.innerHTML += '<div>No networks found</div>';"
+    "            }"
+    "        }"
+    "        /* GET /wifi/scan starts an asynchronous scan; the list comes from GET /wifi/scan/results */"
+    "        function scanNetworks() {"
+    "            var resultsDiv = document.getElementById('scanResults');"
+    "            resultsDiv.innerHTML = '<h3>Scanning...</h3>';"
+    "            var tries = 0;"
+    "            function poll() {"
+    "                fetch('/wifi/scan/results').then(function(r) { return r.json(); }).then(function(m) {"
+    "                    var d = (m && m.data) || {};"
+    "                    if (d.status === 'scanning' && ++tries < 20) { setTimeout(poll, 1000); return; }"
+    "                    if (d.status === 'done') { showNetworks(d.networks); return; }"
+    "                    resultsDiv.innerHTML = '<div class=\"status error\">Scan failed, try again</div>';"
+    "                }).catch(function() {"
+    "                    resultsDiv.innerHTML = '<div class=\"status error\">Scan failed, try again</div>';"
+    "                });"
+    "            }"
+    "            fetch('/wifi/scan').then(function() { setTimeout(poll, 1500); }).catch(function() {"
+    "                resultsDiv.innerHTML = '<div class=\"status error\">Scan failed, try again</div>';"
+    "            });"
     "        }"
     "        "
     "        document.getElementById('wifiForm').addEventListener('submit', function(e) {"

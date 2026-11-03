@@ -1,0 +1,12 @@
+{
+  "MAIN_SUPPLY": "Ввод",
+  "ALTERNATIVE_SUPPLY": "Резервный ввод",
+  "CIRCUIT_BREAKER": "Автомат",
+  "DEVICE_LOAD": "Прибор",
+  "ZONE_LOAD": "Нагрузка",
+  "RENEWABLE_SOURCE": "Генерация",
+  "STORAGE_SYSTEM": "Накопитель",
+  "EV_CHARGING": "Зарядная станция",
+  "HEATING_COOLING": "Отопление/охлаждение",
+  "SMART_APPLIANCE": "Умный прибор"
+}

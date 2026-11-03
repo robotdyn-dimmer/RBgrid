@@ -1,0 +1,5 @@
+{
+  "title": "Charging stations",
+  "intro": "How the app counts charging sessions on points with the «EV charging» role: a station is charging while its power is above the threshold; a session ends once the power stays below it longer than the idle time. The price is what charging fees are counted at.",
+  "note": "Defaults for all stations of this hub; a station can have its own in its point parameters. Saved with “Apply”, at once."
+}

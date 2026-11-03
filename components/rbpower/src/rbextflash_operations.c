@@ -685,6 +685,16 @@ esp_err_t rbpower_flash_remove_unit(rbpower_unit_id_t unit_id)
  * free slot and leaving these records orphaned in a "free" slot a later unit would inherit.
  * No-op when flash is unavailable, the unit has no runtime buffers (a brand-new id gets its slot at the
  * next boot) or it is still slotted. */
+/* Public: does the unit keep flash history right now — a stats slot AND runtime ring buffers? false for a point
+ * beyond the slot limit, and (by the boot-time allocation) for a point bound since the last boot. */
+bool rbpower_flash_unit_has_history(rbpower_unit_id_t unit_id)
+{
+    if (!g_is_initialized || !rbpower_flash_is_available() || find_slot_for_unit(unit_id) < 0) return false;
+    for (uint16_t i = 0; i < g_runtime_manager.buffer_count; i++)
+        if (g_runtime_manager.buffers[i].unit_id == unit_id) return true;
+    return false;
+}
+
 esp_err_t rbpower_flash_reattach_unit(rbpower_unit_id_t unit_id)
 {
     if (!g_is_initialized || !rbpower_flash_is_available()) return ESP_OK;
@@ -2037,8 +2047,9 @@ esp_err_t rbpower_flash_read_records(rbpower_unit_id_t unit_id,
         output_ptr += buffer->record_size;
         records_read++;
 
-        // Reset the watchdog every 10 records (avoids a timeout on large ranges)
-        if ((i + 1) % 10 == 0) {
+        // Reset the watchdog every 10 records (avoids a timeout on large ranges). Only when the
+        // calling task is subscribed: HTTP handlers are not, and an unsubscribed reset logs an error.
+        if ((i + 1) % 10 == 0 && esp_task_wdt_status(NULL) == ESP_OK) {
             esp_task_wdt_reset();
         }
     }

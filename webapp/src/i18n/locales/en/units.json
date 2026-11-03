@@ -1,0 +1,21 @@
+{
+  "W": "W",
+  "kW": "kW",
+  "kWh": "kWh",
+  "Wh": "Wh",
+  "V": "V",
+  "A": "A",
+  "Hz": "Hz",
+  "var": "var",
+  "perKwh": "/kWh",
+  "perHour": "/h",
+  "perMonth": "/mo",
+  "h": "h",
+  "min": "min",
+  "pct": "%",
+  "mA": "mA",
+  "inductive": "lagging",
+  "capacitive": "leading",
+  "pf": "PF",
+  "VA": "VA"
+}

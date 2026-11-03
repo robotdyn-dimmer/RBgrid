@@ -2710,7 +2710,10 @@ static void rbgrid_cjson_free(void *p) { free(p); }
  */
 extern "C" void app_main(void) {
     { cJSON_Hooks h = { rbgrid_cjson_malloc, rbgrid_cjson_free }; cJSON_InitHooks(&h); }   /* before any JSON */
+    /* factory reset (POST /api/system/factory-reset) runs here, before NVS and the config file system open */
+    const bool factory_reset_done = rbwebserver_factory_reset_at_boot();
     rbevlog_init();   /* event log ring + diag log sink: before the first diag line */
+    if (factory_reset_done) rbpower_diag_printf("factory reset carried out at boot — starting as on first boot");
 
 #if defined(RBGRID_BENCH_RELAY_FAILSAFE)
     // SAFETY FIRST: drive the test-rig load-bank relays OFF before anything else (see above).
@@ -2927,6 +2930,16 @@ extern "C" void app_main(void) {
     bool have_saved_hw_units = littlefs_raw_exists("/hardware.json") && littlefs_raw_exists("/units.json");
     if (have_saved_hw_units) {
         esp_err_t lh = rbgrid_storage_load_hardware(base_hardware_config);
+        /* Repair: a /hardware.json saved by a build that did not write the ADC-typed definitions has none, and
+         * load_units then drops the default units 0x0006/0x0007 that bind to them. Put the two legacy
+         * definitions back (no ADC is sampled; the rbAmp bridge feeds these units) and re-save the file. */
+        if (lh == ESP_OK && base_hardware_config->adc.channels_count == 0) {
+            rbgrid_unit_uid_t v = rbgrid_config_add_adc_sensor(config_handle, GPIO_NUM_35, RBSENSOR_TYPE_VOLTAGE_ZMPT107_1);
+            rbgrid_unit_uid_t c = rbgrid_config_add_adc_sensor(config_handle, GPIO_NUM_34, RBSENSOR_TYPE_CURRENT_SCT013_10A);
+            esp_err_t sh = rbgrid_storage_save_hardware(base_hardware_config);
+            rbpower_diag_printf("config: /hardware.json had no sensor definitions for the default units — restored "
+                                "(0x%04X, 0x%04X), saved: %s", (unsigned)v, (unsigned)c, esp_err_to_name(sh));
+        }
         esp_err_t lu = rbgrid_storage_load_units(config_handle);
         ESP_LOGI(TAG, "✅ Sensor+unit config LOADED from flash (hardware:%s units:%s) — supplies recreated by load_units",
                  esp_err_to_name(lh), esp_err_to_name(lu));
@@ -3076,7 +3089,11 @@ extern "C" void app_main(void) {
         }
     }
 
-#if RBGRID_RBAMP_FLEET
+#if RBGRID_RBAMP_FLEET && RBGRID_DEFAULT_BENCH_FLEET
+    /* BENCH builds only. Product hubs restore their points from units.json; this legacy block hard-codes modules 1/2 at
+     * 0x51/0x52 with bench CT types and, on a product hub that adds modules through /api/v1/i2c, created duplicate
+     * "rbAmp I2/I3" points at boot for channels whose binding units.json doesn't carry by physics (a moved input, a
+     * phase group) — .139, 2026-11-03. */
     /* rbAmp fleet: create external I2C-sourced default units for the extra current
      * modules I2(0x51) + I3(0x52). 0x50 (UI1) feeds the existing main_supply 0x0006 +
      * voltage_bus 0x0007. The rbAmp source (below) provisions CT + injects into these.

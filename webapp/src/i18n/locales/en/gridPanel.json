@@ -1,0 +1,15 @@
+{
+  "title": "Mains",
+  "intro": "The site’s supply system: it sets the phases a point can take and the phase card on the overview.",
+  "system": "Mains system",
+  "auto": "Not set — counted as single-phase",
+  "kind1P": "Single phase",
+  "kindSPLIT": "Split phase 120/240 V (US)",
+  "kind3P": "Three phase",
+  "nominal": "Nominal: {v} · {hz} Hz",
+  "saved": "Mains system saved on the device.",
+  "error": "Could not save: {reason}",
+  "misfit": "These points have a phase the chosen mains system doesn’t allow: {points}. Change the phase on the point’s page.",
+  "suggest": "The points' phases suggest: {kind}. Choose the system if that is right.",
+  "notValidatedHelp": "The hub measures and shows the phases. “Not validated on hardware” means we have not yet run this system on our test bench against a reference meter. The note goes away by itself after that test."
+}

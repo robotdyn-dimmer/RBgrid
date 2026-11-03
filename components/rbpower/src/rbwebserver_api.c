@@ -1818,6 +1818,7 @@ esp_err_t rbwebserver_api_unit_mutate_handler(httpd_req_t *req)
     }
 
     int rc;
+    bool group_phases = false;   /* rebind ch 254: three-phase grouping, applies after a reboot */
     char body[400];
     if (nmatch == 1) {
         /* PARAMS PATCH — {name?, short_name?, phase?, rated_power_w?, max_current_a?, role?,
@@ -1968,16 +1969,23 @@ esp_err_t rbwebserver_api_unit_mutate_handler(httpd_req_t *req)
             httpd_resp_sendstr(req, "{\"status\":\"error\",\"message\":\"need module + ch\"}");
             return ESP_OK;
         }
+        /* ch 254 = group a three-phase module (STD-U3I3) as ONE input: only for the bridge-fed main input; the new
+         * fleet layout is saved and applies after a reboot (requires_reboot:true in the reply) */
+        group_phases = cJSON_IsNumber(jc) && jc->valueint == 254;
         rc = rbgrid_config_rebind_unit(uid, (uint8_t)jm->valueint, (uint8_t)jc->valueint);
         cJSON_Delete(root);
         if (rc == RBGRID_CONFIG_ERR_DUPLICATE_SENSOR) {
             httpd_resp_set_status(req, "409 Conflict");
-            httpd_resp_sendstr(req, "{\"status\":\"error\",\"code\":\"SENSOR_BOUND\",\"message\":\"target sensor bound to another unit\"}");
+            httpd_resp_sendstr(req, group_phases
+                ? "{\"status\":\"error\",\"code\":\"SENSOR_BOUND\",\"message\":\"a channel of this module carries another point — delete or move it first\"}"
+                : "{\"status\":\"error\",\"code\":\"SENSOR_BOUND\",\"message\":\"target sensor bound to another unit\"}");
             return ESP_OK;
         }
         if (rc != RBGRID_CONFIG_OK) {
             httpd_resp_set_status(req, "400 Bad Request");
-            httpd_resp_sendstr(req, "{\"status\":\"error\",\"message\":\"not an i2c unit or target sensor not in fleet\"}");
+            httpd_resp_sendstr(req, group_phases
+                ? "{\"status\":\"error\",\"code\":\"NOT_PHASE_MODULE\",\"message\":\"only the input can be grouped, on a present three-phase module (STD-U3I3)\"}"
+                : "{\"status\":\"error\",\"message\":\"not an i2c unit or target sensor not in fleet\"}");
             return ESP_OK;
         }
     } else if (strcmp(op, "rename") == 0) {
@@ -2016,9 +2024,9 @@ esp_err_t rbwebserver_api_unit_mutate_handler(httpd_req_t *req)
     esp_err_t su = rbgrid_storage_save_units(NULL);
     const rbpower_unit_definition_t* d = rbpower_home_get_unit_definition(uid);
     snprintf(body, sizeof(body),
-             "{\"status\":\"ok\",\"unit_id\":\"%04X\",\"point\":\"%s\",\"module\":%d,\"ch\":%u,\"persist\":\"%s\"}",
+             "{\"status\":\"ok\",\"unit_id\":\"%04X\",\"point\":\"%s\",\"module\":%d,\"ch\":%u,\"persist\":\"%s\"%s}",
              uid, d ? d->point : "", d ? (int)d->device_uid : -1, d ? d->channel_idx : 0,
-             esp_err_to_name(su));
+             esp_err_to_name(su), group_phases ? ",\"grouped\":true,\"requires_reboot\":true" : "");
     httpd_resp_sendstr(req, body);
     ESP_LOGW(TAG, "POST %s → ok (unit 0x%04X)", req->uri, uid);
     rbgrid_ha_discovery_request();   /* rename → HA device/entity names follow; rebind → harmless refresh */
@@ -3299,6 +3307,7 @@ char *rbgrid_build_schema_json(void)
         { "/api/system/mqtt-config",    "GET,POST", "composite", true,  true,  "broker_uri" },
         { "/api/system/time-sync",      "GET,POST", "composite", true,  true,  "", "enable_time_sync,primary_source,sntp_server" },
         { "/api/system/reboot",         "POST",     "n/a",       true,  false, "delay_ms" },
+        { "/api/system/factory-reset",  "POST",     "n/a",       true,  true,  "history(erase|keep)" },
         { "/api/system/version",        "GET",      "1",         false, false, "" },
         { "/api/system/ota",            "POST",     "n/a",       true,  true,  "(binary)" },
         { "/api/system/ui-upload",      "POST",     "n/a",       true,  false, "path (query); body=raw file" },

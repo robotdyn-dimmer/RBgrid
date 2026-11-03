@@ -1,0 +1,20 @@
+{
+  "title": "Telemetry",
+  "intro": "The hub's live data stream: to this app and other receivers.",
+  "profile": "Stream profile",
+  "lean": "Lean",
+  "full": "Full",
+  "leanLower": "lean",
+  "fullLower": "full",
+  "leanHint": "Lean: realtime values only; energy and money are read on demand — less load on the hub.",
+  "fullHint": "Full: every frame carries realtime values plus energy and money.",
+  "liveHint": "Switches at once, no restart.",
+  "switched": "Profile switched: {profile}.",
+  "switchFailed": "Could not switch the profile (no connection, or an admin token is needed).",
+  "state": "State",
+  "clients": "Apps connected now",
+  "techShow": "Technical details",
+  "techHide": "Hide technical details",
+  "frame": "Frame format",
+  "firmwareOwned": "State and technical parameters are set by the firmware; only the profile is changed here."
+}

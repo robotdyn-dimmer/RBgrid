@@ -1,0 +1,6 @@
+{
+  "1P": "single phase",
+  "SPLIT": "split phase {v}/{ll} V",
+  "3P": "three phase {v}/{ll} V",
+  "notValidated": " — not validated on hardware"
+}

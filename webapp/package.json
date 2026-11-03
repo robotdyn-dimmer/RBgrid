@@ -1,0 +1,85 @@
+{
+  "name": "rbgrid-webapp",
+  "version": "1.1.2",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "description": "RBGrid — ESP32 power-monitoring web interface (device-direct over HTTP/WS, CDN-hosted)",
+  "dependencies": {
+    "@emotion/cache": "11.13.1",
+    "@emotion/react": "11.13.3",
+    "@emotion/styled": "11.13.0",
+    "@mui/icons-material": "5.16.7",
+    "@mui/material": "5.16.7",
+    "@rbgrid/design-system": "file:design-system",
+    "axios": "^1.11.0",
+    "mqtt": "^5.15.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.27.0",
+    "react-scripts": "5.0.1"
+  },
+  "scripts": {
+    "postinstall": "node scripts/build-design-system.js",
+    "build:ds": "node scripts/build-design-system.js",
+    "prebuild": "node scripts/build-design-system.js",
+    "start": "cross-env DISABLE_ESLINT_PLUGIN=true GENERATE_SOURCEMAP=false react-scripts start",
+    "build": "cross-env DISABLE_ESLINT_PLUGIN=true GENERATE_SOURCEMAP=false react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "install:clean": "rm -rf node_modules/ && npm ci && npm start",
+    "lint": "eslint \"src/**/*.{ts,tsx}\" --fix --quiet",
+    "build:embedded": "node scripts/build-embedded.js",
+    "ui:upload": "node scripts/ui-upload.js",
+    "i18n:index": "node scripts/i18n-index.js",
+    "ui:check": "node scripts/ui-check.mjs",
+    "build:demo": "cross-env REACT_APP_DEMO_ONLY=true REACT_APP_DEMO_SITES=heatpump-ev,home,home-nosolar,business,ev PUBLIC_URL=. BUILD_PATH=build-demo DISABLE_ESLINT_PLUGIN=true GENERATE_SOURCEMAP=false react-scripts build && node scripts/zip-dir.js build-demo build-demo-zip/rbgrid-demo_v$npm_package_version.zip",
+    "build:site": "cross-env PUBLIC_URL=. BUILD_PATH=build-site DISABLE_ESLINT_PLUGIN=true GENERATE_SOURCEMAP=false react-scripts build"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@babel/plugin-proposal-private-property-in-object": "7.21.11",
+    "@testing-library/dom": "^9.3.4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^14.3.1",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^24.1.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "cross-env": "^7.0.3",
+    "eslint": "9.14.0",
+    "eslint-plugin-import": "2.31.0",
+    "eslint-plugin-jsx-a11y": "6.10.2",
+    "eslint-plugin-react": "7.37.2",
+    "eslint-plugin-react-hooks": "5.0.0",
+    "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "svgo": "3.0.2"
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^mqtt$": "<rootDir>/src/test/mqttStub.ts",
+      "^axios$": "<rootDir>/node_modules/axios/dist/node/axios.cjs"
+    }
+  },
+  "rbgrid": {
+    "apiVersion": 1
+  }
+}

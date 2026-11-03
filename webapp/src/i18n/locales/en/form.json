@@ -1,0 +1,14 @@
+{
+  "required": "Required",
+  "notNumber": "Enter a number, e.g. 6.43",
+  "min": "At least {min}",
+  "max": "At most {max}",
+  "decimals": "At most {n} decimal places",
+  "fixErrors": "Fix the fields marked red",
+  "noChanges": "No changes",
+  "leaveTitle": "Leave without saving?",
+  "leaveBody": "This page has unsaved changes — they will be lost.",
+  "leave": "Leave without saving",
+  "timeFormat": "Format HH:MM, e.g. 23:00",
+  "stay": "Stay"
+}

@@ -1,0 +1,7 @@
+The RBgrid web app (this folder) is licensed under the PolyForm Noncommercial License 1.0.0,
+the same licence as the rest of the RBgrid repository. The full licence text is in the
+repository's top-level LICENSE file.
+
+Required Notice: Copyright (c) Zhuhai RobotDyn Technology Co., Ltd.
+
+Third-party packages bundled into the built UI kit keep their own licences; see NOTICE.md.

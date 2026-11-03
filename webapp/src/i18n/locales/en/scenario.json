@@ -1,0 +1,9 @@
+{
+  "home": "Home",
+  "industrial": "Business",
+  "ev": "Charging stations",
+  "errorToken": "An admin token is required to change the scenario.",
+  "errorSave": "Couldn't save the scenario on the device.",
+  "errorNetwork": "Could not write to the hub: no connection or writing to this hub is not allowed.",
+  "errorRejected": "The hub rejected the write (code {status})."
+}

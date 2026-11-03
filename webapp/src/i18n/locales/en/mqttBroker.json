@@ -1,0 +1,16 @@
+{
+  "title": "MQTT broker",
+  "host": "Broker address",
+  "port": "Port",
+  "tls": "Secure connection (TLS, mqtts)",
+  "tlsKept": "The hub has a secure (mqtts) address saved. This app version doesn't change it: the hub's secure connection isn't supported yet.",
+  "user": "Login",
+  "pass": "Password",
+  "maskedHint": "The hub has a login and password stored but doesn't show them. To save another address, type them again — otherwise the broker is saved without them.",
+  "restartHint": "The hub connects to the new broker after a restart.",
+  "saved": "Broker saved.",
+  "savedReboot": "Broker saved on the hub. It connects after a restart.",
+  "failed": "The hub didn't take the broker address: {reason}",
+  "invalid": "Enter an address without spaces and a port from 1 to 65535.",
+  "passNoUser": "A broker won't take a password without a login — enter the login."
+}

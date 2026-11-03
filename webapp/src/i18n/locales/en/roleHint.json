@@ -1,0 +1,12 @@
+{
+  "MAIN_SUPPLY": "the whole site — what comes from the grid",
+  "ALTERNATIVE_SUPPLY": "a second source: generator, backup line",
+  "CIRCUIT_BREAKER": "a panel group behind one breaker",
+  "DEVICE_LOAD": "a single line or appliance: kitchen, water heater, pump",
+  "ZONE_LOAD": "a whole room or floor",
+  "RENEWABLE_SOURCE": "produces energy: solar panels, wind",
+  "STORAGE_SYSTEM": "a battery — charges and discharges",
+  "EV_CHARGING": "an EV charger",
+  "HEATING_COOLING": "heating, air conditioning, floor heating",
+  "SMART_APPLIANCE": "an appliance with its own control"
+}

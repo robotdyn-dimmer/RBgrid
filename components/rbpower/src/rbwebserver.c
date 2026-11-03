@@ -30,6 +30,9 @@
 #include "esp_ota_ops.h"      // OTA: esp_ota_begin/write/end/set_boot
 #include "esp_app_desc.h"     // esp_app_get_description (version endpoint)
 #include "esp_partition.h"
+#include "esp_attr.h"         /* RTC_NOINIT_ATTR — factory-reset marker */
+#include "esp_system.h"       /* esp_reset_reason */
+#include "nvs_flash.h"        /* nvs_flash_erase — factory reset */
 #include "esp_https_server.h"  /* TLS server (httpd_ssl_start) */
 #include "littlefs_raw.h"      /* optional prod cert/key from storage + https-enable flag */
 #include "freertos/FreeRTOS.h"
@@ -64,6 +67,17 @@ extern const unsigned char rbgrid_dev_key_pem_end[]    asm("_binary_rbgrid_dev_k
 #define RBWEB_HTTPS_CERT_FILE  "/https_cert.pem"  ///< littlefs file: production server certificate (PEM)
 #define RBWEB_HTTPS_KEY_FILE   "/https_key.pem"   ///< littlefs file: production private key (PEM)
 #define RBWEB_HTTPS_PORT       443                ///< HTTPS listening port
+
+/* ==== Factory reset ==========================================================================
+ * POST /api/system/factory-reset {"history":"erase"|"keep"} arms a marker in RTC no-init memory (it survives
+ * esp_restart, not a power cut) and restarts the hub. The erase runs at the very start of the next boot
+ * (rbwebserver_factory_reset_at_boot, first thing in app_main), before NVS and the config file system are
+ * opened, so nothing is erased under a mounted file system. A power cut between the request and the restart
+ * cancels the reset (the marker is lost) — the hub then just boots as it was. */
+#define RBWEB_FRESET_MAGIC 0x46525354u   ///< 'FRST'
+static RTC_NOINIT_ATTR uint32_t s_freset_magic;   ///< RBWEB_FRESET_MAGIC when armed
+static RTC_NOINIT_ATTR uint32_t s_freset_check;   ///< ~RBWEB_FRESET_MAGIC (power-on garbage guard)
+static RTC_NOINIT_ATTR uint32_t s_freset_flags;   ///< bit 0: erase the stats (history) partition too
 
 static bool g_https_enabled = false;   /* desired mode (persisted, read at boot) */
 static bool g_https_active  = false;   /* what the running server actually started as */
@@ -102,6 +116,7 @@ static esp_err_t rbwebserver_telemetry_latest_handler(httpd_req_t *req);
 static esp_err_t rbwebserver_system_reboot_handler(httpd_req_t *req);
 static esp_err_t rbwebserver_system_time_sync_handler(httpd_req_t *req);
 static esp_err_t rbwebserver_restore_system_config_handler(httpd_req_t *req);
+static esp_err_t rbwebserver_factory_reset_handler(httpd_req_t *req);
 
 // New API handlers
 // version/ota handlers moved to rbwebserver_ota.c (declared in rbwebserver_internal.h)
@@ -726,6 +741,15 @@ static esp_err_t register_uri_handlers(wifi_mode_t wifi_mode)
     };
     httpd_register_uri_handler(g_server_handle, &api_system_reboot);
 
+    // Factory reset - POST (admin token; erase at the next boot)
+    httpd_uri_t api_factory_reset = {
+        .uri = "/api/system/factory-reset",
+        .method = HTTP_POST,
+        .handler = rbwebserver_factory_reset_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(g_server_handle, &api_factory_reset);
+
     // OPTIONS handler for reboot
     httpd_uri_t api_system_reboot_options = {
         .uri = "/api/system/reboot",
@@ -1043,6 +1067,7 @@ static esp_err_t register_uri_handlers(wifi_mode_t wifi_mode)
         "/api/system/config",
         "/api/system/reboot",
         "/api/system/restore-system-config",
+        "/api/system/factory-reset",
         "/wifi",
         "/wifi/status",
         "/wifi/save",
@@ -1176,7 +1201,7 @@ rbpower_err_t rbwebserver_start()
         sslc.httpd.max_open_sockets = g_max_open_sockets;
         sslc.httpd.max_uri_handlers = 128;  // 72 overflowed — tail registrations (espnow GET/POST,
         // provisioning) failed SILENTLY and the CORS OPTIONS wildcard turned them into 405s. ~86 needed.
-        sslc.httpd.stack_size       = 10240;   // TLS handshake needs more stack than plain HTTP
+        sslc.httpd.stack_size       = 14336;   // TLS handshake needs more stack than plain HTTP (+4 KB as plain HTTP: see below)
         sslc.httpd.lru_purge_enable = true;
         sslc.httpd.uri_match_fn     = httpd_uri_match_wildcard;
 
@@ -1216,7 +1241,10 @@ rbpower_err_t rbwebserver_start()
         config.max_open_sockets = g_max_open_sockets;
         config.max_uri_handlers = 128; // 72 OVERFLOWED (espnow GET/POST fell off the table →
         // wildcard-OPTIONS made them 405). Count grew with history/export/backup/espnow; ~86 now, rest = headroom.
-        config.stack_size = 8192;
+        /* 12 KB: the handlers keep fleet copies (rbamp_bridge_config_t, ~2.5x larger since 8 modules) and big cJSON
+         * trees on this task; at 8 KB the high-water mark dropped to 144 bytes on .139 under the app + a time-zone save,
+         * and the hub panicked (stack overflow in httpd) or hung (2026-11-03). */
+        config.stack_size = 12288;
         config.lru_purge_enable = true;
         // Wildcard URI matching so REST path params work (e.g. DELETE /api/v1/units/{hexid}
         // registered as /api/v1/units/*). The wildcard matcher matches exact URIs identically, so all
@@ -1789,6 +1817,70 @@ static esp_err_t rbwebserver_restore_system_config_handler(httpd_req_t *req)
     return ESP_FAIL;
 }
 
+
+/* POST /api/system/factory-reset {"history":"erase"|"keep"} (admin token): arm the boot-time erase and restart.
+ * history defaults to "erase". 200 {"status":"ok","history":"…","rebooting":true}; the hub then comes up as on first
+ * boot (setup access point rbgrid-xxxx + portal). See rbwebserver_factory_reset_at_boot. */
+static esp_err_t rbwebserver_factory_reset_handler(httpd_req_t *req)
+{
+    add_cors_headers(req);
+    if (!rbapi_require_auth(req)) return ESP_FAIL;   /* destructive write: admin token required */
+    bool erase_history = true;
+    if (req->content_len > 0) {
+        char body[96];
+        int len = req->content_len;
+        if (len >= (int)sizeof(body) || httpd_req_recv(req, body, len) != len) {
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_set_status(req, "400 Bad Request");
+            return httpd_resp_sendstr(req, "{\"status\":\"error\",\"message\":\"expected {\\\"history\\\":\\\"erase\\\"|\\\"keep\\\"}\"}");
+        }
+        body[len] = '\0';
+        cJSON *j = cJSON_Parse(body);
+        const char *h = j ? cJSON_GetStringValue(cJSON_GetObjectItem(j, "history")) : NULL;
+        bool ok = (j != NULL) && (h == NULL || strcmp(h, "erase") == 0 || strcmp(h, "keep") == 0);
+        if (ok && h && strcmp(h, "keep") == 0) erase_history = false;
+        cJSON_Delete(j);
+        if (!ok) {
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_set_status(req, "400 Bad Request");
+            return httpd_resp_sendstr(req, "{\"status\":\"error\",\"message\":\"history must be \\\"erase\\\" or \\\"keep\\\"\"}");
+        }
+    }
+    s_freset_flags = erase_history ? 1u : 0u;
+    s_freset_check = ~RBWEB_FRESET_MAGIC;
+    s_freset_magic = RBWEB_FRESET_MAGIC;
+    rbpower_diag_printf("factory reset requested (history: %s) — the hub restarts and erases its settings at boot",
+                        erase_history ? "erase" : "keep");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, erase_history ? "{\"status\":\"ok\",\"history\":\"erase\",\"rebooting\":true}"
+                                          : "{\"status\":\"ok\",\"history\":\"keep\",\"rebooting\":true}");
+    (void)rbgrid_system_reboot(1000);
+    return ESP_OK;
+}
+
+bool rbwebserver_factory_reset_at_boot(void)
+{
+    if (s_freset_magic != RBWEB_FRESET_MAGIC || s_freset_check != ~RBWEB_FRESET_MAGIC) return false;
+    const bool erase_history = (s_freset_flags & 1u) != 0;
+    s_freset_magic = 0; s_freset_check = 0; s_freset_flags = 0;   /* one shot, even if an erase below fails */
+    if (esp_reset_reason() != ESP_RST_SW) {
+        ESP_LOGW(TAG, "factory reset marker found after a non-software reset — ignored");
+        return false;
+    }
+    ESP_LOGW(TAG, "FACTORY RESET: erasing settings%s", erase_history ? " and history" : " (history kept)");
+    const esp_partition_t *cfg = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "config");
+    esp_err_t ec = cfg ? esp_partition_erase_range(cfg, 0, cfg->size) : ESP_ERR_NOT_FOUND;
+    esp_err_t en = nvs_flash_erase();
+    esp_err_t es = ESP_OK;
+    if (erase_history) {
+        /* internal stats partition (internal-first media); an old partition table without it keeps its history */
+        const esp_partition_t *st = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "stats");
+        es = st ? esp_partition_erase_range(st, 0, st->size) : ESP_ERR_NOT_FOUND;
+    }
+    ESP_LOGW(TAG, "FACTORY RESET done: config %s, nvs %s, history %s", esp_err_to_name(ec), esp_err_to_name(en),
+             erase_history ? esp_err_to_name(es) : "kept");
+    return true;
+}
 
 static esp_err_t rbwebserver_system_reboot_handler(httpd_req_t *req)
 {
@@ -2394,15 +2486,21 @@ static esp_err_t rbwebserver_sta_home_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, home_html_part1);
 
     // Build and send navigation with WEB-APP link
-    char nav_webapp[256];
-    bool sta_ip_valid = (sta_connected && strcmp(sta_ip, "0.0.0.0") != 0);
-
-    if (sta_ip_valid) {
+    /* WEB-APP = the web app this hub serves itself (UI kit in the storage partition), same origin: works on the hub's
+     * own access point with no internet and needs no CORS. It used to point at https://webapp.rbgrid.io, which a phone
+     * on the hub's AP can't reach and which a browser blocks anyway (HTTPS page → HTTP hub: mixed content + local
+     * network access), .139 2026-11-03. */
+    char nav_webapp[320];
+    const bool sta_ip_valid = (sta_connected && strcmp(sta_ip, "0.0.0.0") != 0);
+    if (!rbwebserver_ui_installed()) {
         snprintf(nav_webapp, sizeof(nav_webapp),
-            "                <a href=\"https://webapp.rbgrid.io/?esp32_ip=%s&force=1\" target=\"_blank\">WEB-APP</a>", sta_ip);
-    } else {
+            "                <a href=\"#\" class=\"disabled\" title=\"The web app is not installed on this hub\">WEB-APP</a>");
+    } else if (sta_ip_valid) {   /* on the home Wi-Fi: the app at the hub's home-network address */
         snprintf(nav_webapp, sizeof(nav_webapp),
-            "                <a href=\"#\" class=\"disabled\">WEB-APP</a>");
+            "                <a href=\"http://%s/\" title=\"On your home Wi-Fi open http://%s/\">WEB-APP (http://%s/)</a>",
+            sta_ip, sta_ip, sta_ip);
+    } else {                     /* only the hub's own access point: the app right here (192.168.4.1) */
+        snprintf(nav_webapp, sizeof(nav_webapp), "                <a href=\"/\">WEB-APP</a>");
     }
     httpd_resp_sendstr_chunk(req, nav_webapp);
 

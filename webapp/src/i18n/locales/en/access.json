@@ -1,0 +1,8 @@
+{
+  "full": "Your hub's own Wi-Fi {ssid} still uses the setup password, and no admin token is set — anyone nearby can join it and change the hub. Set your own access-point password and an API token.",
+  "token": "No admin token is set — anyone who reaches the hub can change it. Set an API token.",
+  "ap": "Your hub's own Wi-Fi {ssid} still uses the setup password — anyone nearby can join it. Set your own access-point password.",
+  "toAp": "Access-point password",
+  "toToken": "API token",
+  "hide": "Hide"
+}

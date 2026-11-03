@@ -126,6 +126,14 @@ extern "C"
      * @note Called by the region migrator during init, before concurrent flash clients exist.
      */
     esp_err_t rbpower_flash_slot_map_get(uint16_t *unit_by_slot_out, int max_slots, int *used_out);
+
+    /**
+     * @brief Whether a unit keeps flash history right now (it has a stats slot and its ring buffers).
+     * @param[in] unit_id  Unit.
+     * @return false when flash is unavailable, the unit is beyond the slot limit, or it was bound since the last
+     *         boot (slots and buffers are set up at boot). Shown as `history` in units-config.
+     */
+    bool rbpower_flash_unit_has_history(rbpower_unit_id_t unit_id);
     /**
      * @brief Absolute stats-medium offset of a slot under the LIVE layout (v4 builds: the v4 stride).
      * @param[in] slot Slot index (0 .. RBPOWER_MAX_UNITS-1; not range-checked).

@@ -3177,6 +3177,14 @@ void IRAM_ATTR __wrap_esp_panic_handler(panic_info_t *info)
         s_boot_marker.p_pc = (uint32_t)info->addr;
         s_boot_marker.p_cause = 0; s_boot_marker.p_vaddr = 0;
         for (int i = 0; i < 4; ++i) s_boot_marker.p_bt[i] = 0;
+        {   /* the task that was running on the panicking core (a stack overflow names the overflowed task here) */
+            TaskHandle_t th = xTaskGetCurrentTaskHandleForCore(info->core);
+            const char *tn = th ? pcTaskGetName(th) : NULL;
+            size_t k = 0;
+            if (tn) for (; k < sizeof(s_boot_marker.wdt_task[0]) - 1 && tn[k]; ++k) s_boot_marker.wdt_task[0][k] = tn[k];
+            s_boot_marker.wdt_task[0][k] = 0;
+            s_boot_marker.wdt_task[1][0] = 0;
+        }
         const XtExcFrame *xf = (const XtExcFrame *)info->frame;
         if (xf) {
             s_boot_marker.p_pc = xf->pc; s_boot_marker.p_cause = xf->exccause; s_boot_marker.p_vaddr = xf->excvaddr;
@@ -3254,6 +3262,12 @@ int rbpower_boot_check(char* out, size_t cap)
                       (unsigned long)s_boot_marker.p_pc, (unsigned long)s_boot_marker.p_cause, (unsigned long)s_boot_marker.p_vaddr,
                       (unsigned long)s_boot_marker.p_bt[0], (unsigned long)s_boot_marker.p_bt[1],
                       (unsigned long)s_boot_marker.p_bt[2], (unsigned long)s_boot_marker.p_bt[3]);
+        if (r == ESP_RST_PANIC && s_boot_marker.wdt_task[0][0]) {   /* printable only (older images: garbage) */
+            char tn[16]; size_t k = 0;
+            for (; k < sizeof(tn) - 1 && s_boot_marker.wdt_task[0][k] >= 0x20 && s_boot_marker.wdt_task[0][k] < 0x7F; k++) tn[k] = s_boot_marker.wdt_task[0][k];
+            tn[k] = 0;
+            if (k) n = rb_scat(out, cap, n, " task=%s", tn);
+        }
     }
     if (valid && (r == ESP_RST_TASK_WDT || r == ESP_RST_INT_WDT) && s_boot_marker.wdt_task[0][0]) {
         s_boot_marker.wdt_task[0][15] = 0; s_boot_marker.wdt_task[1][15] = 0;

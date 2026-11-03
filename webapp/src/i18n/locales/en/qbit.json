@@ -1,0 +1,14 @@
+{
+  "0": "partial period",
+  "1": "clock not synced",
+  "2": "clock step",
+  "3": "sensor data gap",
+  "4": "recomputed",
+  "5": "estimate: a window over 6 h, lower accuracy",
+  "6": "consumption only (a source without direction)",
+  "7": "clipping: the current hit the sensor's limit — energy under-counted",
+  "8": "migrated from the old format",
+  "9": "the module restarted — energy before its restart wasn't measured",
+  "10": "the module firmware changed",
+  "11": "sensor reversed — consumption not metered"
+}

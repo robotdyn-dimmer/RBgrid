@@ -79,13 +79,26 @@ extern "C"
      *
      * @param[in]  path        File path.
      * @param[out] data        Buffer to read into.
-     * @param[in]  max_size    Buffer size, bytes; longer files are truncated.
+     * @param[in]  max_size    Buffer size, bytes.
      * @param[out] actual_size Number of bytes read (may be NULL).
-     * @retval ESP_OK              Primary or backup copy read and verified.
-     * @retval ESP_ERR_INVALID_ARG Not mounted or NULL path/data.
-     * @retval ESP_ERR_NOT_FOUND   Neither a valid primary nor a valid backup exists.
+     * @retval ESP_OK               Primary or backup copy read and verified.
+     * @retval ESP_ERR_INVALID_ARG  Not mounted or NULL path/data.
+     * @retval ESP_ERR_INVALID_SIZE The primary file is larger than `max_size`; nothing is read and the
+     *                              backup is not tried (the file is not treated as corrupt).
+     * @retval ESP_ERR_NOT_FOUND    Neither a valid primary nor a valid backup exists.
      */
     esp_err_t littlefs_raw_read(const char *path, void *data, size_t max_size, size_t *actual_size);
+
+    /**
+     * @brief Size of a file, without reading its data.
+     *
+     * @param[in]  path File path.
+     * @param[out] size File size, bytes.
+     * @retval ESP_OK              Size returned.
+     * @retval ESP_ERR_INVALID_ARG Not mounted or NULL argument.
+     * @retval ESP_ERR_NOT_FOUND   No such regular file.
+     */
+    esp_err_t littlefs_raw_size(const char *path, size_t *size);
 
     /**
      * @brief Delete a file and its atomic-write companions (`.bak`, `.crc`, `.bak.crc`, `.tmp`).

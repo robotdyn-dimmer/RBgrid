@@ -1,0 +1,18 @@
+{
+  "currency": "Currency",
+  "price": "Price per kWh, {cur}",
+  "dayPrice": "Day price, {cur}",
+  "nightPrice": "Night price (23–7), {cur}",
+  "twoZone": "There is a night rate (23:00–07:00)",
+  "inclVat": "Price as on the bill — incl. VAT",
+  "vat": "VAT, %",
+  "sell": "The grid pays per exported kWh, {cur} (if any)",
+  "sellHint": "Only with solar panels and a feed-in contract.",
+  "total": "Total: {price} incl. VAT.",
+  "totalTwo": "Total: day {day}, night {night} incl. VAT.",
+  "stored": "On the hub: {net} excl. VAT + {vat} %.",
+  "save": "Save the tariff",
+  "saving": "Saving…",
+  "saved": "Tariff saved on the hub ✓ Complex tariffs (levies, several zones) — on the “Tariffs” screen.",
+  "failed": "Couldn't save the tariff: the hub didn't answer or refused."
+}

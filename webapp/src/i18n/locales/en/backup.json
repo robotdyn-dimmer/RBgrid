@@ -1,0 +1,19 @@
+{
+  "title": "Restore point",
+  "intro": "A copy of the hub's settings kept on the hub: settings, points, tariffs, time, modules (no tokens). One only: a new one replaces the previous. Save one before big changes.",
+  "none": "No restore point.",
+  "unknown": "Couldn't find out whether there is a restore point.",
+  "at": "Saved {when} · files: {n}",
+  "atUnknown": "Saved (date unknown) · files: {n}",
+  "save": "Save restore point",
+  "restore": "Restore and restart",
+  "restoring": "Restoring…",
+  "saved": "Restore point saved (files: {n}).",
+  "overwriteTitle": "Replace the restore point?",
+  "overwriteBody": "The hub already has a restore point. The new one replaces it — the previous can't be brought back.",
+  "restoreTitle": "Restore settings and restart the hub?",
+  "restoreBody": "Current settings, points and tariffs are replaced by the saved ones, then the hub restarts (back in 20–30 s). Energy metering isn't interrupted.",
+  "restored": "Files restored: {n}. The hub is restarting — back in 20–30 s.",
+  "failed": "The hub didn't do it (no connection?).",
+  "restoredNoReboot": "Files restored: {n}, but the restart command didn't go. The settings take effect after the hub restarts."
+}

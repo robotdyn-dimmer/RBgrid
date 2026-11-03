@@ -1,0 +1,10 @@
+{
+  "NIGHT": "Night",
+  "MORNING_PEAK": "Morning peak",
+  "DAY": "Day",
+  "EVENING_PEAK": "Evening peak",
+  "LATE_EVENING": "Late evening",
+  "WEEKEND": "Weekend",
+  "HOLIDAY": "Holiday",
+  "CRITICAL_PEAK": "Critical peak"
+}

@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <math.h>
 #include "rbjson.h"
+#include "rbextflash_operations.h"   /* rbpower_flash_unit_has_history — units-config `history` */
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_app_desc.h"            /* esp_app_get_description — HA device sw_version */
@@ -801,6 +802,45 @@ char* rbgrid_json_create_hardware_config(const rbpower_hardware_config_t* hardwa
         cJSON_AddItemToObject(root, "data", data);
     }
 
+    /* Config FILE only: the ADC-typed sensor definitions. There is no on-chip ADC; these are the legacy
+     * definitions that the default units 0x0006 / 0x0007 bind to (the rbAmp bridge feeds them), and
+     * rbgrid_storage_load_units resolves a unit's sensor through them on the next boot. Without them a
+     * hub whose config was first saved by this firmware lost both default units after the first reboot.
+     * The API message (with a context) stays network-only. */
+    if (!context) {
+        cJSON* adc = cJSON_CreateObject();
+        if (adc) {
+            cJSON* channels = cJSON_CreateArray();
+            for (int i = 0; i < hardware_config->adc.channels_count && i < RBPOWER_MAX_CHANNELS; i++) {
+                cJSON_AddItemToArray(channels, cJSON_CreateNumber(hardware_config->adc.channels[i]));
+            }
+            cJSON_AddItemToObject(adc, "channels", channels);
+            cJSON_AddNumberToObject(adc, "channels_count", hardware_config->adc.channels_count);
+            cJSON_AddNumberToObject(adc, "sampling_frequency", hardware_config->adc.sampling_frequency);
+            cJSON_AddNumberToObject(adc, "adc_resolution", hardware_config->adc.adc_resolution);
+            cJSON_AddNumberToObject(adc, "adc_attenuation", hardware_config->adc.adc_attenuation);
+            cJSON_AddItemToObject(data, "adc", adc);
+        }
+        cJSON* adc_sensors = cJSON_CreateObject();
+        if (adc_sensors) {
+            cJSON* channels = cJSON_CreateArray();
+            for (int i = 0; i < hardware_config->adc.channels_count && i < RBPOWER_MAX_CHANNELS; i++) {
+                const rbpower_sensor_channel_config_t* sensor = &hardware_config->adc_sensors.channels[i];
+                cJSON* channel = cJSON_CreateObject();
+                if (!channel) continue;
+                cJSON_AddBoolToObject(channel, "enabled", sensor->enabled);
+                const char* sensor_type_str = "UNKNOWN";
+                if (sensor->type >= 0 && sensor->type < RBSENSOR_TYPE_UNKNOWN) sensor_type_str = rbsensor_type_text[sensor->type];
+                cJSON_AddStringToObject(channel, "type", sensor_type_str);
+                cJSON_AddStringToObject(channel, "name", sensor->name);
+                cJSON_AddNumberToObject(channel, "scale_factor", sensor->scale_factor);
+                cJSON_AddNumberToObject(channel, "zero_offset", sensor->zero_offset);
+                cJSON_AddItemToArray(channels, channel);
+            }
+            cJSON_AddItemToObject(adc_sensors, "channels", channels);
+            cJSON_AddItemToObject(data, "adc_sensors", adc_sensors);
+        }
+    }
 
     // === NETWORK: mains nominal frequency (Hz) and voltage (V) ===
     cJSON* network = cJSON_CreateObject();
@@ -2256,6 +2296,12 @@ char* rbgrid_json_create_sensors_list(const rbgrid_json_context_t* context) {
      * deleted; the sensor stays, re-bindable). unit_id is JSON null; present is inferred
      * from a bound sibling on the same module. Voltage feeds (RBAMP_ENTRY_VOLTAGE) aren't CT sensors. */
     if (have_fleet) {
+        /* a module that answers is present even with no point bound yet (a just-added module's channels must not
+         * read "no signal" until the first bind): the bridge keeps the module's observed presence in its descriptor */
+        for (uint8_t m = 0; m < fleet.module_count && m < RBAMP_MAX_MODULES; m++) {
+            rbpower_module_desc_t md;
+            if (rbpower_get_module_desc(m, &md) && md.present) module_present[m] = true;
+        }
         for (uint8_t m = 0; m < fleet.module_count && m < RBAMP_MAX_MODULES; m++) {
             const rbamp_module_cfg_t* mod = &fleet.modules[m];
             for (uint8_t e = 0; e < mod->entry_count && e < RBAMP_MAX_ENTRIES; e++) {
@@ -2306,9 +2352,18 @@ char* rbgrid_json_create_sensors_list(const rbgrid_json_context_t* context) {
             cJSON_AddStringToObject(o, "model", d.model);
             /* sensor family: SCT- = user picks the SCT-013 model per channel; CT- = CT shipped with
              * the module, calibrated in pair, model fixed per channel (not settable) */
-            if (d.sensor_class != 0xFF) cJSON_AddNumberToObject(o, "sensor_class", d.sensor_class);
-            cJSON_AddBoolToObject(o, "ct_settable", d.sensor_class == 1);   /* 0 = uncalibrated module, 2/3 = CT- (fixed) */
-            if (d.sensor_class == 0) cJSON_AddBoolToObject(o, "uncalibrated", true);
+            if (d.line) {
+                /* STD: the class byte (CFG_CLASS) is metadata the factory leaves at 0 (shipped U3I3 0x7E reads 0 —
+                 * rbamp-dev 2026-11-03); every STD input is factory-calibrated in its own calibration block. Not a
+                 * user-settable CT, and "uncalibrated" only when the module's own CAL_OK status says so. */
+                if (d.sensor_class != 0xFF && d.sensor_class != 0) cJSON_AddNumberToObject(o, "sensor_class", d.sensor_class);
+                cJSON_AddBoolToObject(o, "ct_settable", false);
+                if (d.cal == 0) cJSON_AddBoolToObject(o, "uncalibrated", true);
+            } else {
+                if (d.sensor_class != 0xFF) cJSON_AddNumberToObject(o, "sensor_class", d.sensor_class);
+                cJSON_AddBoolToObject(o, "ct_settable", d.sensor_class == 1);   /* 0 = uncalibrated module, 2/3 = CT- (fixed) */
+                if (d.sensor_class == 0) cJSON_AddBoolToObject(o, "uncalibrated", true);
+            }
             cJSON_AddNumberToObject(o, "variant", d.variant);
             cJSON_AddNumberToObject(o, "n_v", d.n_v);
             cJSON_AddNumberToObject(o, "n_i", d.n_i);
@@ -2347,6 +2402,14 @@ char* rbgrid_json_create_sensors_list(const rbgrid_json_context_t* context) {
             cJSON_AddItemToArray(mods, o);
         }
         if (mods) cJSON_AddItemToObject(root, "modules", mods);
+    }
+    {   /* I2C bus stall (rbAmp bridge supervisor): > 0 = the module poll has made no progress for that many seconds —
+         * typically a module left on the bus without power holding SDA/SCL. 0 / absent = polling normally. */
+        uint32_t st = rbpower_i2c_bus_stalled_s();
+        if (st > 0) cJSON_AddNumberToObject(root, "bus_stalled_s", st);
+        /* a bus line held low (module without power / in another mode / miswired): > 0 = seconds held */
+        uint32_t ll = rbpower_i2c_bus_line_low_s();
+        if (ll > 0) cJSON_AddNumberToObject(root, "bus_line_low_s", ll);
     }
     char* out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -2513,6 +2576,12 @@ static const struct { const char* metric; const char* field; const char* name;
  * units get their HA entities WITHOUT waiting for an MQTT reconnect. */
 void __attribute__((weak)) rbgrid_ha_discovery_request(void) {}
 
+/** @brief Weak default of the I2C bus-stall probe (0 = not stalled / no rbAmp bridge in this build); the
+ *  rbAmp bridge provides the real one. */
+uint32_t __attribute__((weak)) rbpower_i2c_bus_stalled_s(void) { return 0; }
+/** @brief Weak default of the bus line-low probe (0 = lines idle high / no bridge). */
+uint32_t __attribute__((weak)) rbpower_i2c_bus_line_low_s(void) { return 0; }
+
 /* Inverse of the per-unit discovery: on unit DELETE publish an EMPTY retained payload to every
  * per-unit config topic so HA drops the entities (same rule the ESP-NOW node remover uses). Without
  * this a deleted unit would stay in HA as a ghost going `unavailable` after expire_after. Key rule
@@ -2595,15 +2664,16 @@ void rbgrid_json_publish_ha_discovery(void)
      * the telemetry payload's system{} block. uom = configured currency → HA monetary device_class. */
     {
         const char* cur = rbpower_tariff_currency();
-        ha_pub_entity(m, "system", "cost_total", "Cost (Total)", "system.cost_total", true, cur, "monetary", "total_increasing",
+        ha_pub_entity(m, "system", "cost_total", "Cost (Total)", "system.cost_total", true, cur, "monetary", "total",
                       m, "RBGrid System", NULL, state_t, avty_t, fw, NULL);
-        /* monetary allows only state_class `total` in HA — the daily reset needs last_reset, taken
-         * from system.day_start (local midnight, ISO) in the same payload */
+        /* monetary allows only state_class `total` in HA (total_increasing is rejected for it) — the
+         * lifetime totals carry no last_reset; the daily reset needs last_reset, taken from
+         * system.day_start (local midnight, ISO) in the same payload */
         ha_pub_entity(m, "system", "cost_day", "Cost (Day)", "system.cost_day", true, cur, "monetary", "total",
                       m, "RBGrid System", NULL, state_t, avty_t, fw, "LAST_RESET");
-        ha_pub_entity(m, "system", "revenue_total", "Revenue (Total)", "system.rev_total", true, cur, "monetary", "total_increasing",
+        ha_pub_entity(m, "system", "revenue_total", "Export value (Total)", "system.rev_total", true, cur, "monetary", "total",
                       m, "RBGrid System", NULL, state_t, avty_t, fw, NULL);
-        ha_pub_entity(m, "system", "revenue_day", "Revenue (Day)", "system.rev_day", true, cur, "monetary", "total",
+        ha_pub_entity(m, "system", "revenue_day", "Export value (Day)", "system.rev_day", true, cur, "monetary", "total",
                       m, "RBGrid System", NULL, state_t, avty_t, fw, "LAST_RESET");
         published += 4;
     }
@@ -2789,6 +2859,9 @@ char* rbgrid_json_create_units_config(const rbgrid_json_context_t* context) {
                 cJSON_AddNumberToObject(unit_obj, "caps", unit_def->caps);
                 cJSON_AddNumberToObject(unit_obj, "device_uid", (double)unit_def->device_uid); /* ≤48 bits, exact in double */
                 cJSON_AddNumberToObject(unit_obj, "channel_idx", unit_def->channel_idx);
+                /* flash history: false = live only (beyond the 12-slot limit, or bound since the last boot) */
+                if (unit_def->type != RBPOWER_METRIC_VOLTAGE_BUS)
+                    cJSON_AddBoolToObject(unit_obj, "history", rbpower_flash_unit_has_history(unit_def->unit_id));
                 cJSON_AddNumberToObject(unit_obj, "phase", unit_def->phase);           /* reserved */
                 cJSON_AddNumberToObject(unit_obj, "group_id", unit_def->group_id);     /* reserved */
                 cJSON_AddNumberToObject(unit_obj, "role_trunk", unit_def->role_trunk); /* reserved */

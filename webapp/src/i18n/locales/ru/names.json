@@ -1,0 +1,6 @@
+{
+  "mainInput": "Ввод",
+  "voltageBus": "Шина напряжения",
+  "pointN": "Точка {id}",
+  "unnamedChannel": "Без имени · датчик {amps} А (модуль {module}, {jack})"
+}

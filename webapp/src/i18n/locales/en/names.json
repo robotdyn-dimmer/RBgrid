@@ -1,0 +1,6 @@
+{
+  "mainInput": "Main input",
+  "voltageBus": "Voltage bus",
+  "pointN": "Point {id}",
+  "unnamedChannel": "Unnamed · {amps} A sensor ({module} module, {jack})"
+}

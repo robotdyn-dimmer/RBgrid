@@ -1,0 +1,6 @@
+{
+  "offline": "○ offline",
+  "alarm": "⚠ alarm",
+  "basicReversed": "sensor reversed — not metered",
+  "noChannel": "○ no such channel on the module"
+}
