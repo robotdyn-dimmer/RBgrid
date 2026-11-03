@@ -66,7 +66,7 @@ rbAmp modules clip onto your existing wiring and measure each circuit. The ESP32
 | **Wiring** | I²C, four wires. Keep the module cable up to 15 cm (recommended); with up to three modules, leave each module's pull-ups as they are, and for four or more see the [rbAmp wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection). |
 
 <p>
-  <img alt="An rbAmp Basic measurement module board, top view." src="https://www.rbgrid.io/assets/img/photos/module-basic-sct-ui5.webp" width="360">
+  <img alt="An rbAmp Basic measurement module board, top view." src="https://www.rbgrid.io/assets/img/photos/module-basic-sct-ui5.webp" height="160">
   <img alt="An rbAmp STD-U3I3 three-phase meter module on a DIN rail, with its three calibrated current sensors." src="https://www.rbgrid.io/assets/img/photos/module-std-u3i3-din.webp" width="360">
 </p>
 
