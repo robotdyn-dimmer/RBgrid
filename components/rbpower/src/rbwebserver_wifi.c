@@ -169,15 +169,21 @@ esp_err_t rbwebserver_wifi_config_handler(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, html_header);
 
     // Build and send navigation with WEB-APP link
-    char nav_webapp[256];
-    bool sta_ip_valid = (sta_connected && strcmp(sta_ip, "0.0.0.0") != 0);
-
-    if (sta_ip_valid) {
+    /* WEB-APP = the web app this hub serves itself (UI kit in the storage partition), same origin: works on the hub's
+     * own access point with no internet and needs no CORS. It used to point at https://webapp.rbgrid.io, which a phone
+     * on the hub's AP can't reach and which a browser blocks anyway (HTTPS page → HTTP hub: mixed content + local
+     * network access), .139 2026-11-03. */
+    char nav_webapp[320];
+    const bool sta_ip_valid = (sta_connected && strcmp(sta_ip, "0.0.0.0") != 0);
+    if (!rbwebserver_ui_installed()) {
         snprintf(nav_webapp, sizeof(nav_webapp),
-            "                <a href=\"https://webapp.rbgrid.io/?esp32_ip=%s&force=1\" target=\"_blank\">WEB-APP</a>", sta_ip);
-    } else {
+            "                <a href=\"#\" class=\"disabled\" title=\"The web app is not installed on this hub\">WEB-APP</a>");
+    } else if (sta_ip_valid) {   /* on the home Wi-Fi: the app at the hub's home-network address */
         snprintf(nav_webapp, sizeof(nav_webapp),
-            "                <a href=\"#\" class=\"disabled\">WEB-APP</a>");
+            "                <a href=\"http://%s/\" title=\"On your home Wi-Fi open http://%s/\">WEB-APP (http://%s/)</a>",
+            sta_ip, sta_ip, sta_ip);
+    } else {                     /* only the hub's own access point: the app right here (192.168.4.1) */
+        snprintf(nav_webapp, sizeof(nav_webapp), "                <a href=\"/\">WEB-APP</a>");
     }
     httpd_resp_sendstr_chunk(req, nav_webapp);
 

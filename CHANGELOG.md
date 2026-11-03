@@ -39,6 +39,12 @@ Built against the public rbAmp ESP-IDF component.
 - An STD module is no longer reported as "uncalibrated" just because its sensor-class byte is unset, as it
   is on shipped STD-U3I3 modules. It counts as uncalibrated only when its own calibration status says so.
 
+### Hub pages
+- The WEB-APP link on the hub's own pages (Wi-Fi setup, home) opens the web app the hub serves itself. On your home
+  Wi-Fi it shows the hub's address (`http://<hub>/`). On the hub's own access point it opens the app there. It is
+  greyed out when no app is installed. It used to point to https://webapp.rbgrid.io, which a phone on the hub's
+  access point can't reach, and which a browser blocks for an HTTP hub.
+
 ### Factory reset
 - `POST /api/system/factory-reset {"history": "erase" | "keep"}` (admin token) returns the hub to its first
   start. History is erased by default.
