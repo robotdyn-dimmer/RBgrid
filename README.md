@@ -65,10 +65,9 @@ rbAmp modules clip onto your existing wiring and measure each circuit. The ESP32
 | **Grid** | Single-phase and three-phase supplies. A three-phase supply is measured by one STD-U3I3, set as the three-phase input in the app: one measurement point with per-phase readings. Split-phase (two live legs sharing a neutral) is planned for a future release. |
 | **Wiring** | I²C, four wires. Keep the module cable up to 15 cm (recommended); with up to three modules, leave each module's pull-ups as they are, and for four or more see the [rbAmp wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection). |
 
-<p>
-  <img alt="An rbAmp Basic measurement module board, top view." src="https://www.rbgrid.io/assets/img/photos/module-basic-sct-ui5.webp" height="160">
-  <img alt="An rbAmp STD-U3I3 three-phase meter module on a DIN rail, with its three calibrated current sensors." src="https://www.rbgrid.io/assets/img/photos/module-std-u3i3-din.webp" width="360">
-</p>
+| | |
+|---|---|
+| <img alt="An rbAmp Basic measurement module board, top view." src="https://www.rbgrid.io/assets/img/photos/module-basic-sct-ui5.webp" height="160"> | <img alt="An rbAmp STD-U3I3 three-phase meter module on a DIN rail, with its three calibrated current sensors." src="https://www.rbgrid.io/assets/img/photos/module-std-u3i3-din.webp" width="360"> |
 
 RBgrid itself is free for personal, non-commercial use; the hardware is the only cost. Module prices and sets: [rbgrid.io/hardware](https://www.rbgrid.io/hardware?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
 
