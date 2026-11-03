@@ -31,19 +31,19 @@ Requires **ESP-IDF v5.4.1** and `openssl`.
 ```bash
 git clone https://github.com/robotdyn-dimmer/RBgrid.git
 cd RBgrid
-components/rbpower/certs/gen_dev_cert.sh      # once, before the first build (generates the LAN HTTPS dev certificate)
+components/rbpower/certs/gen_dev_cert.sh      # once, before the first build (generates the development certificate)
 idf.py set-target esp32
 idf.py build
 idf.py -p <PORT> flash                        # <PORT> e.g. /dev/ttyUSB0, COM3
 ```
 
-After the first USB flash, updates are delivered over the air from the web app. On first boot the hub starts its own Wi-Fi `rbgrid-<mac4>`; open `192.168.4.1`, save your home Wi-Fi, then set your own access-point password (and, optionally, an MQTT broker) in the app.
+After the first USB flash, the hub can be updated over the air: you upload a new image from the web app. On first boot the hub starts its own Wi-Fi `rbgrid-<mac4>`; open `192.168.4.1` and save your home Wi-Fi, then (optionally) set an MQTT broker in the app. To use your own access-point password, set it at build time.
 
 Sensors and measurement points are **configured at runtime** from the web app or the REST API — not in code. See the documentation.
 
 ## Documentation
 
-Full documentation: **[rbgrid.io/rbgrid-doc-overview](https://www.rbgrid.io/rbgrid-doc-overview?utm_source=github&utm_medium=referral&utm_campaign=rbgrid)**
+Full documentation: **[rbgrid.io/webapp/docs](https://www.rbgrid.io/webapp/docs?utm_source=github&utm_medium=referral&utm_campaign=rbgrid)**
 
 ## License
 
