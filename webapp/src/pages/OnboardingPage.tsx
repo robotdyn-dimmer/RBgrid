@@ -179,7 +179,7 @@ const IntegrationsStep: React.FC = () => {
       <Stack spacing={1.5}>
         <Typography variant="h6" fontWeight={700}>{t('onboarding.integrationsTitle')}</Typography>
         <Typography color="text.secondary">{t('onboarding.integrationsBody')}</Typography>
-        <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => navigate('/config#mqtt')}>{t('onboarding.integrationsOpen')}</Button>
+        <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => navigate('/config#home-assistant')}>{t('onboarding.integrationsOpen')}</Button>
       </Stack>
     </Card>
   );

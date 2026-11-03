@@ -14,5 +14,8 @@
   "save": "Save the tariff",
   "saving": "Saving…",
   "saved": "Tariff saved on the hub ✓ Complex tariffs (levies, several zones) — on the “Tariffs” screen.",
-  "failed": "Couldn't save the tariff: the hub didn't answer or refused."
+  "failed": "Couldn't save the tariff: the hub didn't answer or refused.",
+  "replaceTitle": "Replace the hub's tariff?",
+  "replaceBody": "The hub already has a fuller plan (taxes and levies, net metering, fixed payments or more zones). This quick tariff replaces it. To change a few prices, edit the plan in Tariffs instead.",
+  "replace": "Replace"
 }

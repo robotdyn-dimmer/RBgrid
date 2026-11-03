@@ -2968,7 +2968,9 @@ esp_err_t rbwebserver_api_token_handler(httpd_req_t *req)
 
 /* GET/POST /api/system/security: CORS policy (dev_cors flag + origin allow-list).
  * Both methods admin-gated (unarmed auth = open, as everywhere). POST body:
- * {"dev_cors":bool, "origins":["http://host:port", ...≤4]} → persisted to /sec_cfg + live reload. */
+ * {"dev_cors":bool, "origins":["http://host:port", ...≤8]} → persisted to /sec_cfg + live reload.
+ * GET also returns "builtin_origins" (always allowed, read-only) and "origins_max". A POST without
+ * "dev_cors" keeps allow-list mode (false). Built-in origins in a POSTed list are dropped (no slot used). */
 esp_err_t rbwebserver_api_security_handler(httpd_req_t *req)
 {
     add_cors_headers(req);
@@ -2986,6 +2988,11 @@ esp_err_t rbwebserver_api_security_handler(httpd_req_t *req)
         cJSON *arr = cJSON_CreateArray();
         for (int i = 0; i < n; i++) cJSON_AddItemToArray(arr, cJSON_CreateString(orgs[i]));
         cJSON_AddItemToObject(j, "origins", arr);
+        cJSON *bi = cJSON_CreateArray();
+        for (int i = 0; i < rbwebserver_security_builtin_count(); i++)
+            cJSON_AddItemToArray(bi, cJSON_CreateString(rbwebserver_security_builtin_origin(i)));
+        cJSON_AddItemToObject(j, "builtin_origins", bi);
+        cJSON_AddNumberToObject(j, "origins_max", RBWEB_CORS_MAX_ORIGINS_PUB);
         char *out = cJSON_PrintUnformatted(j);
         cJSON_Delete(j);
         if (!out) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }
@@ -3012,7 +3019,10 @@ esp_err_t rbwebserver_api_security_handler(httpd_req_t *req)
         if (cJSON_IsArray(arr_in)) {
             cJSON *o = NULL;
             cJSON_ArrayForEach(o, arr_in) {
-                if (cJSON_IsString(o) && o->valuestring[0] && strlen(o->valuestring) < 64 &&
+                bool is_builtin = false;
+                for (int b = 0; cJSON_IsString(o) && b < rbwebserver_security_builtin_count(); b++)
+                    if (strcmp(o->valuestring, rbwebserver_security_builtin_origin(b)) == 0) is_builtin = true;
+                if (cJSON_IsString(o) && o->valuestring[0] && strlen(o->valuestring) < 64 && !is_builtin &&
                     kept < RBWEB_CORS_MAX_ORIGINS_PUB) {
                     cJSON_AddItemToArray(arr, cJSON_CreateString(o->valuestring));
                     kept++;

@@ -230,6 +230,7 @@ export const SavingsCard: React.FC<SavingsCardProps> = ({ groups, join, mainId, 
   // not «where the money goes» (3φ audit H3P-11).
   // Stable colours: the points' keys in a fixed order, not by today's rank.
   const shareKeys = shares.map((x) => x.key).filter((k): k is string => !!k).sort();
+  const moneyBar = money && shares.every((x) => x.money != null);
   if (shares.length > 1) {
     items.push(
       <Insight key="shares" tone="info" title={money ? t('cards.savingsSharesTitle') : t('cards.savingsSharesTitleEnergy')}>
@@ -237,9 +238,10 @@ export const SavingsCard: React.FC<SavingsCardProps> = ({ groups, join, mainId, 
             reader compare lengths across rows). Colour by the point, «other» muted. */}
         <Box sx={{ mt: 0.75 }}>
           <StackedBar
-            fmt={(v) => (money ? `${t('common.approx')} ${fmt(v)}` : enWh(v))}
+            // Money only when every part has a cost — else energy for all (a Wh value drawn as € was a bug).
+            fmt={(v) => (moneyBar ? `${t('common.approx')} ${fmt(v)}` : enWh(v))}
             parts={shares.map((s, i) => ({
-              key: `${i}-${s.key ?? s.name}`, label: s.name, value: money && s.money != null ? s.money : s.wh,
+              key: `${i}-${s.key ?? s.name}`, label: s.name, value: moneyBar ? (s.money as number) : s.wh,
               color: s.key ? ds.series[Math.max(0, shareKeys.indexOf(s.key)) % ds.series.length] : ds.inkMuted, muted: !s.key,
             }))} />
         </Box>

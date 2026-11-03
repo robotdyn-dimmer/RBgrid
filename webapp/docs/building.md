@@ -40,6 +40,14 @@ hides. `REACT_APP_PREVIEW_FEATURES=true` shows them in any build.
 Screens that need a newer hub firmware check the hub's version (`GET /api/system/version`) and stay
 hidden on older hubs.
 
+## Developing against a real hub
+
+Hubs from firmware 1.1.3 answer browser requests only from allowed origins: the hosted app
+`https://webapp.rbgrid.io` is always allowed, everything else must be listed. Your dev server's origin
+(`http://localhost:3000`, or whatever `npm start` uses) is therefore blocked until you add it in
+**Settings → Browser access (CORS)** on that hub — or, on a test hub only, choose «Allow any website».
+The app served by the hub itself needs no entry.
+
 ## Checks
 
 ```bash

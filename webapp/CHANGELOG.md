@@ -2,6 +2,30 @@
 
 All notable changes to the RBGrid web interface. Newest first.
 
+## 1.1.3 — 2026-11-04
+
+For hub firmware 1.1.3, which answers browsers only from allowed origins and always allows the hosted app
+at `https://webapp.rbgrid.io`.
+
+### Changed
+- **Browser access (CORS):** the hub's built-in origins are shown as fixed rows («always allowed»); your own
+  origins are the editable list (up to the hub's limit); «Allow any website (not recommended)» is the wildcard.
+  Saving always sends the choice explicitly. A page served by the hub itself is never asked to add its origin.
+- **Connect screen:** in the hub kit it offers only the hub's IP address (the broker way was never in the kit);
+  on an https page it reminds about the browser's local-network permission when no hub answers.
+- **Demo:** the demo-site picker sits under the logo.
+
+### Fixed
+- **Where the money goes:** when some part has no cost, the bar shows energy for all parts (it drew Wh as money).
+- **Standby insight:** the share reads «% of the month's consumption» — it is computed from energy, not cost.
+- **Surplus insight:** says the buy/sell price difference instead of «better than selling it».
+- **Economics:** the net-metering credit block is hidden while the plan has net metering off; the progressive
+  block shows only when the hub runs one.
+- **Setup wizard:** the quick tariff asks before replacing a fuller plan (taxes and levies, net metering, fixed
+  payments, more zones); «Open MQTT / Home Assistant settings» lands on the Home Assistant panel.
+- Wording: two-pole phases on a three-phase site no longer say «240 V»; current-only modules don't mention load
+  control; hints name the real panels (Settings → Connection / Security).
+
 ## 1.1.2 — 2026-11-03
 
 The web UI for hub firmware 1.1.2: `rbgrid-ui_v1.1.2.zip` = `kit/` + `ui-manifest.json`, installed the same

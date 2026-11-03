@@ -30,4 +30,8 @@ export const RELEASE_HIDDEN = {
   /** Administration → «Factory reset» as a real reset (v1.1.2, operator 03.11 via root): hidden until
    *  root's .139 run. Older hubs get no reset button at all — their call only undid the last settings save. */
   factoryReset: false,
+  /** «Via broker (MQTT)» on the connect screen of a hosted build (webapp.rbgrid.io): partial today —
+   *  ~40 screens call the hub over HTTP directly, and token / AP / CORS / backup / OTA have no cmd path.
+   *  Hidden until that's done; the hub kit never ships it (no MQTT chunk). */
+  brokerTransport: !preview,
 } as const;

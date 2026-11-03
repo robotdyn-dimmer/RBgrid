@@ -35,7 +35,7 @@
   "groupHelperEmpty": "No groups yet — create them in Settings → “Consumer groups”.",
   "trunk": "Group trunk meter",
   "trunkHelper": "Measures the whole group; the other points are its breakdown and do not add on top.",
-  "phaseL1L2": "L1–L2 (two-pole, 240 V)",
+  "phaseL1L2": "L1–L2 (two-pole)",
   "phaseHelperGrid": "Mains: {grid}",
   "phaseL2L3": "L2–L3 (two-pole)",
   "phaseL3L1": "L3–L1 (two-pole)",

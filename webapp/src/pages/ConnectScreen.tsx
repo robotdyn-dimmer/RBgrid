@@ -11,7 +11,11 @@ import {
 } from '@mui/material';
 import BoltIcon from '@mui/icons-material/Bolt';
 import { Card, FormField } from '@rbgrid/design-system';
-import { connectDevice, connectBroker, connectDemo, normalizeBaseUrl, lastDevice } from '../services/connection';
+import { connectDevice, connectBroker, connectDemo, normalizeBaseUrl, lastDevice, EMBEDDED } from '../services/connection';
+import { RELEASE_HIDDEN } from '../constants/release';
+
+/** The broker way is offered only where it can work: not in the hub kit, not while it is partial. */
+const BROKER = !EMBEDDED && !RELEASE_HIDDEN.brokerTransport;
 import { t } from '../i18n';
 
 export const ConnectScreen: React.FC = () => {
@@ -42,7 +46,10 @@ export const ConnectScreen: React.FC = () => {
       if (ax.response) {
         connectDevice(host); // got an HTTP response → device is reachable
       } else {
-        setError(t('connect.unreachable'));
+        // From an https page (webapp.rbgrid.io) Chrome / Edge ask once to allow devices on the local
+        // network; a denied prompt looks like an unreachable hub (measured 04.11).
+        const https = typeof window !== 'undefined' && window.location.protocol === 'https:';
+        setError(https ? `${t('connect.unreachable')} ${t('connect.localNetworkHint')}` : t('connect.unreachable'));
       }
     } finally {
       setTesting(false);
@@ -60,16 +67,20 @@ export const ConnectScreen: React.FC = () => {
             <Typography variant="h5" fontWeight={800}>RBGrid</Typography>
           </Stack>
           <Typography variant="body2" color="text.secondary" mb={2}>
-            {t('connect.intro')}
+            {t(BROKER ? 'connect.intro' : 'connect.introHub')}
           </Typography>
 
-          <ToggleButtonGroup
-            exclusive size="small" color="primary" value={mode} fullWidth sx={{ mb: 2 }}
-            onChange={(_, v) => v && setMode(v)}
-          >
-            <ToggleButton value="direct">{t('connect.modeDirect')}</ToggleButton>
-            <ToggleButton value="broker">{t('connect.modeBroker')}</ToggleButton>
-          </ToggleButtonGroup>
+          {/* The hub-installed kit leaves the MQTT transport out (build-embedded skips its chunk), so the
+              broker way isn't offered there — it could only fail. */}
+          {BROKER && (
+            <ToggleButtonGroup
+              exclusive size="small" color="primary" value={mode} fullWidth sx={{ mb: 2 }}
+              onChange={(_, v) => v && setMode(v)}
+            >
+              <ToggleButton value="direct">{t('connect.modeDirect')}</ToggleButton>
+              <ToggleButton value="broker">{t('connect.modeBroker')}</ToggleButton>
+            </ToggleButtonGroup>
+          )}
 
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 

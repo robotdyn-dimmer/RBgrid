@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.1.3 — 2026-11-04
+
+### Browser access (CORS)
+- **Allow-list by default.** The hub now answers browser requests only from the hub's own pages and
+  from listed websites. Before, it answered any website (`*`).
+- **The RBgrid web app is always allowed:** `https://webapp.rbgrid.io` and `https://demo.rbgrid.io`
+  are built in. They are not stored, don't use one of the 8 slots and can't be removed.
+- Add your own origins (up to 8) in the app: Settings → Browser access (CORS). "Allow any website"
+  brings back the old behaviour.
+- A hub where you already chose "Allow any website" keeps that setting after the update.
+- `GET /api/system/security` also returns `builtin_origins` and `origins_max`.
+- Developing the app against a hub: add your dev origin (for example `http://localhost:5173`) to
+  the list, or allow any website on a test hub.
+
+### Web app 1.1.3
+- The CORS panel shows the built-in origins as fixed rows and your own list separately.
+- On an HTTPS page that can't reach the hub, the app suggests allowing access to devices on the local
+  network.
+- Economics: "Where the money goes" no longer shows energy as money; the standby share is a share of
+  the month's consumption; the net-metering credit is hidden while net metering is off, and the
+  progressive block shows only when the hub runs one.
+- The setup wizard asks before a quick tariff replaces a fuller plan.
+- Text fixes: hints name the real panels (Settings → Connection / Security).
+- Full list: `webapp/CHANGELOG.md`.
+
 ## v1.1.2 — 2026-11-03
 
 Built against the public rbAmp ESP-IDF component.

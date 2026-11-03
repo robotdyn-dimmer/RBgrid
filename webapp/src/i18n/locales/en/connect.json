@@ -1,6 +1,7 @@
 {
   "unreachable": "No hub answers at this address. Check the address, that the hub is on and that you are on the same Wi-Fi.",
   "intro": "Connect to your device. Direct — by its IP on your network; Via broker — remotely over MQTT.",
+  "introHub": "Connect to a hub by its IP address on your network.",
   "modeDirect": "Direct (IP)",
   "modeBroker": "Via broker (MQTT)",
   "hostLabel": "Device IP or URL",
@@ -14,5 +15,6 @@
   "or": "or",
   "openDemo": "Open demo mode",
   "hostPlaceholder": "e.g. 192.168.1.20 or rbgrid.local",
-  "hostHelp": "The hub’s address is on its label, from your electrician or in the router’s device list. Your phone or computer must be on the same Wi-Fi."
+  "hostHelp": "The hub’s address is on its label, from your electrician or in the router’s device list. Your phone or computer must be on the same Wi-Fi.",
+  "localNetworkHint": "If the browser asked whether this site may access devices on your local network, allow it (site settings → Local network access)."
 }

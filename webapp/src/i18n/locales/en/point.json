@@ -44,7 +44,7 @@
   "currentSum": "Current, sum of phases",
   "voltageMean": "Voltage, phase mean",
   "capBasic": "consumption only (BASIC module)",
-  "capCurrentOnly": "current only — monitoring and load control, not energy metering",
+  "capCurrentOnly": "current only — monitoring, not energy metering",
   "basicReversed": "The current sensor seems fitted backwards: the BASIC module sees {w} «in reverse» but meters forward flow only — this load is NOT being metered. Turn the sensor round on the wire (arrow on the body towards the load).",
   "ctClip": "The current hits the sensor's limit: everything above it is clipped and metering under-counts. A higher-rated sensor is needed.",
   "ctWarn": "The load is near the sensor's limit ({pct} % of its rating): above the limit the current is clipped and metering under-counts.",

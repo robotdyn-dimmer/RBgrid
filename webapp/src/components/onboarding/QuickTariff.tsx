@@ -8,7 +8,8 @@ import { getApiClient } from '../../services/api';
 import { BaseResponse } from '../../types/api';
 import { TariffPlan, TariffPlanConfigData } from '../../types/tariff-plan';
 import { rate as fmtRate } from '../common/ruFormat';
-import { quickPlan, netOf } from './quickTariffPlan';
+import { quickPlan, netOf, richPlan } from './quickTariffPlan';
+import { useConfirm } from '../common/ConfirmDialog';
 import { t, getLang } from '../../i18n';
 
 const CURRENCIES = ['EUR', 'RUB', 'USD', 'GBP', 'CHF', 'PLN', 'CZK', 'UAH', 'KZT', 'JPY', 'CNY'];
@@ -29,6 +30,7 @@ export const QuickTariff: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => 
   const [sell, setSell] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const confirm = useConfirm();
 
   useEffect(() => {
     let on = true;
@@ -48,6 +50,8 @@ export const QuickTariff: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => 
 
   const save = async () => {
     if (!ready || p == null) return;
+    const current = env?.data?.list?.[0] as TariffPlan | undefined;
+    if (richPlan(current) && !(await confirm({ title: t('quickTariff.replaceTitle'), body: t('quickTariff.replaceBody'), confirmLabel: t('quickTariff.replace'), danger: true }))) return;
     setBusy(true); setMsg(null);
     try {
       const fresh = env ?? await getApiClient().getTariffPlans();

@@ -38,6 +38,10 @@ export interface TokenRoles {
 export interface SecurityConfig {
   dev_cors: boolean;
   origins: string[];
+  /** v1.1.3: origins the firmware always allows (the hosted app) — not stored, not removable, no slot. */
+  builtin_origins?: string[];
+  /** v1.1.3: slots for the user's own origins. */
+  origins_max?: number;
 }
 
 /**
