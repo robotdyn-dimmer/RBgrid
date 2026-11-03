@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <math.h>
 #include "rbjson.h"
+#include "rbextflash_operations.h"   /* rbpower_flash_unit_has_history — units-config `history` */
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_app_desc.h"            /* esp_app_get_description — HA device sw_version */
@@ -2847,6 +2848,9 @@ char* rbgrid_json_create_units_config(const rbgrid_json_context_t* context) {
                 cJSON_AddNumberToObject(unit_obj, "caps", unit_def->caps);
                 cJSON_AddNumberToObject(unit_obj, "device_uid", (double)unit_def->device_uid); /* ≤48 bits, exact in double */
                 cJSON_AddNumberToObject(unit_obj, "channel_idx", unit_def->channel_idx);
+                /* flash history: false = live only (beyond the 12-slot limit, or bound since the last boot) */
+                if (unit_def->type != RBPOWER_METRIC_VOLTAGE_BUS)
+                    cJSON_AddBoolToObject(unit_obj, "history", rbpower_flash_unit_has_history(unit_def->unit_id));
                 cJSON_AddNumberToObject(unit_obj, "phase", unit_def->phase);           /* reserved */
                 cJSON_AddNumberToObject(unit_obj, "group_id", unit_def->group_id);     /* reserved */
                 cJSON_AddNumberToObject(unit_obj, "role_trunk", unit_def->role_trunk); /* reserved */

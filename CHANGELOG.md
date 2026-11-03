@@ -16,6 +16,8 @@ Built against the public rbAmp ESP-IDF component.
 ### History
 - Flash history is kept for up to 12 measurement points, as the internal stats partition allows. Up to
   v1.1.1 an internal table stopped at 8: points 9 to 12 showed live readings but kept no history.
+- Each point in `/api/system/units-config` carries `history`: `false` means the point is live only (beyond the
+  12 points with history, or bound since the last restart).
 
 ### Home Assistant
 - The system entities "Revenue (Total)" and "Revenue (Day)" are renamed "Export value (Total)" and
