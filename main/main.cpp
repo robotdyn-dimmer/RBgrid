@@ -2710,7 +2710,10 @@ static void rbgrid_cjson_free(void *p) { free(p); }
  */
 extern "C" void app_main(void) {
     { cJSON_Hooks h = { rbgrid_cjson_malloc, rbgrid_cjson_free }; cJSON_InitHooks(&h); }   /* before any JSON */
+    /* factory reset (POST /api/system/factory-reset) runs here, before NVS and the config file system open */
+    const bool factory_reset_done = rbwebserver_factory_reset_at_boot();
     rbevlog_init();   /* event log ring + diag log sink: before the first diag line */
+    if (factory_reset_done) rbpower_diag_printf("factory reset carried out at boot — starting as on first boot");
 
 #if defined(RBGRID_BENCH_RELAY_FAILSAFE)
     // SAFETY FIRST: drive the test-rig load-bank relays OFF before anything else (see above).

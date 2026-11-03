@@ -2396,6 +2396,11 @@ char* rbgrid_json_create_sensors_list(const rbgrid_json_context_t* context) {
         }
         if (mods) cJSON_AddItemToObject(root, "modules", mods);
     }
+    {   /* I2C bus stall (rbAmp bridge supervisor): > 0 = the module poll has made no progress for that many seconds —
+         * typically a module left on the bus without power holding SDA/SCL. 0 / absent = polling normally. */
+        uint32_t st = rbpower_i2c_bus_stalled_s();
+        if (st > 0) cJSON_AddNumberToObject(root, "bus_stalled_s", st);
+    }
     char* out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     return out;
@@ -2560,6 +2565,10 @@ static const struct { const char* metric; const char* field; const char* name;
  * component linkable in builds without the task. Called after unit create/rebind/rename so new
  * units get their HA entities WITHOUT waiting for an MQTT reconnect. */
 void __attribute__((weak)) rbgrid_ha_discovery_request(void) {}
+
+/** @brief Weak default of the I2C bus-stall probe (0 = not stalled / no rbAmp bridge in this build); the
+ *  rbAmp bridge provides the real one. */
+uint32_t __attribute__((weak)) rbpower_i2c_bus_stalled_s(void) { return 0; }
 
 /* Inverse of the per-unit discovery: on unit DELETE publish an EMPTY retained payload to every
  * per-unit config topic so HA drops the entities (same rule the ESP-NOW node remover uses). Without

@@ -3307,6 +3307,7 @@ char *rbgrid_build_schema_json(void)
         { "/api/system/mqtt-config",    "GET,POST", "composite", true,  true,  "broker_uri" },
         { "/api/system/time-sync",      "GET,POST", "composite", true,  true,  "", "enable_time_sync,primary_source,sntp_server" },
         { "/api/system/reboot",         "POST",     "n/a",       true,  false, "delay_ms" },
+        { "/api/system/factory-reset",  "POST",     "n/a",       true,  true,  "history(erase|keep)" },
         { "/api/system/version",        "GET",      "1",         false, false, "" },
         { "/api/system/ota",            "POST",     "n/a",       true,  true,  "(binary)" },
         { "/api/system/ui-upload",      "POST",     "n/a",       true,  false, "path (query); body=raw file" },

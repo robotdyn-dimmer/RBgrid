@@ -1798,6 +1798,37 @@ static void phseq_poll(uint8_t m)
     s_phseq[m] = v; s_phseq_seen[m] = true;
 }
 
+/* ==== Bus stall supervisor ===================================================================
+ * An unpowered module left on the bus clamps SDA/SCL through its inputs; the I2C master then never returns
+ * (rbamp-dev bench 2026-11-03) and every module stops updating — silently, since the poll task is not on the
+ * task watchdog (module OTA legitimately holds the bus 10-14 s). The poll task stamps each cycle; a small
+ * supervisor on core 0 (the poll runs on core 1) reports a cycle older than RBAMP_STALL_AFTER_S as a FAIL line and
+ * through rbpower_i2c_bus_stalled_s() (/api/v1/sensors bus_stalled_s). The hung call does NOT return even after
+ * the module is unplugged (rbamp-dev bench, 175 s+), so the way out is: fix the wiring, then restart the hub (the
+ * app offers it). No automatic restart: while the module stays on the bus it would only loop.
+ * Module OTA in progress is not a stall. */
+#define RBAMP_STALL_AFTER_S 30u   ///< a poll cycle older than this = stalled
+static volatile int64_t  s_poll_stamp_us;   ///< esp_timer time of the last poll-cycle start (0 = not started)
+static volatile uint32_t s_stall_s;         ///< seconds stalled as last seen by the supervisor (0 = polling)
+
+uint32_t rbpower_i2c_bus_stalled_s(void) { return s_stall_s; }
+
+static void rbamp_stall_supervisor_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        const int64_t st = s_poll_stamp_us, now = esp_timer_get_time();
+        const bool ota = (s_ota.state == MO_WRITING || s_ota.state == MO_COMMIT);
+        const uint32_t age = (st > 0 && now > st) ? (uint32_t)((now - st) / 1000000LL) : 0;
+        if (!s_running || ota || age < RBAMP_STALL_AFTER_S) continue;   /* the poll task clears s_stall_s itself */
+        if (s_stall_s == 0)
+            rbpower_diag_printf("FAIL I2C bus 0 stalled: no module poll for %lus — a problem on the bus (e.g. a module wired "
+                                "but without power): check the connections, then restart the hub", (unsigned long)age);
+        s_stall_s = age;
+    }
+}
+
 /** The poll task: healer, requested period collect, then per module read (DRDY-paced when configured), diagnostics,
  *  host energy integration, per-phase reads, grid voltage publish and the 200 ms inject; then sleep
  *  poll_period_ms. The bus lock is taken per transaction, never across an inject. */
@@ -1809,6 +1840,11 @@ static void rbamp_bridge_poll_task(void *arg)
 
     uint64_t next_reprobe_us = esp_timer_get_time() + RBAMP_REPROBE_PERIOD_US;
     while (s_running) {
+        s_poll_stamp_us = esp_timer_get_time();   /* stall supervisor heartbeat */
+        if (s_stall_s) {
+            rbpower_diag_printf("I2C bus 0 polling again after a stall of ~%lus", (unsigned long)s_stall_s);
+            s_stall_s = 0;
+        }
         /* Discovery self-heal: any configured module still absent gets re-probed every
          * RBAMP_REPROBE_PERIOD_US until it answers (see the healer block comment above). */
         if (esp_timer_get_time() >= next_reprobe_us) {
@@ -2337,6 +2373,12 @@ esp_err_t rbamp_bridge_start(const rbamp_bridge_config_t *cfg)
                                 tskIDLE_PRIORITY + 1, &s_task, rbamp_poll_core) != pdPASS) {
         ESP_LOGE(TAG, "failed to create poll task");
         s_running = false; err = ESP_ERR_NO_MEM; goto fail_dev;
+    }
+    {   /* bus stall supervisor on the other core (best effort: without it the hub just doesn't report a stall) */
+        static bool s_stall_sup_started = false;
+        if (!s_stall_sup_started &&
+            xTaskCreatePinnedToCore(rbamp_stall_supervisor_task, "rbamp_stall", 4096, NULL, tskIDLE_PRIORITY + 1, NULL, 0) == pdPASS)
+            s_stall_sup_started = true;
     }
 
     // Register the unbind hook: DELETE-ing an rbAmp unit clears its fleet entry's

@@ -37,6 +37,21 @@ Built against the public rbAmp ESP-IDF component.
 - An STD module is no longer reported as "uncalibrated" just because its sensor-class byte is unset, as it
   is on shipped STD-U3I3 modules. It counts as uncalibrated only when its own calibration status says so.
 
+### Factory reset
+- `POST /api/system/factory-reset {"history": "erase" | "keep"}` (admin token) returns the hub to its first
+  start. History is erased by default.
+  - The hub restarts and erases, early in the next boot: settings, points, tariff, module layout, restore
+    point, Wi-Fi, tokens and the access-point password. With `"erase"` it also erases the history.
+  - It then comes up as on first boot: its own access point and the Wi-Fi setup portal.
+  - A power cut between the request and the restart cancels the reset.
+- Up to v1.1.1 the app's "Factory reset" button only restored the site settings to their previous save.
+
+### I²C bus
+- The hub reports a stalled bus: when the module poll makes no progress for 30 s, it logs a FAIL line and
+  `/api/v1/sensors` carries `bus_stalled_s`.
+  - A typical cause is a module wired to the bus without power.
+  - The stalled bus doesn't recover by itself: check the connections, then restart the hub.
+
 ## v1.1.1 — 2026-10-22
 
 Fixes for a hub installed from scratch (USB flash on an erased chip). Hubs updated over the air from

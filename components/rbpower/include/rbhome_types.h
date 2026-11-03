@@ -2279,6 +2279,9 @@ bool     rbpower_diag_console_on(void);     /* `diag on` (console sink) — vs r
  * @param[in] fmt printf-style format, followed by its arguments.
  */
 void     rbpower_diag_printf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+/** @brief Seconds the rbAmp I2C poll has made no progress (bus stall supervisor), 0 when polling normally.
+ *  Weak default (0) in rbjson.c; the rbAmp bridge provides the real probe. Shown in /api/v1/sensors as bus_stalled_s. */
+uint32_t rbpower_i2c_bus_stalled_s(void);
 /** @brief Whether an external source refreshed the system frequency in the last 10 s.
  *  @return true if fresh. */
 bool     rbpower_home_system_frequency_fresh(void);
