@@ -3089,7 +3089,11 @@ extern "C" void app_main(void) {
         }
     }
 
-#if RBGRID_RBAMP_FLEET
+#if RBGRID_RBAMP_FLEET && RBGRID_DEFAULT_BENCH_FLEET
+    /* BENCH builds only. Product hubs restore their points from units.json; this legacy block hard-codes modules 1/2 at
+     * 0x51/0x52 with bench CT types and, on a product hub that adds modules through /api/v1/i2c, created duplicate
+     * "rbAmp I2/I3" points at boot for channels whose binding units.json doesn't carry by physics (a moved input, a
+     * phase group) — .139, 2026-11-03. */
     /* rbAmp fleet: create external I2C-sourced default units for the extra current
      * modules I2(0x51) + I3(0x52). 0x50 (UI1) feeds the existing main_supply 0x0006 +
      * voltage_bus 0x0007. The rbAmp source (below) provisions CT + injects into these.

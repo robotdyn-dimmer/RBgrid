@@ -1301,6 +1301,12 @@ int rbgrid_config_rebind_unit(rbpower_unit_id_t unit_id, uint8_t module, uint8_t
     if (def->sources_count == 0 || def->sources[0].source_type != RBPOWER_SOURCE_I2C_SENSOR) {
         return RBGRID_CONFIG_ERR_INVALID_PARAM;   /* only live I2C units rebind today */
     }
+    if (ch == RBAMP_ENTRY_PHASES || ch == RBAMP_ENTRY_VOLTAGE) {
+        /* ch 254 (a module's phase group) and 255 (its voltage input) are not channels a point can move to: only the
+         * bridge-fed input is grouped (branch above). A group the input already holds would otherwise look like a
+         * free fleet sensor here. */
+        return RBGRID_CONFIG_ERR_INVALID_PARAM;
+    }
     if (def->device_uid == module && def->channel_idx == ch) {
         return RBGRID_CONFIG_OK;   /* no-op rebind to the same sensor */
     }
