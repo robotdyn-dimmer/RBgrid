@@ -47,6 +47,8 @@ Built against the public rbAmp ESP-IDF component.
 - Up to v1.1.1 the app's "Factory reset" button only restored the site settings to their previous save.
 
 ### I²C bus
+- One hub handles up to 8 rbAmp modules on its bus; up to v1.1.1 the firmware stopped at 3.
+  Modules are added through `/api/v1/i2c` (scan, add, address change) one at a time.
 - The hub reports a stalled bus: when the module poll makes no progress for 30 s, it logs a FAIL line and
   `/api/v1/sensors` carries `bus_stalled_s`.
   - A typical cause is a module wired to the bus without power.

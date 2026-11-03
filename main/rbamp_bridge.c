@@ -2891,7 +2891,9 @@ esp_err_t rbamp_bridge_save_user_config(uint8_t module)
  * Targets the 15-min slot; higher periods aggregate from accumulated 15-min results. */
 esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t period)
 {
-    static const char* const STG[RBAMP_MAX_MODULES] = { "collect m0", "collect m1", "collect m2" };
+    static const char* const STG[] = { "collect m0", "collect m1", "collect m2", "collect m3",
+                                       "collect m4", "collect m5", "collect m6", "collect m7" };
+    _Static_assert(sizeof(STG) / sizeof(STG[0]) >= RBAMP_MAX_MODULES, "one stage name per module");
     if (module < RBAMP_MAX_MODULES) rbpower_stats_stage(STG[module]);
     if (module >= RBAMP_MAX_MODULES || s_dev[module] == NULL) return ESP_ERR_INVALID_STATE;
     const rbamp_module_cfg_t *mc = &s_cfg.modules[module];
