@@ -9,7 +9,7 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 # Explicit firmware version (overrides git "v1.0.1-dirty") — bump per release so /api/system/version
 # + the HA `update` entity can compare current-vs-available for OTA. (dev = version owner.)
-set(PROJECT_VER "1.1.3")
+set(PROJECT_VER "1.1.4-dev")
 
 idf_build_set_property(MINIMAL_BUILD ON)
 project(main)

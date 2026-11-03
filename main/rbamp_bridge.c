@@ -1841,6 +1841,9 @@ uint32_t rbpower_i2c_bus_stalled_s(void) { return s_stall_s; }
  * bus_line_low_s). Released lines clear it; the healer then re-probes the absent modules by itself. The scan checks
  * the same before walking addresses (a walk on a held bus is what can hang the ESP-IDF master). */
 #define RBAMP_LINE_LOW_CHECKS 3u   ///< consecutive low samples (5 s apart) before a hold is reported
+#ifndef RBAMP_MAINS_MIN_V
+#define RBAMP_MAINS_MIN_V 40.0f   ///< below this a module's voltage input counts as unwired (no mains)
+#endif
 static volatile uint32_t s_line_low_s;     ///< seconds a bus-0 line has been held low (0 = lines idle high)
 static int64_t           s_line_low_t0_us; ///< when the current hold was first seen
 static uint8_t           s_line_low_n;     ///< consecutive low checks
@@ -2031,7 +2034,12 @@ static void rbamp_bridge_poll_task(void *arg)
             }
             /* Cache mains voltage from a voltage-bearing module; HOST-mode modules
              * integrate energy (P = V_bus × I). NONE-mode modules accumulate nothing. */
-            if (s_energy_mode[m] == RBAMP_ENERGY_ONDEVICE && !isnan(s.voltage)) {
+            /* Only a module that actually sees mains (V >= RBAMP_MAINS_MIN_V) may set the bus voltage and
+             * the system frequency: a voltage-capable module with its voltage input unwired (e.g. a STD-U3I3
+             * used for currents only) reads ~0 V and a noise frequency (~45 Hz), which used to overwrite the
+             * real mains values from the other module. */
+            if (s_energy_mode[m] == RBAMP_ENERGY_ONDEVICE && !isnan(s.voltage) &&
+                s.voltage * s_cfg.voltage_gain >= RBAMP_MAINS_MIN_V) {
                 s_vbus = s.voltage * s_cfg.voltage_gain;
                 /* The voltage module also measures grid frequency — feed it to the system (the 200ms
                  * inject struct carries no frequency field; without this telemetry freq reads 0). */
