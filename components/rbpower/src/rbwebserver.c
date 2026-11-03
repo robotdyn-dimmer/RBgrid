@@ -219,25 +219,31 @@ bool is_request_from_ap_network(httpd_req_t *req)
 }
 
 /* ==== CORS policy. Config persists in littlefs /sec_cfg:
- * {"dev_cors":bool, "origins":["http://host[:port]", ...≤8]}. No file (or dev_cors true, the
- * DEFAULT) → wildcard "*" — existing installs and development frontends keep working with
- * zero migration. dev_cors false → only a listed Origin is echoed back (+Vary: Origin); an
- * unlisted Origin gets NO Access-Control-Allow-Origin header, so the browser blocks the read.
- * Non-browser clients (curl/python, no Origin) are unaffected — CORS is a browser contract. */
+ * {"dev_cors":bool, "origins":["http://host[:port]", ...≤8]}.
+ * DEFAULT (no file, or no "dev_cors" key) = ALLOW-LIST (dev_cors false) since v1.1.3: only a listed
+ * Origin is echoed back (+Vary: Origin); an unlisted Origin gets NO Access-Control-Allow-Origin
+ * header, so the browser blocks the read. The hosted web app (RBWEB_CORS_BUILTIN_ORIGINS) is
+ * (webapp.rbgrid.io + demo.rbgrid.io) is ALWAYS allowed: it is not stored, not counted in the 8 and cannot be removed.
+ * dev_cors true (explicit user choice) → wildcard "*" for every origin.
+ * The hub-served app is same-origin and needs no CORS. Non-browser clients (curl/python, no Origin)
+ * are unaffected — CORS is a browser contract. */
 #define RBWEB_SEC_CFG_FILE "/sec_cfg"   ///< littlefs file holding the CORS/security policy JSON
 /** @brief Maximum CORS allow-list entries: cloud app + capacitor://localhost + https://localhost +
  *         http://localhost (mobile wrappers) + spares. */
 #define RBWEB_CORS_MAX_ORIGINS 8
+/** Origins always allowed (the hosted web app + its demo; operator 2026-11-04), on top of the user's list. */
+static const char *const RBWEB_CORS_BUILTIN_ORIGINS[] = { "https://webapp.rbgrid.io", "https://demo.rbgrid.io" };
+#define RBWEB_CORS_N_BUILTIN (sizeof(RBWEB_CORS_BUILTIN_ORIGINS) / sizeof(RBWEB_CORS_BUILTIN_ORIGINS[0]))
 static struct {
     bool loaded;
     bool dev_cors;
     int  n_origins;
     char origins[RBWEB_CORS_MAX_ORIGINS][64];
-} s_sec_cfg = { .loaded = false, .dev_cors = true, .n_origins = 0 };
+} s_sec_cfg = { .loaded = false, .dev_cors = false, .n_origins = 0 };
 
 void rbwebserver_security_cfg_reload(void)
 {
-    s_sec_cfg.dev_cors = true;
+    s_sec_cfg.dev_cors = false;   /* default = allow-list (+ built-in hosted-app origin) */
     s_sec_cfg.n_origins = 0;
     s_sec_cfg.loaded = true;
     if (!littlefs_raw_exists(RBWEB_SEC_CFG_FILE)) return;
@@ -271,14 +277,31 @@ bool rbwebserver_security_cfg_get(bool *dev_cors, char origins[][64], int max, i
 }
 
 // Universal function to add CORS headers
+/* Built-in origins (always allowed). Index i < rbwebserver_security_builtin_count(). */
+int rbwebserver_security_builtin_count(void) { return (int)RBWEB_CORS_N_BUILTIN; }
+const char *rbwebserver_security_builtin_origin(int i)
+{
+    return (i >= 0 && i < (int)RBWEB_CORS_N_BUILTIN) ? RBWEB_CORS_BUILTIN_ORIGINS[i] : NULL;
+}
+
+/* CORS allow-list lookup (built-in + user list). Returns the matching string from STATIC storage
+ * (httpd keeps the header pointer past this call), or NULL. */
+static const char *rbwebserver_security_origin_match(const char *origin)
+{
+    if (!s_sec_cfg.loaded) rbwebserver_security_cfg_reload();
+    for (size_t i = 0; i < RBWEB_CORS_N_BUILTIN; i++) {
+        if (strcmp(origin, RBWEB_CORS_BUILTIN_ORIGINS[i]) == 0) return RBWEB_CORS_BUILTIN_ORIGINS[i];
+    }
+    for (int i = 0; i < s_sec_cfg.n_origins; i++) {
+        if (strcmp(origin, s_sec_cfg.origins[i]) == 0) return s_sec_cfg.origins[i];
+    }
+    return NULL;
+}
+
 /* CORS allow-list probe for the preflight PNA grant (same policy source as add_cors_headers). */
 static bool rbwebserver_security_origin_allowed(const char *origin)
 {
-    if (!s_sec_cfg.loaded) rbwebserver_security_cfg_reload();
-    for (int i = 0; i < s_sec_cfg.n_origins; i++) {
-        if (strcmp(origin, s_sec_cfg.origins[i]) == 0) return true;
-    }
-    return false;
+    return rbwebserver_security_origin_match(origin) != NULL;
 }
 
 void add_cors_headers(httpd_req_t *req)
@@ -292,12 +315,10 @@ void add_cors_headers(httpd_req_t *req)
          * cached config and point at the CONFIG copy, not the request buffer. */
         char origin[64] = {0};
         if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) == ESP_OK && origin[0]) {
-            for (int i = 0; i < s_sec_cfg.n_origins; i++) {
-                if (strcmp(origin, s_sec_cfg.origins[i]) == 0) {
-                    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", s_sec_cfg.origins[i]);
-                    httpd_resp_set_hdr(req, "Vary", "Origin");
-                    break;
-                }
+            const char *m = rbwebserver_security_origin_match(origin);
+            if (m) {
+                httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", m);
+                httpd_resp_set_hdr(req, "Vary", "Origin");
             }
         }
     }

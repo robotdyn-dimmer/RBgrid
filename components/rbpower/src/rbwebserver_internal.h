@@ -377,6 +377,10 @@ bool rbapi_require_read(httpd_req_t *req);
  * @brief Reload the CORS/security policy from littlefs /sec_cfg (defaults: dev_cors = true, no origins).
  */
 void rbwebserver_security_cfg_reload(void);
+/** @brief Number of built-in CORS origins (always allowed; the hosted web app). */
+int rbwebserver_security_builtin_count(void);
+/** @brief Built-in CORS origin @p i (static string), or NULL if out of range. */
+const char *rbwebserver_security_builtin_origin(int i);
 
 /**
  * @brief Read the current CORS policy (loads it on first use).
