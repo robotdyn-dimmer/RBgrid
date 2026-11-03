@@ -25,7 +25,7 @@ RBgrid is self-hosted firmware for an ESP32-WROVER hub that reads [rbAmp](https:
 
 ## What the app shows you
 
-The web app is served by the hub itself, on your home network, in any browser. Every screen shows energy and money side by side.
+Open the web app two ways: from the hub itself, at its address on your home network, or at [webapp.rbgrid.io](https://webapp.rbgrid.io/), which connects to your hub on your home network (checked in Chrome and Edge; the browser asks once to allow access to local devices). Either way, your data goes straight from the browser to the hub. Every screen shows energy and money side by side.
 
 - **Overview:** cost right now per line and for the whole house; today and month to date, with yesterday for comparison; which tariff zone you are in and when the cheaper one starts; where today's money goes; the standby load.
 - **History:** from this hour to this year; energy, power, voltage, reactive power, power factor and money; chart or table; hourly for 60 days, then daily, monthly and yearly, on the hub's flash; CSV download.
@@ -63,7 +63,7 @@ rbAmp modules clip onto your existing wiring and measure each circuit. The ESP32
 | **Hub** | An ESP32-WROVER board with PSRAM and 16 MB flash, one you have or any you buy. You flash it once over USB. |
 | **Measurement** | One or more [rbAmp](https://www.rbamp.com/?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) modules, up to eight per hub: **Basic** modules for your own SCT-013 clamps (one to seven channels), or **STD** energy meters for the supply (STD-UI1 single-phase, STD-U3I3 three-phase, with calibrated sensors included). |
 | **Grid** | Single-phase and three-phase supplies. A three-phase supply is measured by one STD-U3I3, set as the three-phase input in the app: one measurement point with per-phase readings. Split-phase (two live legs sharing a neutral) is planned for a future release. |
-| **Wiring** | I²C, four wires. Keep the module cable up to 15 cm (recommended); with up to three modules, leave each module's pull-ups as they are, and for four or more see the [rbAmp wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection). |
+| **Wiring** | I²C, four wires. Keep the module cable up to 15 cm (recommended). Pull-ups and longer cables: see the [rbAmp wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection). |
 
 | | |
 |---|---|
@@ -105,15 +105,15 @@ The rbAmp ESP-IDF component (`rb-amp/rbamp-esp-idf`) is fetched automatically.
 
 On first boot the hub starts its own Wi-Fi `rbgrid-<mac4>`. Join it, open `192.168.4.1`, and save your home Wi-Fi.
 
-The hub's own Wi-Fi stays on so you can always reach the hub. Once the web app is in, change its password in **Settings → Network → Hub access point**, and set an API token in **Settings → Security**, so nobody nearby can change your hub.
+The hub's own Wi-Fi stays on so you can always reach the hub. Once the web app is in, change its password in **Settings → Hub access point**, and set an API token in **Settings → Security**, so nobody nearby can change your hub.
 
 ### 3. Install the web app
 
-The web app is a separate package on the release page, [`rbgrid-ui_v1.1.2.zip`](https://github.com/robotdyn-dimmer/RBgrid/releases/download/v1.1.2/rbgrid-ui_v1.1.2.zip). Unpack it (it holds `kit/` and `ui-manifest.json` side by side), then upload each file and commit:
+No install needed if you use [webapp.rbgrid.io](https://webapp.rbgrid.io/): open it on a computer on the same network as the hub and connect to the hub's address. To have the app on the hub itself, install it once. It's a separate package on the release page, [`rbgrid-ui_v1.1.3.zip`](https://github.com/robotdyn-dimmer/RBgrid/releases/download/v1.1.3/rbgrid-ui_v1.1.3.zip). Unpack it (it holds `kit/` and `ui-manifest.json` side by side), then upload each file and commit:
 
 ```bash
 HUB=http://<your-hub-address>     # e.g. http://192.168.4.1 on the hub's own Wi-Fi
-cd rbgrid-ui_v1.1.2/kit
+cd kit                              # in the folder where you unpacked the zip
 for f in $(find . -type f | sed 's|^\./||'); do
   curl -sf -X POST "$HUB/api/system/ui-upload?path=$f" \
        -H 'Content-Type: application/octet-stream' --data-binary "@$f" || { echo "upload failed: $f"; exit 1; }
@@ -147,6 +147,7 @@ Details: [`webapp/README.md`](webapp/README.md) (build the kit, install it on a 
 
 - **REST + WebSocket API and MQTT**, with a self-describing schema at `GET /api/v1/schema`. Sensors and measurement points are configured at runtime from the app or the API, not in code.
 - The hub firmware is an ESP-IDF application, not a library: you build and flash the whole image.
+- **Browser access** is limited to an allow-list: the hub's own pages and the RBgrid app (`https://webapp.rbgrid.io`, `https://demo.rbgrid.io`) are always allowed. To run the web app from your own address (for example `http://localhost:5173`), add it in **Settings → Browser access (CORS)** (up to 8 sites).
 
 ## Documentation
 
