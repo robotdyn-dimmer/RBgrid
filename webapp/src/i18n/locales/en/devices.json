@@ -32,7 +32,7 @@
   "noFreeChannels": "No free channels. To add a point, connect another rbAmp module or unbind a point you don’t need.",
   "basicNote": "BASIC line: counts consumption only (doesn't see export); the module firmware isn't updated through the hub.",
   "channelSensor": "{ch}: {sensor}",
-  "currentOnlyNote": "Current-only module: for current monitoring and load control, not energy metering — no kWh or cost shown for it.",
+  "currentOnlyNote": "Current-only module: for current monitoring, not energy metering — no kWh or cost shown for it.",
   "ctRange": "accurate {lo}–{hi} A",
   "uncalibrated": "The module isn't calibrated: the sensor model can't be chosen.",
   "chFree": "free",

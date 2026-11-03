@@ -43,6 +43,19 @@ const NAV: { to: string; label: string; icon: React.ReactNode; group: string; ta
   { to: 'config', label: 'shell.navSettings', icon: <TuneIcon />, group: 'shell.groupSetup' },
 ];
 
+/** The public demo shows several sites (mock/demoVariant); switching reloads the page. Sits under the
+ *  logo — at the foot of the rail it went unseen. */
+const DemoSitePicker: React.FC = () => (
+  <TextField
+    select size="small" fullWidth label={t('demo.variant')} value={demoVariant().id}
+    // The rail is 220 px: a long site name wraps instead of ending in «…».
+    sx={{ '& .MuiSelect-select.MuiSelect-select': { whiteSpace: 'normal', overflow: 'visible', height: 'auto', lineHeight: 1.3 } }}
+    onChange={async (e) => { if (await confirmLeave()) setDemoVariant(e.target.value as DemoVariantId); }}
+  >
+    {demoVariantIds().map((id) => <MenuItem key={id} value={id}>{t(`demo.v_${id}`)}</MenuItem>)}
+  </TextField>
+);
+
 const DeviceFooter: React.FC<{ state: LinkState; lastUpdate: number | null }> = ({ state, lastUpdate }) => {
   const { connection, demo } = useConnection();
   const label = demo ? t('shell.demoMode') : (connection?.baseUrl || t('shell.thisDevice'));
@@ -52,15 +65,6 @@ const DeviceFooter: React.FC<{ state: LinkState; lastUpdate: number | null }> = 
         {demo ? t('shell.demoData') : t('shell.device')}
       </Typography>
       <Typography variant="body2" fontWeight={600} noWrap title={label}>{label}</Typography>
-      {/* The public demo shows several sites (mock/demoVariant); switching reloads the page. */}
-      {demo && (
-        <TextField
-          select size="small" fullWidth label={t('demo.variant')} value={demoVariant().id} sx={{ mt: 1 }}
-          onChange={async (e) => { if (await confirmLeave()) setDemoVariant(e.target.value as DemoVariantId); }}
-        >
-          {demoVariantIds().map((id) => <MenuItem key={id} value={id}>{t(`demo.v_${id}`)}</MenuItem>)}
-        </TextField>
-      )}
       <Box sx={{ mt: 0.5 }}><LinkStatus state={state} lastUpdate={lastUpdate} demo={demo} /></Box>
       {!DEMO_ONLY && (
         <Button size="small" startIcon={<SwapHorizIcon />} onClick={async () => { if (await confirmLeave()) disconnect(); }} sx={{ mt: 0.5 }}>
@@ -111,6 +115,7 @@ export const AppShell: React.FC = () => {
       moreLabel={t('shell.more')}
       navLabel={t('shell.navAria')}
       moreNavLabel={t('shell.moreNavAria')}
+      railTop={demo ? <DemoSitePicker /> : undefined}
       headerRight={mobile ? <LinkStatus state={state} lastUpdate={tel.lastUpdate} demo={demo} compact /> : undefined}
       footer={
         <>

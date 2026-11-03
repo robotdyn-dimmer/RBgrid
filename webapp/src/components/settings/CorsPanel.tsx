@@ -17,6 +17,7 @@ import { PanelCard, FormField, StatusChip } from '@rbgrid/design-system';
 import { useCapabilities, useDeviceSession } from '../../core';
 import type { SecurityConfig } from '../../core';
 import { t } from '../../i18n';
+import { getBaseUrl } from '../../services/connection';
 
 const ORIGIN_RE = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/i;
 
@@ -29,7 +30,7 @@ export const CorsPanel: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ sev: 'success' | 'error' | 'warning'; text: string } | null>(null);
   const here = window.location.origin;
-  const MAX_ORIGINS = useCapabilities().limits.originsMax; // schema.limits.origins_max
+  const capsMax = useCapabilities().limits.originsMax; // schema.limits.origins_max
 
   useEffect(() => {
     let on = true;
@@ -47,9 +48,17 @@ export const CorsPanel: React.FC = () => {
     );
   }
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(cfg);
-  const lockout = !draft.dev_cors && !draft.origins.includes(here);
-  const canAdd = ORIGIN_RE.test(input.trim()) && !draft.origins.includes(input.trim()) && draft.origins.length < MAX_ORIGINS;
+  const MAX_ORIGINS = draft.origins_max ?? capsMax;
+  // v1.1.3: origins the firmware always allows (the hosted app) — shown fixed, never sent back.
+  const builtin = draft.builtin_origins ?? [];
+  const dirty = draft.dev_cors !== cfg?.dev_cors || JSON.stringify(draft.origins) !== JSON.stringify(cfg?.origins);
+  // A page the hub serves itself talks same-origin and needs no CORS entry.
+  const base = getBaseUrl();
+  let sameOrigin = !base;
+  try { sameOrigin = sameOrigin || new URL(base).origin === here; } catch { /* keep */ }
+  const allowedHere = sameOrigin || draft.origins.includes(here) || builtin.includes(here);
+  const lockout = !draft.dev_cors && !allowedHere;
+  const canAdd = ORIGIN_RE.test(input.trim()) && !draft.origins.includes(input.trim()) && !builtin.includes(input.trim()) && draft.origins.length < MAX_ORIGINS;
 
   const save = async (next: SecurityConfig) => {
     setBusy(true);
@@ -85,8 +94,18 @@ export const CorsPanel: React.FC = () => {
 
         <Box>
           <Typography variant="overline" color="text.secondary">{t('cors.allowedOrigins', { n: draft.origins.length, max: MAX_ORIGINS })}</Typography>
+          {builtin.length > 0 && (
+            <Stack spacing={0.5} sx={{ mt: 0.5, mb: 1 }}>
+              {builtin.map((o) => (
+                <Stack key={o} direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                  <Chip label={o} size="small" variant="outlined" />
+                  <Typography variant="caption" color="text.secondary">{t('cors.builtin')}</Typography>
+                </Stack>
+              ))}
+            </Stack>
+          )}
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
-            {draft.origins.length === 0 && <Typography variant="body2" color="text.secondary">{t('cors.empty')}</Typography>}
+            {draft.origins.length === 0 && <Typography variant="body2" color="text.secondary">{t(builtin.length ? 'cors.emptyOwn' : 'cors.empty')}</Typography>}
             {draft.origins.map((o) => (
               <Chip key={o} label={o} size="small" onDelete={() => setDraft({ ...draft, origins: draft.origins.filter((x) => x !== o) })} />
             ))}
@@ -101,7 +120,7 @@ export const CorsPanel: React.FC = () => {
             >
               {t('cors.add')}
             </Button>
-            {!draft.origins.includes(here) && draft.origins.length < MAX_ORIGINS && (
+            {!allowedHere && draft.origins.length < MAX_ORIGINS && (
               <Button onClick={() => setDraft({ ...draft, origins: [...draft.origins, here] })}>
                 {t('cors.addThis')}
               </Button>

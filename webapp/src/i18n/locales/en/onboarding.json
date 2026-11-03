@@ -11,7 +11,7 @@
   "wifiDemo": "Demo mode — there is no physical hub.",
   "wifiAddress": "The app is working with the hub at {address}.",
   "wifiThisDevice": "this device",
-  "wifiHint": "You can change the Wi-Fi network later in Settings → Network. If the hub gets a new IP, reconnect from the start screen (or scan the QR code after saving Wi-Fi).",
+  "wifiHint": "You can change the Wi-Fi network later in Settings → Connection. If the hub gets a new IP, reconnect from the start screen (or scan the QR code after saving Wi-Fi).",
   "timeSyncRequested": "Time sync requested — wait a few seconds.",
   "timeSyncFailed": "Could not start time sync.",
   "timeState": "Time status:",

@@ -78,7 +78,7 @@ let demoBackup: { ts: number; fw: string; files: number } | null = null;
 /** Demo access point (in-memory): the first-login password until the visitor sets one. */
 const demoAp: ApStatus = { ssid: 'rbgrid-7e01', userSet: false };
 /** Demo CORS policy (in-memory, like the hub's default: open). */
-let demoSecurity: SecurityConfig = { dev_cors: true, origins: [] };
+let demoSecurity: SecurityConfig = { dev_cors: false, origins: [], builtin_origins: ['https://webapp.rbgrid.io'], origins_max: 8 };
 
 function demoOverrides(): Record<string, JsonObject> {
   try { return JSON.parse(localStorage.getItem(DEMO_CONFIG_KEY) ?? '{}') as Record<string, JsonObject>; }
@@ -282,18 +282,23 @@ export class DirectTransport implements DeviceTransport {
       const res = await axios.get<Record<string, unknown>>(`${base}/api/system/security`, {
         headers: tokenStore.authHeader(), timeout: 5000,
       });
-      const body = (res.data.data ?? res.data) as { dev_cors?: boolean; origins?: string[] };
-      return { dev_cors: Boolean(body.dev_cors), origins: Array.isArray(body.origins) ? body.origins : [] };
+      const body = (res.data.data ?? res.data) as { dev_cors?: boolean; origins?: string[]; builtin_origins?: string[]; origins_max?: number };
+      return {
+        dev_cors: Boolean(body.dev_cors), origins: Array.isArray(body.origins) ? body.origins : [],
+        ...(Array.isArray(body.builtin_origins) ? { builtin_origins: body.builtin_origins } : {}),
+        ...(typeof body.origins_max === 'number' ? { origins_max: body.origins_max } : {}),
+      };
     } catch {
       return null;
     }
   }
 
   async setSecurity(cfg: SecurityConfig): Promise<void> {
-    if (isDemo()) { demoSecurity = { dev_cors: cfg.dev_cors, origins: [...cfg.origins] }; return; }
+    if (isDemo()) { demoSecurity = { ...demoSecurity, dev_cors: cfg.dev_cors, origins: [...cfg.origins] }; return; }
     const base = getBaseUrl();
     if (!base) return;
-    await axios.post(`${base}/api/system/security`, cfg, {
+    // Always both keys, dev_cors explicit (v1.1.3: a POST without it means allow-list); never the built-ins.
+    await axios.post(`${base}/api/system/security`, { dev_cors: cfg.dev_cors === true, origins: cfg.origins }, {
       headers: tokenStore.authHeader(), timeout: 5000,
     });
   }

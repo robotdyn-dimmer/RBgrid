@@ -87,3 +87,16 @@ export function toSingleZone(plan: TariffPlan): Partial<TariffPlan> {
     ...(desc && /test/i.test(desc) ? { description: '' } : {}),
   } as unknown as Partial<TariffPlan>;
 }
+
+/**
+ * The hub's plan carries more than the wizard sets (taxes / levies, net metering, progressive,
+ * fixed payments, more than two zones) — saving the quick tariff would replace all that (docs review
+ * 04.11), so the wizard asks first.
+ */
+export function richPlan(p: TariffPlan | undefined): boolean {
+  if (!p) return false;
+  const levy = (x?: number) => typeof x === 'number' && x > 0;
+  return levy(p.energy_tax_per_kwh) || levy(p.grid_usage_fee_per_kwh) || levy(p.renewable_levy_per_kwh)
+    || p.net_metering_enabled === true || p.progressive_config?.is_enabled === true
+    || (p.fixed_payments?.length ?? 0) > 0 || (p.zones?.length ?? 0) > 2;
+}

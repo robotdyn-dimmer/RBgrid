@@ -5,6 +5,7 @@
  * Деньги — в валюте тарифа, энергия — в кВт·ч. Шов «накопительно vs за период» подписан,
  * чтобы цифры не путали. Оформление — на дизайн-системе, значения — ru-RU.
  */
+import { useTariffPlan } from '../hooks/useTariffPlan';
 import { useDsTokens } from '../theme/useDsTokens';
 import { StackedBar, zoneColorOf } from '../components/charts/StackedBar';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -92,6 +93,10 @@ export const EconomicsPage: React.FC = () => {
   useEffect(() => { if ((!unitId || !units.includes(unitId)) && units.length) setUnitId(units[0]); }, [units, unitId]);
 
   const eco = useEconomics(unitId);
+  // The net-metering credit means nothing while the plan has net metering off; the progressive block
+  // has no setting in Tariffs — shown only when the hub runs one (docs review 04.11).
+  const { plan: tariffPlan } = useTariffPlan();
+  const netMeteringOn = tariffPlan?.net_metering_enabled !== false;
   const mainIdEarly = units.find((id) => cfgOf(id)?.role === 'MAIN_SUPPLY') ?? null;
   // The period from the hub's closed records by its clock (hooks/usePeriodTotals): the hub's
   // /summary without from/to sums its whole ring, and a running month has no record yet.
@@ -198,7 +203,7 @@ export const EconomicsPage: React.FC = () => {
           </Grid>
           <Grid item xs={12} md={6}>
             <Stack spacing={2}>
-              <Card outlined>
+              {netMeteringOn && <Card outlined>
                 <Typography variant="overline" color="text.secondary">{t('economics.netMetering')}</Typography>
                 {mainBasic && <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{t('economics.basicNoNetMetering')}</Typography>}
                 <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
@@ -208,8 +213,8 @@ export const EconomicsPage: React.FC = () => {
                   <InfoField label={t('economics.lifetimeEarned')} value={en(eco.data.net_metering.lifetime_earned_kwh)} />
                   <InfoField label={t('economics.lifetimeUsed')} value={en(eco.data.net_metering.lifetime_used_kwh)} />
                 </Stack>
-              </Card>
-              <Card outlined>
+              </Card>}
+              {eco.data.progressive.enabled && <Card outlined>
                 <Stack direction="row" alignItems="center" spacing={1.5} mb={1}>
                   <Typography variant="overline" color="text.secondary">{t('economics.progressive')}</Typography>
                   <StatusChip status={eco.data.progressive.enabled ? 'live' : 'dormant'} label={eco.data.progressive.enabled ? t('economics.on') : t('economics.off')} />
@@ -221,7 +226,7 @@ export const EconomicsPage: React.FC = () => {
                     <InfoField label={t('economics.multiplier')} value={nf(eco.data.progressive.rate_mult, 2)} />
                   </Stack>
                 )}
-              </Card>
+              </Card>}
             </Stack>
           </Grid>
         </Grid>

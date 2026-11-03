@@ -5,15 +5,15 @@
       "code": "en",
       "label": "English",
       "intl": "en-GB",
-      "hash": "1cd27aba99"
+      "hash": "acfa602d59"
     },
     {
       "code": "ru",
       "label": "Русский",
       "intl": "ru-RU",
-      "hash": "de35fcd725",
+      "hash": "d8019c9bdf",
       "file": "ru.json",
-      "bytes": 139089
+      "bytes": 140136
     }
   ]
 }

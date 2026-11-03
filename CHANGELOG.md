@@ -18,6 +18,12 @@
 - The CORS panel shows the built-in origins as fixed rows and your own list separately.
 - On an HTTPS page that can't reach the hub, the app suggests allowing access to devices on the local
   network.
+- Economics: "Where the money goes" no longer shows energy as money; the standby share is a share of
+  the month's consumption; the net-metering credit is hidden while net metering is off, and the
+  progressive block shows only when the hub runs one.
+- The setup wizard asks before a quick tariff replaces a fuller plan.
+- Text fixes: hints name the real panels (Settings → Connection / Security).
+- Full list: `webapp/CHANGELOG.md`.
 
 ## v1.1.2 — 2026-11-03
 

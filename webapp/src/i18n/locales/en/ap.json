@@ -15,8 +15,8 @@
   "saved": "Access-point password changed.",
   "resetDone": "The first-login password is back.",
   "afterRestart": "It takes effect after a restart.",
-  "needToken": "Changing it needs the admin token (Settings → Access).",
+  "needToken": "Changing it needs the admin token (Settings → Security).",
   "rejected": "The hub refused the password: 8–63 printable characters.",
   "saveError": "Couldn’t change the password (hub unreachable?).",
-  "statusNeedsToken": "The hub shows whether its own password is set only with the admin token (Settings → Access)."
+  "statusNeedsToken": "The hub shows whether its own password is set only with the admin token (Settings → Security)."
 }

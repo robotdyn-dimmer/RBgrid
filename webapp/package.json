@@ -1,6 +1,6 @@
 {
   "name": "rbgrid-webapp",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "description": "RBGrid — ESP32 power-monitoring web interface (device-direct over HTTP/WS, CDN-hosted)",
@@ -33,7 +33,8 @@
     "i18n:index": "node scripts/i18n-index.js",
     "ui:check": "node scripts/ui-check.mjs",
     "build:demo": "cross-env REACT_APP_DEMO_ONLY=true REACT_APP_DEMO_SITES=heatpump-ev,home,home-nosolar,business,ev PUBLIC_URL=. BUILD_PATH=build-demo DISABLE_ESLINT_PLUGIN=true GENERATE_SOURCEMAP=false react-scripts build && node scripts/zip-dir.js build-demo build-demo-zip/rbgrid-demo_v$npm_package_version.zip",
-    "build:site": "cross-env PUBLIC_URL=. BUILD_PATH=build-site DISABLE_ESLINT_PLUGIN=true GENERATE_SOURCEMAP=false react-scripts build"
+    "build:site": "cross-env PUBLIC_URL=. BUILD_PATH=build-site DISABLE_ESLINT_PLUGIN=true GENERATE_SOURCEMAP=false react-scripts build",
+    "build:webapp": "cross-env PUBLIC_URL=. BUILD_PATH=build-webapp DISABLE_ESLINT_PLUGIN=true GENERATE_SOURCEMAP=false react-scripts build && node scripts/zip-dir.js build-webapp build-webapp-zip/rbgrid-webapp_v$npm_package_version.zip"
   },
   "eslintConfig": {
     "extends": [

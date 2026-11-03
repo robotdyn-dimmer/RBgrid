@@ -14,9 +14,11 @@
   "addThis": "Add this origin",
   "lockout": "This window's origin ({origin}) is not listed — once access is closed it will lose its connection to the device. Add it before saving.",
   "close": "Close access (list only)",
-  "openAll": "Allow all (open CORS)",
-  "confirmTitle": "Open access to all sites?",
+  "openAll": "Allow any website (not recommended)",
+  "confirmTitle": "Allow any website?",
   "confirmText": "Any site open in a browser on this network will be able to read the device's telemetry, history and economics. Use only on a trusted network or for debugging. Changing settings will still require the admin token.",
   "cancel": "Cancel",
-  "confirmOk": "Allow all"
+  "confirmOk": "Allow all",
+  "builtin": "always allowed — the RBgrid app at this address",
+  "emptyOwn": "No origins of your own yet."
 }

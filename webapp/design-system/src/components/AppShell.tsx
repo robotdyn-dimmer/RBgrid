@@ -39,6 +39,11 @@ export interface AppShellProps {
    * theme switch). On mobile it is rendered at the bottom of the «Ещё» drawer.
    */
   footer?: React.ReactNode;
+  /**
+   * Optional content right under the brand at the top of the rail (e.g. the demo-site picker —
+   * at the bottom it went unseen). On mobile it opens the «Ещё» drawer, above the sections.
+   */
+  railTop?: React.ReactNode;
   /** Label of the overflow tab on mobile. Default «Ещё». */
   moreLabel?: string;
   /** Accessible name of the main navigation. Default «Разделы» (pass a translated one). */
@@ -153,6 +158,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   nav,
   headerRight,
   footer,
+  railTop,
   moreLabel = 'Ещё',
   navLabel = 'Разделы',
   moreNavLabel = 'Другие разделы',
@@ -284,6 +290,7 @@ export const AppShell: React.FC<AppShellProps> = ({
         >
           <Box role="dialog" aria-label={moreLabel} sx={{ pt: 1 }}>
             <Box sx={{ width: 36, height: 4, borderRadius: 2, bgcolor: 'divider', mx: 'auto', mb: 1.5 }} />
+            {railTop && <Box sx={{ px: 2, pb: 1.5 }}>{railTop}</Box>}
             {rest.length > 0 && (
               <Box component="nav" aria-label={moreNavLabel} sx={{ pb: 1 }}>
                 <NavList items={rest} onNavigate={() => setMoreOpen(false)} />
@@ -318,6 +325,7 @@ export const AppShell: React.FC<AppShellProps> = ({
         }}
       >
         <Brand brand={brand} brandIcon={brandIcon} />
+        {railTop && <Box sx={{ flexShrink: 0, px: 2, pb: 1.5 }}>{railTop}</Box>}
         <Box component="nav" aria-label={navLabel} sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
           <NavList items={nav} />
         </Box>

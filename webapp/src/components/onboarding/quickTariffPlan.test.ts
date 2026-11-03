@@ -45,3 +45,17 @@ describe('one zone all day (W191-19)', () => {
     expect(p.description).toBe('');
   });
 });
+
+describe('richPlan — the wizard asks before replacing a fuller plan', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { richPlan } = require('./quickTariffPlan');
+  const zone = { zone_id: 'DAY' };
+  it('a plain one/two-zone plan is not rich; levies, net metering, fixed payments or 3+ zones are', () => {
+    expect(richPlan(undefined)).toBe(false);
+    expect(richPlan({ zones: [zone, zone] })).toBe(false);
+    expect(richPlan({ zones: [zone], renewable_levy_per_kwh: 0.02 })).toBe(true);
+    expect(richPlan({ zones: [zone], net_metering_enabled: true })).toBe(true);
+    expect(richPlan({ zones: [zone], fixed_payments: [{}] })).toBe(true);
+    expect(richPlan({ zones: [zone, zone, zone] })).toBe(true);
+  });
+});
