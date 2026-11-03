@@ -58,6 +58,8 @@ Built against the public rbAmp ESP-IDF component.
 - The hub reports a bus line held low (`/api/v1/sensors` `bus_line_low_s`, a FAIL line). Typical causes: a module
   wired without power, set to another mode, or wired wrong. The scan refuses at once on a held line
   (`409 BUS_STUCK`) instead of walking every address. Readings resume by themselves once the line is released.
+- The scan ignores addresses that only acknowledge with no data (0xFF). With an STD-U3I3 on the bus, the hub board's
+  bus front end acknowledges addresses nobody owns.
 - Scanning and adding a module identify it through the rbAmp library, so STD modules (U3I3, UI1) are found
   and added at any address. Before, the hub's own BASIC-only identity reads refused an STD module and could leave
   it holding the bus.

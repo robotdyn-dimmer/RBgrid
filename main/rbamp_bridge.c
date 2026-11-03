@@ -3418,16 +3418,18 @@ static const char *pin_blocked(int gpio, int self)
  * PCF8574 only returns its port and an EEPROM its current byte. i2c_master_probe (IDF 5.4.1 + the project driver
  * patches) was seen reporting empty addresses as present — the read path's NACK handling is the proven one. Bus
  * held by the caller. */
-static esp_err_t addr_answers_locked(uint8_t b, uint8_t addr)
+static esp_err_t addr_answers_byte_locked(uint8_t b, uint8_t addr, uint8_t *byte)
 {
     if (b >= RBAMP_MAX_BUSES || !s_bush[b]) return ESP_ERR_INVALID_STATE;
     i2c_device_config_t dc = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = addr, .scl_speed_hz = 100000 };
     i2c_master_dev_handle_t d;
-    uint8_t x = 0;
+    uint8_t x = 0xFF;
     esp_err_t e = i2c_master_bus_add_device(s_bush[b], &dc, &d);
     if (e == ESP_OK) { e = i2c_master_receive(d, &x, 1, 30); i2c_master_bus_rm_device(d); }
+    if (byte) *byte = x;
     return e;
 }
+static esp_err_t addr_answers_locked(uint8_t b, uint8_t addr) { return addr_answers_byte_locked(b, addr, NULL); }
 /** Identify the device at addr through the rbAmp library — the same path a module takes at join (rbamp_new +
  *  rbamp_begin_resume: the library runs the STD identity probe before any 8-bit transaction and so tells the BASIC
  *  and STD register formats apart; resume = no primer LATCH, a BASIC module keeps its accumulated window). The
@@ -3540,9 +3542,18 @@ esp_err_t rbamp_bridge_i2c_scan(uint8_t b, cJSON *arr)
     if (b >= RBAMP_MAX_BUSES || !s_bush[b]) return ESP_ERR_INVALID_STATE;
     /* a slave stuck mid-byte holds SDA low and every address then "answers" (seen with internal pull-ups only):
      * clock it free first, and call a bus where every address answers stuck, not populated */
-    bus_take(); esp_err_t re = i2c_master_bus_reset(s_bush[b]);
+    /* a held line: walking 112 addresses can hang the master. Sample the IDLE bus; only if a line reads low, clock the
+     * bus free (reset) and look again after the lines settle — sampling right after a reset read the rising lines as
+     * low on .139 (a false BUS_STUCK with a healthy bus, 2026-11-03). */
     const char *held = "";
-    const bool line_low = bus_line_low_locked(b, &held);   /* a held line: walking 112 addresses can hang the master */
+    bus_take();
+    bool line_low = bus_line_low_locked(b, &held);
+    esp_err_t re = ESP_OK;
+    if (line_low) {
+        re = i2c_master_bus_reset(s_bush[b]);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        line_low = bus_line_low_locked(b, &held);
+    }
     bus_give();
     if (re != ESP_OK) rbpower_diag_printf("FAIL I2C bus %u reset before scan: %s", b, esp_err_to_name(re));
     if (line_low) {
@@ -3552,7 +3563,8 @@ esp_err_t rbamp_bridge_i2c_scan(uint8_t b, cJSON *arr)
     int answered = 0;
     for (uint8_t a = 0x08; a <= 0x77; ++a) {
         bus_take();
-        esp_err_t pe = addr_answers_locked(b, a);
+        uint8_t pb = 0xFF;
+        esp_err_t pe = addr_answers_byte_locked(b, a, &pb);
         lib_ident_t id;
         bool is_rbamp = false;
         int m = module_at(b, a);
@@ -3560,6 +3572,10 @@ esp_err_t rbamp_bridge_i2c_scan(uint8_t b, cJSON *arr)
             is_rbamp = lib_identify_locked(b, a, &id);   /* the library's own identity (BASIC/STD), not raw reads */
         bus_give();
         if (pe != ESP_OK) continue;
+        /* phantom ACK: with an STD-U3I3 on the bus the hub board's bus front end ACKs addresses nobody owns and the
+         * read returns 0xFF (rbamp-dev, .110 2026-10-17 / .139 2026-11-03). An address counts only with real data, or
+         * when the library identified an rbAmp module there. */
+        if (!is_rbamp && pb == 0xFF) continue;
         if (++answered > 24) break;   /* no real bus carries this many devices: stuck SDA — reported by the caller */
         cJSON *o = cJSON_CreateObject();
         cJSON_AddNumberToObject(o, "addr", a);
