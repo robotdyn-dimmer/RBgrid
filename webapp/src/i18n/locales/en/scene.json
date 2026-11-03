@@ -1,0 +1,11 @@
+{
+  "aria": "House scene: {summary}",
+  "gridImport": "Grid · importing",
+  "gridExport": "Grid · exporting",
+  "houseShare": "Home · {pct}% from solar",
+  "legendAria": "Values on the scene",
+  "note": "Line thickness shows power. Object size means nothing.",
+  "toggleAria": "House schema view",
+  "viewSchema": "Diagram",
+  "viewScene": "Scene"
+}

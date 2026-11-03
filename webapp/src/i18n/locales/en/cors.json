@@ -1,0 +1,22 @@
+{
+  "title": "Browser access (CORS)",
+  "unavailable": "Policy unavailable — an admin token is required or the device does not support this setting.",
+  "saved": "Access policy saved (no restart needed).",
+  "saveFailed": "Could not save the policy.",
+  "statusOpen": "open to any site",
+  "statusAllowlist": "allowed origins only",
+  "openHint": "Any site open in a browser on the same network can read the device's telemetry and history. Changing settings still requires the admin token.",
+  "allowlistHint": "The device answers only apps served from the listed origins. Other sites in the browser get no data.",
+  "allowedOrigins": "Allowed origins ({n}/{max})",
+  "empty": "— empty —",
+  "originLabel": "App origin (https://…)",
+  "add": "Add",
+  "addThis": "Add this origin",
+  "lockout": "This window's origin ({origin}) is not listed — once access is closed it will lose its connection to the device. Add it before saving.",
+  "close": "Close access (list only)",
+  "openAll": "Allow all (open CORS)",
+  "confirmTitle": "Open access to all sites?",
+  "confirmText": "Any site open in a browser on this network will be able to read the device's telemetry, history and economics. Use only on a trusted network or for debugging. Changing settings will still require the admin token.",
+  "cancel": "Cancel",
+  "confirmOk": "Allow all"
+}

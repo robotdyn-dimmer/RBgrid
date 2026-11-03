@@ -1,0 +1,23 @@
+{
+  "title": "Hub log",
+  "intro": "What the hub recorded itself: restarts and their causes, updates, Wi-Fi, module poll failures, hours and days closing. The lines are technical — for an engineer or support; press “Copy” when contacting support.",
+  "firmware": "Firmware {version} · image {image} · partition {partition}",
+  "showFail": "Failures",
+  "showEvent": "Events",
+  "showAll": "All (this boot)",
+  "refresh": "Refresh",
+  "copy": "Copy",
+  "copied": "Copied",
+  "failBoot": "Failures recorded since the last start: {n}.",
+  "noPersist": "The hub can't read its log files right now — only lines since the last start are shown.",
+  "error": "The log didn't load: the hub isn't answering or its firmware doesn't keep a log.",
+  "loading": "Loading the hub log…",
+  "empty": "No records.",
+  "upTime": "{s} s after start",
+  "lvlFail": "failure",
+  "lvlEvent": "event",
+  "lvlPeriodic": "routine",
+  "boot": "Start #{n}",
+  "bootCurrent": "Start #{n} · current",
+  "earlier": "Show earlier"
+}

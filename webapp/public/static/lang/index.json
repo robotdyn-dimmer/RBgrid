@@ -1,0 +1,19 @@
+{
+  "builtin": "en",
+  "languages": [
+    {
+      "code": "en",
+      "label": "English",
+      "intl": "en-GB",
+      "hash": "1cd27aba99"
+    },
+    {
+      "code": "ru",
+      "label": "Русский",
+      "intl": "ru-RU",
+      "hash": "de35fcd725",
+      "file": "ru.json",
+      "bytes": 139089
+    }
+  ]
+}

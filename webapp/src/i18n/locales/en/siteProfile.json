@@ -1,0 +1,17 @@
+{
+  "title": "Site scenario",
+  "intro": "Sets the Overview layout on every device that opens this hub.",
+  "hintHome": "Where the energy comes from and what it costs: grid input, solar, home circuits.",
+  "hintIndustrial": "Control panel: phases, circuits vs rating, log, single-line diagram.",
+  "hintEv": "Charging stations: how much they charge and whether the grid input has enough capacity.",
+  "currentSuffix": " · current",
+  "localFallback": "No data from the device — showing the last known scenario.",
+  "confirmTitle": "Change scenario?",
+  "confirmText": "The “{profile}” scenario will change the Overview for everyone who opens this hub. No restart needed.",
+  "cancel": "Cancel",
+  "change": "Change",
+  "previewOnly": "Just preview",
+  "previewOn": "Previewing “{profile}” — this browser only.",
+  "previewOff": "Back",
+  "previewBanner": "Preview: “{profile}” — this browser only. The hub shows “{device}”."
+}

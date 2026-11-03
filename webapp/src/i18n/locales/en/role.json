@@ -1,0 +1,12 @@
+{
+  "MAIN_SUPPLY": "Grid input",
+  "ALTERNATIVE_SUPPLY": "Backup input",
+  "CIRCUIT_BREAKER": "Breaker",
+  "DEVICE_LOAD": "Appliance",
+  "ZONE_LOAD": "Load",
+  "RENEWABLE_SOURCE": "Generation",
+  "STORAGE_SYSTEM": "Storage",
+  "EV_CHARGING": "Charging station",
+  "HEATING_COOLING": "Heating/cooling",
+  "SMART_APPLIANCE": "Smart appliance"
+}

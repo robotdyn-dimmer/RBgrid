@@ -1,0 +1,22 @@
+{
+  "title": "Hub access point",
+  "network": "Network {ssid}",
+  "userSet": "your password",
+  "firstLogin": "first-login password",
+  "remind": "The hub’s own Wi-Fi still uses the first-login password. Set your own so that only you can join it.",
+  "newLabel": "New access-point password",
+  "help": "8–63 characters: Latin letters, digits, symbols. Applies at once — devices on the hub’s Wi-Fi reconnect.",
+  "bad": "8–63 characters, Latin letters, digits and symbols only.",
+  "save": "Change password",
+  "reset": "Back to the first-login password",
+  "confirmTitle": "Change the hub’s Wi-Fi password?",
+  "resetTitle": "Return to the first-login password?",
+  "confirmBody": "Phones and laptops connected to the hub’s own Wi-Fi drop off and need the new password.",
+  "saved": "Access-point password changed.",
+  "resetDone": "The first-login password is back.",
+  "afterRestart": "It takes effect after a restart.",
+  "needToken": "Changing it needs the admin token (Settings → Access).",
+  "rejected": "The hub refused the password: 8–63 printable characters.",
+  "saveError": "Couldn’t change the password (hub unreachable?).",
+  "statusNeedsToken": "The hub shows whether its own password is set only with the admin token (Settings → Access)."
+}

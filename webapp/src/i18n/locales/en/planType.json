@@ -1,0 +1,10 @@
+{
+  "SIMPLE": "Flat rate",
+  "TWO_ZONE": "Two-zone (day/night)",
+  "THREE_ZONE": "Three-zone",
+  "MULTI_ZONE": "Multi-zone",
+  "PROGRESSIVE": "Progressive",
+  "SEASONAL": "Seasonal",
+  "DYNAMIC": "Dynamic",
+  "CUSTOM": "Custom"
+}

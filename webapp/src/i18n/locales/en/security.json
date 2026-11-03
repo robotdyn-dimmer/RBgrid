@@ -1,0 +1,19 @@
+{
+  "rotateConfirm": "Change the API token? Current sessions will need to use the new token.",
+  "rotated": "Token changed.",
+  "installed": "Token set — writes now require it.",
+  "saveError": "Error (wrong current token or device unreachable?).",
+  "clearConfirm": "Delete the API token? Writes will become open (no authorization).",
+  "cleared": "Token deleted — authorization is off.",
+  "clearFailed": "Could not delete the token.",
+  "title": "Security",
+  "apiToken": "API token",
+  "unknown": "unknown",
+  "set": "set",
+  "notSet": "not set",
+  "newTokenLabel": "New token (change)",
+  "setTokenLabel": "Set token",
+  "placeholder": "paste token",
+  "rotate": "Change",
+  "install": "Set"
+}

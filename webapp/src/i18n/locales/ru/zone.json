@@ -1,0 +1,10 @@
+{
+  "NIGHT": "Ночь",
+  "MORNING_PEAK": "Утренний пик",
+  "DAY": "День",
+  "EVENING_PEAK": "Вечерний пик",
+  "LATE_EVENING": "Поздний вечер",
+  "WEEKEND": "Выходные",
+  "HOLIDAY": "Праздник",
+  "CRITICAL_PEAK": "Критический пик"
+}

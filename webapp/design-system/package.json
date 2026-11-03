@@ -1,0 +1,28 @@
+{
+  "name": "@rbgrid/design-system",
+  "version": "0.1.3",
+  "private": true,
+  "description": "RBGrid UI design system — HA-style tokens + presentational components",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@emotion/react": "^11",
+    "@emotion/styled": "^11",
+    "@mui/material": "^5",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.0"
+  }
+}

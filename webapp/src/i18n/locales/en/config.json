@@ -1,0 +1,10 @@
+{
+  "title": "Settings",
+  "panelSystem": "Site",
+  "panelTariff": "Tariff",
+  "panelUnits": "Points",
+  "tariffElsewhere": "The tariff plan, zones and prices are set on the “Tariffs” page.",
+  "openTariffs": "Open “Tariffs”",
+  "unitsElsewhere": "Names, roles, phases, nominals and the input limit are on each point’s page under “Points”.",
+  "openPoints": "Open “Points”"
+}

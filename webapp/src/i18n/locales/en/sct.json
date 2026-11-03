@@ -1,0 +1,5 @@
+{
+  "uncalibrated": "the channel is not calibrated",
+  "gain_unexpected": "the channel gain does not match the CT model",
+  "unknown_model": "the module does not know this CT model"
+}

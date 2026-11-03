@@ -1,0 +1,9 @@
+{
+  "variant": "Demo site",
+  "v_heatpump-ev": "House with heat pump and EV",
+  "v_home": "Home with solar",
+  "v_home-nosolar": "Flat, one 7-channel module",
+  "v_business": "Workshop, three-phase",
+  "v_ev": "Car park with chargers",
+  "v_us": "US home (120/240 V)"
+}

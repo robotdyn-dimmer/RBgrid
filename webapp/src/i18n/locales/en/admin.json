@@ -1,0 +1,19 @@
+{
+  "rebootConfirm": "Reboot the device now?",
+  "rebootSent": "Reboot command sent — the device is restarting.",
+  "rebootFailed": "Could not send the reboot request (device unreachable?).",
+  "restoreFailed": "Could not send the reset request.",
+  "title": "Administration",
+  "rebooting": "Rebooting…",
+  "reboot": "Reboot device",
+  "restoring": "Resetting…",
+  "restore": "Factory reset",
+  "rebootBody": "The hub goes offline for about half a minute; metering resumes after start-up.",
+  "rebootAction": "Reboot",
+  "resetTitle": "Reset the hub to its first start?",
+  "resetBody": "Settings, points, tariff, Wi-Fi, tokens and the access-point password are erased. The hub then starts its own access point {ssid}; connect to it to set it up again. This app loses the hub.",
+  "resetEraseHistory": "Also erase the measurement history",
+  "resetAction": "Reset the hub",
+  "resetSent": "The hub is restarting as new. Connect to its access point {ssid} to set it up.",
+  "resetRefused": "The hub refused: {why}"
+}
