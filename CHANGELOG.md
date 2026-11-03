@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.2 — unreleased (pending the .139 hardware run)
+## v1.1.2 — 2026-11-03
 
 Built against the public rbAmp ESP-IDF component.
 
