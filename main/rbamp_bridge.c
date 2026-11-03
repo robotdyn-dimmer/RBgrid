@@ -46,6 +46,8 @@
 #include "esp_attr.h"              /* RTC_NOINIT_ATTR — virtual module counters survive a warm reboot */
 #include "rbstrutil.h"     /* rb_scat — bounded snprintf append */
 #include "esp_task_wdt.h"         /* bus_take feeds the TWDT of a subscribed waiter */
+#include "driver/gpio.h"          /* gpio_get_level — bus line-low check */
+#include "esp_rom_sys.h"          /* esp_rom_delay_us */
 
 #include "cJSON.h"
 #ifndef CONFIG_RBAMP_SCT_RATING_CORRECTION
@@ -1813,6 +1815,61 @@ static volatile uint32_t s_stall_s;         ///< seconds stalled as last seen by
 
 uint32_t rbpower_i2c_bus_stalled_s(void) { return s_stall_s; }
 
+/* ==== Bus line held low ======================================================================
+ * A device that holds SDA or SCL low — a module wired without power, a module switched to another transport
+ * (an STD-U3I3 in Modbus RTU mode drives the SDA/SCL pins as UART RX/TX), or crossed wires — silences every
+ * module on the bus while the poll keeps running (the transactions fail fast, so it is not a stall). With the bus
+ * idle (lock held) the lines must read high through the pull-ups; the supervisor samples them every 5 s and a line
+ * low on RBAMP_LINE_LOW_CHECKS checks in a row becomes a FAIL line + rbpower_i2c_bus_line_low_s() (/api/v1/sensors
+ * bus_line_low_s). Released lines clear it; the healer then re-probes the absent modules by itself. The scan checks
+ * the same before walking addresses (a walk on a held bus is what can hang the ESP-IDF master). */
+#define RBAMP_LINE_LOW_CHECKS 3u   ///< consecutive low samples (5 s apart) before a hold is reported
+static volatile uint32_t s_line_low_s;     ///< seconds a bus-0 line has been held low (0 = lines idle high)
+static int64_t           s_line_low_t0_us; ///< when the current hold was first seen
+static uint8_t           s_line_low_n;     ///< consecutive low checks
+
+uint32_t rbpower_i2c_bus_line_low_s(void) { return s_line_low_s; }
+
+static int bus_pin(uint8_t b, bool scl);   /* below, with the /api/v1/i2c helpers */
+
+/** Sample bus b's idle line levels (caller holds the bus): true when SDA or SCL reads low in all 5 samples 200 µs
+ *  apart. *which = "SDA", "SCL" or "SDA and SCL". */
+static bool bus_line_low_locked(uint8_t b, const char **which)
+{
+    const int sda = bus_pin(b, false), scl = bus_pin(b, true);
+    if (sda < 0 || scl < 0) return false;
+    bool sda_low = true, scl_low = true;
+    for (int i = 0; i < 5; ++i) {
+        if (gpio_get_level((gpio_num_t)sda)) sda_low = false;
+        if (gpio_get_level((gpio_num_t)scl)) scl_low = false;
+        esp_rom_delay_us(200);
+    }
+    if (which) *which = (sda_low && scl_low) ? "SDA and SCL" : sda_low ? "SDA" : "SCL";
+    return sda_low || scl_low;
+}
+
+static void rbamp_line_check(void)
+{
+    if (!s_bus_lock || !s_bush[0] || xSemaphoreTake(s_bus_lock, pdMS_TO_TICKS(50)) != pdTRUE) return;   /* busy = not idle */
+    const char *which = "";
+    const bool low = bus_line_low_locked(0, &which);
+    xSemaphoreGive(s_bus_lock);
+    if (!low) {
+        if (s_line_low_s) rbpower_diag_printf("I2C bus 0 lines released after ~%lus", (unsigned long)s_line_low_s);
+        s_line_low_s = 0; s_line_low_n = 0;
+        return;
+    }
+    if (s_line_low_n == 0) s_line_low_t0_us = esp_timer_get_time();
+    if (s_line_low_n < 255) ++s_line_low_n;
+    if (s_line_low_n < RBAMP_LINE_LOW_CHECKS) return;
+    const uint32_t held = (uint32_t)((esp_timer_get_time() - s_line_low_t0_us) / 1000000LL) + 5u;
+    if (s_line_low_s == 0) {
+        rbpower_diag_printf("FAIL I2C bus 0: %s held low — a module may be without power, set to another mode (e.g. Modbus) "
+                            "or wired wrong: check the module connections", which);
+    }
+    s_line_low_s = held;
+}
+
 static void rbamp_stall_supervisor_task(void *arg)
 {
     (void)arg;
@@ -1821,6 +1878,7 @@ static void rbamp_stall_supervisor_task(void *arg)
         const int64_t st = s_poll_stamp_us, now = esp_timer_get_time();
         const bool ota = (s_ota.state == MO_WRITING || s_ota.state == MO_COMMIT);
         const uint32_t age = (st > 0 && now > st) ? (uint32_t)((now - st) / 1000000LL) : 0;
+        if (s_running && !ota && s_stall_s == 0) rbamp_line_check();   /* a stalled poll may hold the lock forever */
         if (!s_running || ota || age < RBAMP_STALL_AFTER_S) continue;   /* the poll task clears s_stall_s itself */
         if (s_stall_s == 0)
             rbpower_diag_printf("FAIL I2C bus 0 stalled: no module poll for %lus — a problem on the bus (e.g. a module wired "
@@ -3435,8 +3493,15 @@ esp_err_t rbamp_bridge_i2c_scan(uint8_t b, cJSON *arr)
     if (b >= RBAMP_MAX_BUSES || !s_bush[b]) return ESP_ERR_INVALID_STATE;
     /* a slave stuck mid-byte holds SDA low and every address then "answers" (seen with internal pull-ups only):
      * clock it free first, and call a bus where every address answers stuck, not populated */
-    bus_take(); esp_err_t re = i2c_master_bus_reset(s_bush[b]); bus_give();
+    bus_take(); esp_err_t re = i2c_master_bus_reset(s_bush[b]);
+    const char *held = "";
+    const bool line_low = bus_line_low_locked(b, &held);   /* a held line: walking 112 addresses can hang the master */
+    bus_give();
     if (re != ESP_OK) rbpower_diag_printf("FAIL I2C bus %u reset before scan: %s", b, esp_err_to_name(re));
+    if (line_low) {
+        rbpower_diag_printf("FAIL I2C bus %u scan refused: %s held low", b, held);
+        return ESP_ERR_INVALID_RESPONSE;   /* → 409 BUS_STUCK */
+    }
     int answered = 0;
     for (uint8_t a = 0x08; a <= 0x77; ++a) {
         bus_take();
@@ -3548,6 +3613,10 @@ esp_err_t rbamp_bridge_i2c_set_addr(uint8_t m, uint8_t addr, char *why, size_t w
         return e != ESP_OK ? e : ESP_ERR_INVALID_RESPONSE;
     }
     esp_err_t se = rbgrid_storage_save_rbamp(&s_cfg);
+    {   /* the descriptor (/api/v1/sensors modules[].addr) follows the new address */
+        rbpower_module_desc_t md;
+        if (rbpower_get_module_desc(m, &md)) { md.addr = addr; rbpower_set_module_desc(m, &md); }
+    }
     drdy_attach(m);
     provision_module(m, &s_cfg.modules[m]);
     rbpower_diag_printf("m%u address 0x%02X -> 0x%02X on bus %u (UID kept), /rbamp.json: %s", m, old, addr, b, esp_err_to_name(se));

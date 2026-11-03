@@ -55,6 +55,11 @@ Built against the public rbAmp ESP-IDF component.
   `/api/v1/sensors` carries `bus_stalled_s`.
   - A typical cause is a module wired to the bus without power.
   - The stalled bus doesn't recover by itself: check the connections, then restart the hub.
+- The hub reports a bus line held low (`/api/v1/sensors` `bus_line_low_s`, a FAIL line). Typical causes: a module
+  wired without power, set to another mode, or wired wrong. The scan refuses at once on a held line
+  (`409 BUS_STUCK`) instead of walking every address. Readings resume by themselves once the line is released.
+- After a module's address change, `/api/v1/sensors` shows the new address. The channels of a just-added module
+  no longer read as absent before the first point is bound to them.
 
 ## v1.1.1 — 2026-10-22
 

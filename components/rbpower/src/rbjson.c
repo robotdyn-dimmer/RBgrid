@@ -2296,6 +2296,12 @@ char* rbgrid_json_create_sensors_list(const rbgrid_json_context_t* context) {
      * deleted; the sensor stays, re-bindable). unit_id is JSON null; present is inferred
      * from a bound sibling on the same module. Voltage feeds (RBAMP_ENTRY_VOLTAGE) aren't CT sensors. */
     if (have_fleet) {
+        /* a module that answers is present even with no point bound yet (a just-added module's channels must not
+         * read "no signal" until the first bind): the bridge keeps the module's observed presence in its descriptor */
+        for (uint8_t m = 0; m < fleet.module_count && m < RBAMP_MAX_MODULES; m++) {
+            rbpower_module_desc_t md;
+            if (rbpower_get_module_desc(m, &md) && md.present) module_present[m] = true;
+        }
         for (uint8_t m = 0; m < fleet.module_count && m < RBAMP_MAX_MODULES; m++) {
             const rbamp_module_cfg_t* mod = &fleet.modules[m];
             for (uint8_t e = 0; e < mod->entry_count && e < RBAMP_MAX_ENTRIES; e++) {
@@ -2401,6 +2407,9 @@ char* rbgrid_json_create_sensors_list(const rbgrid_json_context_t* context) {
          * typically a module left on the bus without power holding SDA/SCL. 0 / absent = polling normally. */
         uint32_t st = rbpower_i2c_bus_stalled_s();
         if (st > 0) cJSON_AddNumberToObject(root, "bus_stalled_s", st);
+        /* a bus line held low (module without power / in another mode / miswired): > 0 = seconds held */
+        uint32_t ll = rbpower_i2c_bus_line_low_s();
+        if (ll > 0) cJSON_AddNumberToObject(root, "bus_line_low_s", ll);
     }
     char* out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -2570,6 +2579,8 @@ void __attribute__((weak)) rbgrid_ha_discovery_request(void) {}
 /** @brief Weak default of the I2C bus-stall probe (0 = not stalled / no rbAmp bridge in this build); the
  *  rbAmp bridge provides the real one. */
 uint32_t __attribute__((weak)) rbpower_i2c_bus_stalled_s(void) { return 0; }
+/** @brief Weak default of the bus line-low probe (0 = lines idle high / no bridge). */
+uint32_t __attribute__((weak)) rbpower_i2c_bus_line_low_s(void) { return 0; }
 
 /* Inverse of the per-unit discovery: on unit DELETE publish an EMPTY retained payload to every
  * per-unit config topic so HA drops the entities (same rule the ESP-NOW node remover uses). Without

@@ -2282,6 +2282,9 @@ void     rbpower_diag_printf(const char* fmt, ...) __attribute__((format(printf,
 /** @brief Seconds the rbAmp I2C poll has made no progress (bus stall supervisor), 0 when polling normally.
  *  Weak default (0) in rbjson.c; the rbAmp bridge provides the real probe. Shown in /api/v1/sensors as bus_stalled_s. */
 uint32_t rbpower_i2c_bus_stalled_s(void);
+/** @brief Seconds an rbAmp I2C bus line (SDA/SCL) has been held low while idle, 0 when the lines are free. Weak default
+ *  (0) in rbjson.c; the rbAmp bridge provides the real probe. Shown in /api/v1/sensors as bus_line_low_s. */
+uint32_t rbpower_i2c_bus_line_low_s(void);
 /** @brief Whether an external source refreshed the system frequency in the last 10 s.
  *  @return true if fresh. */
 bool     rbpower_home_system_frequency_fresh(void);

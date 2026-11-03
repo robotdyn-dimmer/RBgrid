@@ -104,7 +104,7 @@ static esp_err_t i2c_post(httpd_req_t *req)
         cJSON_Delete(b);
         if (e == ESP_ERR_INVALID_RESPONSE) {
             cJSON_Delete(o); cJSON_Delete(arr);
-            return send_err(req, "409 Conflict", "BUS_STUCK", "every address answers: SDA is held low — check pull-ups (4.7 kOhm to 3.3 V) and wiring, then scan again");
+            return send_err(req, "409 Conflict", "BUS_STUCK", "a bus line is held low — a module may be without power, set to another mode (e.g. Modbus) or wired wrong: check the module connections, then scan again");
         }
         if (e != ESP_OK) { cJSON_Delete(o); cJSON_Delete(arr); return send_err(req, "409 Conflict", "BUS_DOWN", "bus is not running"); }
         cJSON_AddStringToObject(o, "status", "ok");
