@@ -3552,9 +3552,17 @@ cJSON *rbamp_bridge_i2c_state(void)
         if (dg >= 0) cJSON_AddNumberToObject(o, "drdy_gpio", dg); else cJSON_AddNullToObject(o, "drdy_gpio");
         rbpower_module_desc_t d;
         if (rbpower_get_module_desc(m, &d) && d.model[0]) { cJSON_AddStringToObject(o, "model", d.model); cJSON_AddNumberToObject(o, "n_i", d.n_i); }
-        int bound = 0;
-        for (uint8_t e = 0; e < s_cfg.modules[m].entry_count && e < RBAMP_MAX_ENTRIES; ++e) if (s_cfg.modules[m].entries[e].unit_id) bound++;
+        int bound = 0, metering = 0;
+        for (uint8_t e = 0; e < s_cfg.modules[m].entry_count && e < RBAMP_MAX_ENTRIES; ++e) {
+            if (!s_cfg.modules[m].entries[e].unit_id) continue;
+            bound++;
+            if (s_cfg.modules[m].entries[e].source != RBAMP_ENTRY_VOLTAGE) metering++;
+        }
         cJSON_AddNumberToObject(o, "points", bound);
+        /* placeholder: an absent module no metering point depends on (at most the mains-voltage point, which any
+         * voltage-capable module feeds). Typical case: the product-default module 0 @0x50 on a hub whose modules
+         * answer at other addresses. Clients don't block an add flow on it. */
+        cJSON_AddBoolToObject(o, "placeholder", s_dev[m] == NULL && metering == 0);
         cJSON_AddItemToArray(mods, o);
     }
     return r;
