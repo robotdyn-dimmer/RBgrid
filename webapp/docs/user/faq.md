@@ -110,7 +110,7 @@ Connect the hub to an MQTT broker in **Settings → Home Assistant**. Home Assis
 The points' energy sensors ("Energy In", "Energy Out"). **Settings → Home Assistant** shows a table of what to pick.
 
 **I deleted a point, but Home Assistant still shows it.**
-Its discovery messages stay on the broker. Remove the entities in Home Assistant.
+The hub removes a deleted point's entities from Home Assistant, as long as it's connected to the MQTT broker when you delete it. If it wasn't, delete the leftover device in Home Assistant (**Settings → Devices & services → MQTT**).
 
 **Is the MQTT connection encrypted?**
 Not yet: use a broker on your own network, with its own users and access rules. → [MQTT broker](mqtt.md#connect-the-hub-to-a-broker)

@@ -108,7 +108,7 @@ On every connect the hub publishes retained discovery messages, so Home Assistan
 
 The energy sensors (`total_increasing`, Wh) go straight into the Energy dashboard; see [Integrations](https://www.rbgrid.io/integrations).
 
-When you delete a point, its Home Assistant entities stay on the broker as retained messages. Remove them in Home Assistant.
+When you delete (or unbind) a point, the hub clears its discovery messages, and Home Assistant removes its entities. This works only while the hub is connected to the broker. If you delete a point while MQTT is off or the broker is down, its entities stay in Home Assistant as unavailable: remove the device by hand (**Settings → Devices & services → MQTT**, the device, **Delete**).
 
 ## Commands
 
