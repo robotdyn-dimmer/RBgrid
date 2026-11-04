@@ -62,7 +62,7 @@ The hub answers browser requests only from its own pages and from the RBgrid app
 In the sidebar, choose **Switch**. Enter the other hub's address (**Device IP or URL**) and **Connect**. **Open demo mode** shows the app with sample data instead.
 
 - At webapp.rbgrid.io, you can connect to any of your hubs this way, with nothing to set on them.
-- In the app served by one hub, the other hub must accept the first hub's address. Hubs on v1.1.3 accept only listed sites, so add `http://<first hub's address>` in **Settings → Browser access (CORS)** on the other hub.
+- In the app served by one hub, the other hub must accept the first hub's address. Hubs on v1.1.3 and later accept only listed sites, so add `http://<first hub's address>` in **Settings → Browser access (CORS)** on the other hub.
 
 ## Try it without a hub
 

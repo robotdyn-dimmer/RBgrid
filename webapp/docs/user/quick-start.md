@@ -38,7 +38,7 @@ The app opens on the Overview with a banner: *The hub still has its factory sett
 3. **Site & time**: pick the scenario **Home**, give the site a name, choose your **Time zone**, and check that the time shows **synchronized**.
 4. **Sensors**: the hub has already made your STD meter the **grid input** (plus a voltage point). Nothing to bind for this scenario.
    - **STD-U3I3:** in **Points**, on the module card choose **Use as the three-phase input** and restart the hub. We recommend setting **Settings → Mains** to **Three phase** too.
-5. **Tariff**: enter your price per kWh (and a night price if you have one), as on your bill. **Check the VAT, %**: a new hub starts with the factory example's 21 %. When you save, the app asks **Replace the hub's tariff?** (the factory example counts as a fuller plan): choose **Replace**.
+5. **Tariff**: enter your price per kWh (and a night price if you have one), as on your bill. **Check the VAT, %**: a new hub starts with the factory example's 21 %. Save it. (App v1.1.3 first asks **Replace the hub's tariff?** here: choose **Replace**.)
 6. **Integrations**: skip, or set your MQTT broker for Home Assistant later. → [MQTT broker](mqtt.md)
 7. **Done**: **All set** needs a site name, a synchronized clock, your tariff and at least one point; the time zone and the token are optional. Choose **Go to overview**.
 

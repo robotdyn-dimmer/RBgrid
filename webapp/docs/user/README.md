@@ -1,6 +1,6 @@
 # RBgrid web app: user guide
 
-How to set up and use the RBgrid web app. The same pages, with search, are on [rbgrid.io/webapp/docs](https://www.rbgrid.io/webapp/docs). Written for hub firmware and web app v1.1.3.
+How to set up and use the RBgrid web app. The same pages, with search, are on [rbgrid.io/webapp/docs](https://www.rbgrid.io/webapp/docs). Written for hub firmware and web app v1.1.4.
 
 For building and installing the app itself, see the developer notes one level up: [building](../building.md), [installing](../installing.md), [kit format](../kit-format.md).
 

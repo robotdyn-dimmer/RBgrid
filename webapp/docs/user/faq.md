@@ -49,7 +49,7 @@ In **Settings**, the **Connection** card: scan, choose the network, enter its pa
 No tariff has been set yet. Set yours in the wizard (new hub) or in **Tariffs**. → [Tariffs](tariffs.md)
 
 **I used the wizard's tariff step and my taxes and zones are gone.**
-The wizard's quick tariff always rebuilds the whole plan. From v1.1.3 it asks **Replace the hub's tariff?** first. Use it on a new hub; to change an existing plan, use **Tariffs**.
+The wizard's quick tariff always rebuilds the whole plan. When the hub has a fuller plan of your own, it asks **Replace the hub's tariff?** first. Use it on a new hub; to change an existing plan, use **Tariffs**.
 
 **Are standing (monthly) charges counted?**
 No. Costs and forecasts are energy-based: per-kWh prices, per-kWh taxes and fees, and VAT.
@@ -69,7 +69,7 @@ One measured line with a name and a role: the grid input, a circuit, an applianc
 Up to 8 rbAmp modules (hub firmware v1.1.2 and later). The hub keeps history for up to 12 points; more points show live values only.
 
 **Can I rename a point?**
-On hub firmware v1.1.3 and earlier, better not for now: on some ESP32 boards (chip revisions before v3), a renamed point can disappear after the next restart, together with its history. The fix is in development and will come in an upcoming release. → [Points](points.md#point-settings)
+Yes, on hub firmware v1.1.4. On v1.1.3 and earlier, on ESP32 chip revisions before v3, a renamed point could disappear after the next restart, together with its history: update the hub to v1.1.4 first. → [Points](points.md#point-settings)
 
 **I added a point, but it has no history.**
 Restart the hub: a newly bound point starts keeping history after a restart. If all 12 history slots are used, the point shows live values only.

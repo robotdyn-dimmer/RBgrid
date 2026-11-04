@@ -117,7 +117,7 @@ Without a tariff, the hub counts energy but shows money from a factory example. 
 - **Price as on the bill, incl. VAT**: leave it on if the bill price includes VAT, and **check the VAT, %**. On a new hub it starts at the factory example's 21 %; set your own rate. The hub stores the price without VAT and adds it back.
 - **The grid pays per exported kWh**: only if you have solar and a feed-in contract. Otherwise leave it empty: any price here values every exported kWh.
 
-Choose **Save the tariff**. The app asks **Replace the hub's tariff?**, because the factory example is a fuller plan than the quick form; choose **Replace**. Money starts counting at your price from now.
+Choose **Save the tariff**. With app v1.1.3 the app first asks **Replace the hub's tariff?**, because the factory example is a fuller plan than the quick form; choose **Replace**. App v1.1.4 replaces the factory example without asking. Money starts counting at your price from now.
 
 > The wizard's tariff always rebuilds the whole plan: other zones, taxes, fees and net metering are reset. Use it on a new hub. To change an existing plan, use **Tariffs**. → [Tariffs](tariffs.md)
 

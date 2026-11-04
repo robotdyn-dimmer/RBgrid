@@ -15,7 +15,7 @@ Each module exposes a voltage input (`U`) and current channels (`I0`, `I1`, …)
 - **Voltage** comes from the module's `U` input. There is no separate, user-selectable voltage sensor. In the points list the voltage input appears as a **Voltage bus** point (channel `V`). Like the main input, it cannot be removed: *"The main input and the voltage bus cannot be deleted."*
 - **Current** comes from a current transformer on a channel. The point shows the channel's CT model and its range.
 - **Three-phase module (STD-U3I3)** exposes three voltages and three currents. It can measure your input on all three phases (see [Use as the three-phase input](#use-as-the-three-phase-input)).
-- **Frequency** is reported by the hub (the overview card's `Frequency`) and is not configurable. Known issue, hub firmware v1.1.3 and earlier: if a module's voltage inputs aren't wired (for example an STD-U3I3 used for current only), the hub may take the frequency and voltage from that module and show a wrong value, around 45 Hz. A fix that uses only a module that sees mains is in development for an upcoming release.
+- **Frequency** is reported by the hub (the overview card's `Frequency`) and is not configurable. On hub firmware v1.1.3 and earlier, a module with unwired voltage inputs (for example an STD-U3I3 used for current only) could set a wrong frequency and voltage, around 45 Hz. Since v1.1.4 they come only from a module that sees mains.
 
 ## Module cards
 
@@ -100,11 +100,27 @@ The current-output `SCT-013-000` (50 mA) is not supported.
 
 A hub with firmware v1.1.2 or later reads up to **8** rbAmp modules on its I2C bus. Add each one from the app with **Points → Add a module**. The button appears on hubs with firmware 1.1.2 or later.
 
-Every new rbAmp module arrives at address **0x50**, and two modules can't share an address. So the module that sits at 0x50 now moves to a free address first, and the new one is then connected at 0x50. Connect new modules **one at a time, with the hub switched off**.
+Every new rbAmp module arrives at address **0x50**, and two modules can't share an address. Connect new modules **one at a time, with the hub switched off**.
+
+### The first module on a new hub (hub v1.1.4)
+
+On a new hub, module 0 at 0x50 is an **empty slot** until a module is connected there: nothing is measured on it yet. The dialog says so: "Module 0 at 0x50 is an empty slot: nothing is measured on it. A new module from the box answers at 0x50 and takes this slot as module 0 — no address change, no scan."
+
+1. Switch the hub off. To remove a module, unplug its whole cable, not only the power.
+2. Connect ONE new module (SDA, SCL, GND, VCC) and switch the hub on.
+3. Give it 10–20 seconds, open **Add a module** again and press **Check again**. A new module connected at 0x50 is picked up in this slot: it shows as present, and its channels appear under **Free sensors** on the Points page.
+
+![Add a module on a new hub: module 0 at 0x50 is an empty slot](https://www.rbgrid.io/assets/img/webapp-docs/wa-sensors-add-module.webp)
+
+If your only module sits at another address, module 0 isn't an empty slot (the grid input depends on it), and the dialog says it isn't answering. Move the module to 0x50, or use **Find one at another address**.
+
+### More modules
+
+When a configured module already sits at 0x50, it moves to a free address first, and the new one is then connected at 0x50. On hub v1.1.2 and v1.1.3 this is also how the first added module works.
 
 The dialog works out where you are from the hub's state, so you can close it to switch the hub off and open it again later.
 
-### Step by step
+#### Step by step
 
 1. **Free address 0x50 (if needed).** If one of your modules already sits at 0x50, the dialog offers to move it first: **Move it to 0x5…**. The module stores its new address itself; its points keep their names, history and settings. When it's done: "Module *n* now answers at 0x5…. Address 0x50 is free for the new module."
    - If that module isn't answering, check its connection and press **Check again**; its address can only change while it answers.

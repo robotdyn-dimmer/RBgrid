@@ -121,7 +121,7 @@ Later: the **Points** page (see [Points](points.md)).
 
 A quick way to give a new hub a simple price plan: one price for the whole day, or a day and a night price. The hub uses it to compute cost per point.
 
-> **Warning: the quick tariff always replaces the whole tariff plan.** Saving here rebuilds the hub's plan from scratch. The energy tax, grid fee and renewable levy are set to 0, fixed charges are cleared, net metering and the progressive tariff are turned off, and the zones are replaced. When the hub's plan is fuller (taxes and levies, net metering, fixed payments or more zones), the app asks first: **Replace the hub's tariff?** Press **Replace** to go on. This also happens on a new hub, because its factory example plan is fuller. To change an existing plan of your own, edit it on the **Tariffs** page instead.
+> **Warning: the quick tariff always replaces the whole tariff plan.** Saving here rebuilds the hub's plan from scratch. The energy tax, grid fee and renewable levy are set to 0, fixed charges are cleared, net metering and the progressive tariff are turned off, and the zones are replaced. When the hub's plan is fuller (taxes and levies, net metering, fixed payments or more zones), the app asks first: **Replace the hub's tariff?** Press **Replace** to go on. On a new hub with the factory example plan, app v1.1.4 replaces it without asking; app v1.1.3 asks here too. To change an existing plan of your own, edit it on the **Tariffs** page instead.
 
 | Field | Default | What to enter |
 |---|---|---|

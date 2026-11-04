@@ -228,7 +228,7 @@ The app never shows or makes up a password. Keep yours somewhere safe.
 
 Shown when your hub supports MQTT. The hub sends its measurements to an MQTT broker; Home Assistant finds the hub's sensors there by itself.
 
-At the top, the panel shows whether the hub is connected to a broker ("The hub is connected to broker …"), or that it isn't ("The device isn't connected to an MQTT broker — HA won't see it.").
+At the top, the panel shows whether the hub is connected to a broker ("The hub is connected to broker …"), or that it isn't ("The device isn't connected to an MQTT broker — HA won't see it."). With no broker saved, app v1.1.4 says "No broker set — MQTT is off, so Home Assistant won't see the hub."
 
 **MQTT broker**:
 

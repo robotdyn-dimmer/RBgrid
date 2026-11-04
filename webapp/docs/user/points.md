@@ -169,7 +169,7 @@ At the bottom, **Point setup** opens the point's settings (see [Point settings](
 
 ![A point's page, «Point setup» opened: name, role, phase, line rating, breaker, current sensor, group](https://www.rbgrid.io/assets/img/webapp-docs/wa-points-settings.webp)
 
-> **Known issue, hub firmware v1.1.3 and earlier:** on some ESP32 boards (chip revisions before v3), renaming a point can make it disappear after the next restart, together with its history. Avoid renaming points for now. The fix is in development and will come in an upcoming release. To see your chip's revision, connect the board over USB and run `python -m esptool --chip esp32 -p <PORT> chip_id`: the output shows, for example, "ESP32-D0WD (revision v1.1)".
+> **Fixed in v1.1.4:** on hub firmware v1.1.3 and earlier, on ESP32 chip revisions before v3, renaming a point could make it disappear after the next restart, together with its history. Update the hub to v1.1.4 before renaming points. To see your chip's revision, connect the board over USB and run `python -m esptool --chip esp32 -p <PORT> chip_id`: the output shows, for example, "ESP32-D0WD (revision v1.1)".
 
 | Field | Shown for | What it does |
 |---|---|---|
@@ -244,7 +244,7 @@ A point you bind while the hub is running starts keeping history after the next 
 - Check the clamp's direction against the arrow marking (see the rbAmp module docs).
 
 **A point disappeared after a restart**
-- If you had renamed it: that's a known issue on some ESP32 boards with hub firmware v1.1.3 and earlier (see [Point settings](#point-settings)). Bind the channel again as a new point. Avoid renaming until the fix arrives.
+- If you had renamed it on hub firmware v1.1.3 or earlier: that's a known issue on ESP32 chip revisions before v3, fixed in v1.1.4 (see [Point settings](#point-settings)). Update the hub, then bind the channel again as a new point.
 
 **A point has live values but no history**
 - If you added it while the hub was running, restart the hub.
