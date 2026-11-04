@@ -187,7 +187,7 @@ At the bottom, **Point setup** opens the point's settings (see [Point settings](
 
 - Over 1000 kW: the app asks you to check the units (the field is in kW) and won't save.
 - More than the breaker allows, or (for the input) well below it: the app warns and offers a matching value worked out from the breaker, the nominal voltage and the number of conductors.
-- If the breaker is above the sensor's limit, the app warns that current above the limit is clipped and metering under-counts: fit a sensor with a higher rating.
+- If the breaker is above the sensor's limit, the app warns that current above the limit is clipped and metering under-counts: fit a sensor with a higher rating. Known issue in app 1.1.4: this check uses a limit below the clamp's rating (9 A for a 10 A clamp), so it also warns when the clamp's rating equals the breaker. A clamp rated at the breaker reads correctly; the check will be corrected in an upcoming release.
 
 ### Current sensor
 

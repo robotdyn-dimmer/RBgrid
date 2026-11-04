@@ -37,7 +37,7 @@ The header shows the plan name with an **active** chip. If the plan has an end d
 
 ### Taxes and charges
 
-Three plan-level charges, each a rate per kWh, added to every zone's buy price:
+Three plan-level charges, each a rate per kWh, added to every zone's buy price before VAT:
 
 - **Energy tax**
 - **Grid fee**
@@ -55,7 +55,7 @@ A zone is a price that applies during a time window on chosen days of the week.
 
 ![Tariffs: the plan (name, currency, VAT, provider, plan type, default zone, net metering), «The week by zones» bar, one card per zone (buy price, type, hours, days), taxes and charges](https://www.rbgrid.io/assets/img/webapp-docs/wa-tariffs-editor.webp)
 
-- **Up to seven zones.** **Add zone** picks a type that isn't in use yet, and is greyed out once the plan has seven zones (a Holiday zone kept from earlier counts). Each zone's **Zone type** list offers all seven types, so two zones can end up with the same type: keep one zone per type.
+- **Up to seven zones.** **Add zone** picks a type that isn't in use yet, and is greyed out once the plan has seven zones (a Holiday zone kept from earlier counts). Each zone's **Zone type** list offers all seven types, so two zones can end up with the same type: keep one zone per type. The hub accepts two zones of the same type as they are: it doesn't merge or refuse them, and only notes a warning in its log. Where their hours overlap, priority decides between them. But the cost split by zone is kept by zone type, so the two zones count as one there.
 - **One time window per zone**, combined with the days.
 - Any hour no zone covers falls to the **Default zone**, so you don't have to cover all 24 hours yourself.
 
@@ -116,29 +116,29 @@ Exported energy is valued at a sell price:
 
 What the page shows for this:
 
-- The **selling ratio** field shows while some enabled zone has no sell price of its own. When every enabled zone has its own price, the field is replaced by a note: "Every zone has its own selling price — the selling ratio is not used. Only zones without a price use it."
-- A read-only **Selling price /kWh (calculated)** shows only when no zone has a sell price and the plan has a default selling rate.
+- The **selling ratio** field is part of the net-metering block, so it shows only with net metering on, and then only while some enabled zone has no sell price of its own. When every enabled zone has its own price, the field is replaced by a note: "Every zone has its own selling price — the selling ratio is not used. Only zones without a price use it."
+- A read-only **Selling price /kWh (calculated)** shows, with net metering on, only when no zone has a sell price and the plan has a default selling rate.
 - The **Sell price** field shows on a zone only with net metering on, and only if that zone already has a sell price (see *Zone fields*). With net metering off, the editor doesn't show the zones' sell prices.
 
 The hub values exports this way **whether net metering is on or off**. If your contract pays nothing for exported energy, the sell prices and the selling ratio must be 0. Watch for this after the setup wizard's quick tariff: its export price is written into every zone even though net metering stays off.
 
-To check with net metering off: open **Economics** and look at the export value for a period with exports. If it isn't 0 and your contract pays nothing for exports, set to 0 the prices the page does show (the selling ratio). For a simple one- or two-zone plan, the wizard's quick tariff with an export price of 0 writes 0 into every zone, but it rebuilds the whole plan (see the note at the top).
+To check with net metering off: open **Economics** and look at the export value for a period with exports. If it isn't 0 and your contract pays nothing for exports, the zones carry sell prices you can't see in this version's editor. The way to zero them is the wizard's quick tariff with the export price left empty or 0: it writes 0 into every zone, but it rebuilds the whole plan, so re-enter your zones, fees and VAT afterwards (see the note at the top).
 
 Don't switch **Net metering** on just to look at the prices. The toggle is saved with the plan: if it's on when you press **Save**, the kWh credit is on from then. If you switched it on and your contract has no net metering, switch it off again before **Save**. Sell prices you set stay as you set them.
 
 Export value = exported kWh × sell price. No taxes, fees or VAT are applied to it, and it isn't subtracted from the cost: cost and export value are kept separately and shown side by side. Economics also shows **Net cost** (cost − export value) and **Net energy** (imported − exported).
 
-Net metering **adds** a **kWh credit** on top: Economics shows a "Net metering — kWh credit" block with the credit balance, import and export this period, and credit earned and used. The credit is settled at each calendar-month boundary and doesn't change the money figures. It doesn't require a Main Supply point. Binding your supply as the **Main** point is still recommended, so the hub's totals describe your whole connection.
+Net metering **adds** a **kWh credit** on top: Economics shows a "Net metering — kWh credit" block with the credit balance, import and export this period, and credit earned and used. The credit is settled at each boundary of the local calendar month and doesn't change the money figures. It doesn't require a Main Supply point. Binding your supply as the **Main** point is still recommended, so the hub's totals describe your whole connection.
 
 ## How cost is calculated
 
 For each measurement point and each reading:
 
 ```
-cost = ( kWh × zone buy price  +  kWh × (energy tax + grid fee + renewable levy) ) × (1 + VAT% / 100)
+cost = ( kWh × zone buy price  +  kWh × (grid fee + energy tax + renewable levy) ) × (1 + VAT% / 100)
 ```
 
-The hub computes cost every 15 minutes at the zone rate in effect then, and stores it with the hourly records. Day, month and year costs are the sums of these. Nothing is prorated, and fixed charges aren't added (see *Fixed charges*). Months are calendar months.
+The zone buy price is the rate of the zone in effect for that energy. The hub computes cost every 15 minutes at the zone in effect then, and stores it with the hourly records. On modules that count energy on board, such as STD modules, energy is costed once per 15-minute quarter, at the zone in effect for that quarter. Day, month and year costs are the sums of these. Nothing is prorated, and fixed charges aren't added (see *Fixed charges*). Months are calendar months.
 
 ### Example: a day/night plan
 
@@ -164,7 +164,7 @@ The tariff plan is part of the hub's **restore point** (**Settings → Restore p
 ## Troubleshooting
 
 **The wrong zone applies**
-- Check the hub's time and time zone (see [Time](time.md)).
+- Check the hub's time and time zone (see [Time](time.md)). Until the hub's clock is set, cost may be priced in the wrong zone.
 - When zones overlap, the higher-priority type wins (list above). A Weekend zone wins only on Saturday and Sunday.
 - Check the zone's **Days** and that it's **On**.
 - Open **The week by zones** to see the zone in effect for each hour, and which hours fall to the default zone.

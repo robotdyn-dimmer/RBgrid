@@ -188,7 +188,9 @@ Otherwise a list, with the count in the header and "{n} of {m} online" at the bo
 |---|---|---|
 | "current clipped by the sensor ({pct} % of rating) · under-metered" | **clipping** | The current reached the sensor's range; the real value is higher than shown. |
 | "{power} — {pct} % of the line's rating" | **above rating** | The line draws more than its rated power (not checked on the input and generation). |
-| "near the sensor limit ({pct} % of rating)" | **sensor limit** | The current is close to the sensor's range. |
+| "near the sensor limit ({pct} % of rating)" | **sensor limit** | The current is close to the sensor's clip point. |
+
+The {pct} in these rows is against the sensor's **nominal** rating. For SCT-013 clamps, **sensor limit** comes at about 104 % of the rating and **clipping** at about 116 % (for an SCT-013-050: 52 A and 58 A); readings are correct up to the clip point. The demo site flags a sensor limit earlier.
 | "no new data for {s} s — the last value is shown" | **held** | The hub has had no new reading for that long. |
 | "sensor not responding" | **offline** | The sensor isn't responding. |
 

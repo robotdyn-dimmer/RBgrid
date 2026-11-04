@@ -78,8 +78,8 @@ The point and its history are kept. Don't unbind it while you wait (see [Points]
 
 On the tile and in **Needs attention**, a channel near its limit is flagged:
 
-- `clipping`: the current is being clipped; the reading is **under-counted**.
-- `sensor limit`: the current is at or above **85 %** of the sensor's range.
+- `clipping`: the current has reached the sensor's clip point (its full-scale current, above its nominal rating); the reading is **under-counted**.
+- `sensor limit`: the current is near the sensor's clip current: the hub flags it at about 90 % of that current. For SCT-013 clamps the clip current is about 116 % of the rating (58 A on an SCT-013-050), so the warning comes at about 104 % of the rating (52 A). Up to the clip current, readings are correct. STD modules' own sensors carry no such flags; they read correctly to about 130 % of their rating.
 
 ## Channel CT model
 
