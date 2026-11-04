@@ -14,7 +14,7 @@
   "connectAnyway": "Connect anyway",
   "or": "or",
   "openDemo": "Open demo mode",
-  "hostPlaceholder": "e.g. 192.168.1.20 or rbgrid.local",
-  "hostHelp": "The hub’s address is on its label, from your electrician or in the router’s device list. Your phone or computer must be on the same Wi-Fi.",
+  "hostPlaceholder": "e.g. 192.168.1.20 or rbgrid-xxxx.local",
+  "hostHelp": "Find the hub's address in your router's device list, or use rbgrid-xxxx.local — the same four characters as the hub's own Wi-Fi name (not on every Android phone). Your phone or computer must be on the same Wi-Fi.",
   "localNetworkHint": "If the browser asked whether this site may access devices on your local network, allow it (site settings → Local network access)."
 }

@@ -16,6 +16,9 @@ export interface I2cModule {
   n_i?: number;
   /** Channels bound to a point. */
   points?: number;
+  /** v1.1.4: absent and no metering point depends on it (at most the mains-voltage point) — an empty
+   *  slot, typically the product-default module 0 @0x50. Absent on older hubs. */
+  placeholder?: boolean;
 }
 
 export interface I2cBus { bus: number; up: boolean; configured?: boolean; sda?: number; scl?: number }

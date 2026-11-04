@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.1.4 — 2026-11-04
+
+### Points
+- Fixed: renaming a point could make it disappear after a restart on ESP32 chip revisions before v3.
+  The point's identity was damaged when its name was saved; it then vanished at the next restart
+  together with its history. Names are now saved safely.
+
+### Measurement
+- Mains voltage and frequency now come only from a module that actually sees mains. A module whose
+  voltage inputs are not wired (for example an STD-U3I3 used for currents only) no longer overrides
+  them; before, the frequency could read about 45 Hz.
+
+### Adding modules
+- A configured module that isn't answering and that no metering point depends on is now reported as an
+  empty slot (`placeholder` in `GET /api/v1/i2c`). The app no longer stops the add-module steps on it:
+  a new module from the box at 0x50 takes that slot.
+
+### Web app 1.1.4
+- Clearer texts (deleting a point, MQTT with no broker set, history) and the empty-slot step when
+  adding a module. Full list: `webapp/CHANGELOG.md`.
+
 ## v1.1.3 — 2026-11-04
 
 ### Browser access (CORS)

@@ -1916,8 +1916,16 @@ esp_err_t rbwebserver_api_unit_mutate_handler(httpd_req_t *req)
                 return ESP_OK;
             }
         }
-        /* apply */
+        /* apply — on a COPY in internal RAM, then one whole-struct write-back. The definitions live in
+         * PSRAM; on ESP32 silicon < v3 byte stores into a PSRAM word (name[] starts 2 bytes into the word
+         * that holds unit_id) were seen to zero the neighbouring byte of unit_id (0x0101 -> 0x0001, hub .139,
+         * rev v1.1) despite CONFIG_SPIRAM_CACHE_WORKAROUND — the point then vanished at the next boot.
+         * Word-aligned copy-in/copy-out avoids partial-word stores into the live definition. */
         rbpower_home_lock();
+        rbpower_unit_definition_t* live = def;
+        rbpower_unit_definition_t nd;
+        memcpy(&nd, live, sizeof(nd));
+        def = &nd;
         if ((j = cJSON_GetObjectItem(root, "name")) && cJSON_IsString(j) && j->valuestring[0]) {
             strncpy(def->name, j->valuestring, sizeof(def->name) - 1);
             def->name[sizeof(def->name) - 1] = '\0';
@@ -1940,6 +1948,9 @@ esp_err_t rbwebserver_api_unit_mutate_handler(httpd_req_t *req)
             def->sources[0].invert_sign = cJSON_IsTrue(j);
         }
         if (new_role >= 0) def->role = (rbpower_load_role_t)new_role;
+        nd.unit_id = live->unit_id;   /* identity is never patched */
+        memcpy(live, &nd, sizeof(nd));
+        def = live;
         rbpower_home_unlock();
         cJSON_Delete(root);
 

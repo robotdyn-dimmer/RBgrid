@@ -34,7 +34,7 @@
   "noDataForPeriod": "No data for this period",
   "trendAria": "Trend ({unit})",
   "byPhase": "Per phase (U3I3)",
-  "deleteBody": "The point stops being metered and leaves the overview and the points list. The sensor becomes free and can be bound again.",
+  "deleteBody": "The point stops being metered and leaves the overview. Deleting the point erases its stored history for good — download it first in History (CSV) if you need it. The sensor channel stays and can be used for a new point.",
   "deleteFailed": "Could not delete the point: {message}",
   "deleteRequestFailed": "The delete request failed — no connection to the hub.",
   "deleteLocked": "The main input and the voltage bus cannot be deleted.",

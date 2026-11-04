@@ -1354,7 +1354,16 @@ int rbgrid_config_rename_point(rbpower_unit_id_t unit_id, const char* new_point,
     }
     char old_point[RBPOINT_SLUG_MAX + 1];
     strncpy(old_point, def->point, RBPOINT_SLUG_MAX); old_point[RBPOINT_SLUG_MAX] = '\0';
-    strncpy(def->point, new_point, RBPOINT_SLUG_MAX); def->point[RBPOINT_SLUG_MAX] = '\0';
+    /* Copy-modify-write-back (internal RAM copy, one whole-struct store): byte stores into the PSRAM
+     * definition corrupted neighbouring bytes on ESP32 < v3 (see the unit PATCH handler). */
+    {
+        rbpower_home_lock();
+        rbpower_unit_definition_t nd;
+        memcpy(&nd, def, sizeof(nd));
+        strncpy(nd.point, new_point, RBPOINT_SLUG_MAX); nd.point[RBPOINT_SLUG_MAX] = '\0';
+        memcpy(def, &nd, sizeof(nd));
+        rbpower_home_unlock();
+    }
     if (old_point[0]) rbgrid_point_tombstone_add(old_point);
     /* POINT_RENAMED — there is no event/audit queue yet; the log line is the record. */
     ESP_LOGW(TAG, "EVENT POINT_RENAMED unit 0x%04X: '%s' -> '%s'",

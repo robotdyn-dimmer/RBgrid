@@ -17,7 +17,7 @@ export const MqttBrokerForm: React.FC = () => {
   const session = useDeviceSession();
   const mqtt = useConfigShadow('mqtt');
   const rep = mqtt.reported as Record<string, unknown>;
-  // Nothing saved → the hub runs its default broker (effective_uri): show that one.
+  // Nothing saved → MQTT is off (the firmware has no default broker); effective_uri, if a hub reports one, fills the form.
   const stored = typeof rep.broker_uri === 'string' && rep.broker_uri ? rep.broker_uri
     : typeof rep.effective_uri === 'string' ? rep.effective_uri : '';
   const initial = useMemo(() => parseBrokerUri(stored), [stored]);

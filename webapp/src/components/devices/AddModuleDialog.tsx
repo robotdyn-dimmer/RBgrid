@@ -84,6 +84,19 @@ export const AddModuleDialog: React.FC<{ open: boolean; onClose: () => void; onC
     );
   } else if (step.kind === 'full') {
     body = <Alert severity="info">{t('addmod.full', { max: step.max })}</Alert>;
+  } else if (step.kind === 'adopt') {
+    body = (
+      <Stack spacing={1.5}>
+        <Typography variant="body2">{t('addmod.adoptWhy', { module: step.module })}</Typography>
+        <Typography variant="body2" component="div">
+          <ol style={{ margin: 0, paddingLeft: 20 }}>
+            <li>{t('addmod.step1')} {t('addmod.step1Unplug')}</li>
+            <li>{t('addmod.adoptStep2')}</li>
+            <li>{t('addmod.adoptStep3')}</li>
+          </ol>
+        </Typography>
+      </Stack>
+    );
   } else if (step.kind === 'free') {
     body = (
       <Stack spacing={1.5}>
@@ -152,6 +165,7 @@ export const AddModuleDialog: React.FC<{ open: boolean; onClose: () => void; onC
           </Button>
         )}
         {!added && step?.kind === 'free' && !step.present && <Button onClick={() => void load()} disabled={busy}>{t('addmod.recheck')}</Button>}
+        {!added && step?.kind === 'adopt' && <Button variant="contained" onClick={() => { onChanged(); void load(); }} disabled={busy}>{t('addmod.recheck')}</Button>}
         {!added && step?.kind === 'free' && <Button disabled={busy} onClick={doScan}>{t('addmod.scanOther')}</Button>}
         {!added && step?.kind === 'connect' && (
           <Button variant={found.length ? 'outlined' : 'contained'} disabled={busy} onClick={doScan}>

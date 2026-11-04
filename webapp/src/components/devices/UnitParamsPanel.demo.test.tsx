@@ -43,6 +43,6 @@ it('blocks over-long short names and locks the input role', async () => {
   const short = await screen.findByLabelText('Короткое имя (для схем)');
   fireEvent.change(short, { target: { value: 'Бойлер-гаражный' } }); // 29 bytes > schema.limits 24
   await waitFor(() => expect(screen.getByRole('button', { name: 'Сохранить' })).toBeDisabled());
-  expect(screen.getByText('роль ввода меняется только через мастер настройки')).toBeInTheDocument();
+  expect(screen.getByText('роль ввода задаёт хаб, она не меняется')).toBeInTheDocument();
   expect(screen.getByLabelText('Лимит ввода, кВт')).toBeInTheDocument();
 });

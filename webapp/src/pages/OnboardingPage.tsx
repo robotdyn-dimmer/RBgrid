@@ -151,7 +151,7 @@ const TariffTemplate: React.FC<{ title: string; desc: string; onOpen: () => void
 );
 
 /** Step 5 — tariff: offer common plan templates; the actual editor lives on the Tariffs screen. */
-const TariffStep: React.FC<{ onChanged?: () => void }> = ({ onChanged }) => {
+const TariffStep: React.FC<{ onChanged?: () => void; factory?: boolean }> = ({ onChanged, factory }) => {
   const navigate = useNavigate();
   const open = () => navigate('/tariffs');
   return (
@@ -163,7 +163,7 @@ const TariffStep: React.FC<{ onChanged?: () => void }> = ({ onChanged }) => {
         </Typography>
         {/* Entered right here, as the bill prints it (W191-07/08: templates only opened the full
             editor on the factory test plan). The full editor stays one link away. */}
-        <QuickTariff onSaved={onChanged} />
+        <QuickTariff onSaved={onChanged} factory={factory} />
         <Button variant="text" sx={{ alignSelf: 'flex-start' }} onClick={open}>{t('onboarding.openTariffs')}</Button>
       </Stack>
     </Card>
@@ -236,7 +236,7 @@ const STEP_CONTENT: Record<StepKey, (p: StepProps) => React.ReactNode> = {
   object_time: ({ timeSynced, onChanged }) => <ObjectTimeStep timeSynced={timeSynced} onChanged={onChanged} />,
   sensors: ({ onChanged }) => <SensorsStep onChanged={onChanged} />,
   nodes: () => <NodesPanel />,
-  tariff: ({ onChanged }) => <TariffStep onChanged={onChanged} />,
+  tariff: ({ onChanged, ctx }) => <TariffStep onChanged={onChanged} factory={!ctx.tariffSet} />,
   integrations: () => <IntegrationsStep />,
   done: ({ ctx, goTo }) => <DoneStep ctx={ctx} goTo={goTo} />,
 };

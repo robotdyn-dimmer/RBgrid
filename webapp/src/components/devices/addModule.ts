@@ -45,12 +45,16 @@ export type AddStep =
   /** Free 0x50 first: move this module to `to` (it must be answering — the hub checks its UID). */
   | { kind: 'free'; module: number; to: number | null; present: boolean; model?: string }
   /** 0x50 is free: connect the new module, then scan. */
-  | { kind: 'connect'; count: number; max: number };
+  | { kind: 'connect'; count: number; max: number }
+  /** v1.1.4: the slot at 0x50 is an empty placeholder — a module from the box connected there simply
+   *  becomes that module (the hub identifies it at start-up); no move, no add. */
+  | { kind: 'adopt'; module: number };
 
 export function addStep(s: I2cState): AddStep {
   const max = maxModules(s);
   if (s.modules.length >= max) return { kind: 'full', max };
   const f = atFactory(s);
+  if (f?.placeholder === true) return { kind: 'adopt', module: f.module };
   if (f) return { kind: 'free', module: f.module, to: nextFreeAddr(s), present: f.present, model: f.model };
   return { kind: 'connect', count: s.modules.length, max };
 }
