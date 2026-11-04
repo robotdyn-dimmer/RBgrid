@@ -71,7 +71,7 @@ rbAmp modules clip onto your existing wiring and measure each circuit. The ESP32
 
 RBgrid itself is free for personal, non-commercial use; the hardware is the only cost. Module prices and sets: [rbgrid.io/hardware](https://www.rbgrid.io/hardware?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
 
-> Install with the power off, and have mains work done by a qualified electrician. The rbAmp modules clip onto existing wiring.
+> For any work inside an electrical panel, call a qualified electrician. The rbAmp modules clip onto existing wiring.
 
 ## Get it running
 
