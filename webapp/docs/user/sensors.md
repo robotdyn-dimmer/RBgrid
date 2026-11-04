@@ -119,7 +119,6 @@ The dialog works out where you are from the hub's state, so you can close it to 
 
 - Keep each module's cable up to 15 cm.
 - With up to three modules, leave the modules' pull-ups as they are: no cutting, no extra resistors.
-
 - With four or more modules, cut the pull-ups on all but one module (or fit one external pair).
 
 See the rbAmp [wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection) for longer cables.
@@ -143,6 +142,8 @@ If the **Points** page itself shows **The module bus is stuck**, check the conne
 
 An **STD-U3I3** module measures three voltages and three currents. Its module card offers **Use as the three-phase input** when the module is present, you have an input, and the input isn't already three-phase. On hubs older than 1.1.2 the card says "Three-phase input from one *model*: update the hub to 1.1.2." instead.
 
+![An STD-U3I3 card already used as the three-phase input: all three channels in use, so the button is no longer offered](https://www.rbgrid.io/assets/img/webapp-docs/wa-sensors-three-phase-input.webp)
+
 1. Press **Use as the three-phase input**.
 2. Confirm **Use as the input**. The input keeps its history.
 3. The app says the hub will measure the input on all three phases after a restart. Press **Restart now**, or restart later.
@@ -154,6 +155,8 @@ If the hub refuses, the app shows the reason.
 ## Module firmware update
 
 **STD modules** can have their firmware updated through the hub, with an image file supplied by **RobotDyn**. The module card shows **Update firmware** when the module supports it and is present. BASIC modules aren't updated through the hub.
+
+![Module firmware update (STD only): choose the .ota file supplied by RobotDyn](https://www.rbgrid.io/assets/img/webapp-docs/wa-sensors-module-firmware.webp)
 
 The dialog shows the module's current version. The hub writes the new image to the module's spare memory half and switches the module to it; this takes about 2 minutes over Wi-Fi, and **metering keeps going**.
 

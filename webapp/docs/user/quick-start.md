@@ -10,7 +10,7 @@ This page takes the shortest path: one hub and one rbAmp **STD-UI1** energy mete
 
 1. Set the module's interface switch to **I²C** before you power it: the module reads the switch only at power-on.
 2. Mount the sensors on the supply conductor(s), each on the channel it's labelled for, with the arrow pointing in the import direction. Connect the voltage input through a fuse (STD-U3I3: N, L1, L2, L3).
-3. Connect the module to the hub with four wires: the module's **VIN to the board's 5 V/VIN** (not 3.3 V), GND, SDA to GPIO25 and SCL to GPIO26. Keep the cable short.
+3. Connect the module to the hub with four wires: the module's **VIN to the board's 5 V/VIN** (not 3.3 V), GND, SDA to GPIO25 and SCL to GPIO26. Keep the cable up to 15 cm and leave the module's pull-ups as they are.
 4. Leave the module at its factory address **0x50**: that's how the hub finds it as your grid input.
 
 Details: [Hardware](https://www.rbgrid.io/hardware), the rbAmp STD wiring guide.

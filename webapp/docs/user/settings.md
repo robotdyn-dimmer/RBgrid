@@ -167,6 +167,8 @@ Always shown. The live data stream the hub sends to the app.
 
 ## Hub-access warning
 
+![The access warning: the hub's own Wi-Fi still on the setup password and no API token](https://www.rbgrid.io/assets/img/webapp-docs/wa-settings-hub-access-warning.webp)
+
 On a hub with firmware v1.1.2 or later, a warning appears at the top of the connectivity panels (and on the Overview) while the hub is open to anyone nearby:
 
 - the hub's own Wi-Fi still uses its setup password **and** no API token is set: anyone nearby can join it and change the hub;

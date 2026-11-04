@@ -51,6 +51,8 @@ If the hub can't be reached, the app says "Couldn't unbind the point" or "Unbind
 
 Press **Bind** on a free sensor. The dialog **Bind sensor as a point** shows the sensor's address at the top ("Module *m* · *channel* · I2C bus *b* · 0x*addr*").
 
+![Bind a free sensor as a point: name, point ID, role, phase, line rating, location](https://www.rbgrid.io/assets/img/webapp-docs/wa-points-bind-dialog.webp)
+
 | Field | What it does |
 |---|---|
 | **Name** | Required. How the point appears everywhere in the app. Home Assistant uses it for the device name. |
