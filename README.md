@@ -109,7 +109,7 @@ The hub's own Wi-Fi stays on so you can always reach the hub. Once the web app i
 
 ### 3. Install the web app
 
-No install needed if you use [webapp.rbgrid.io](https://webapp.rbgrid.io/): open it on a computer on the same network as the hub and connect to the hub's address. To have the app on the hub itself, install it once. It's a separate package on the release page, [`rbgrid-ui_v1.1.3.zip`](https://github.com/robotdyn-dimmer/RBgrid/releases/download/v1.1.3/rbgrid-ui_v1.1.3.zip). Unpack it (it holds `kit/` and `ui-manifest.json` side by side), then upload each file and commit:
+No install needed if you use [webapp.rbgrid.io](https://webapp.rbgrid.io/): open it on a computer on the same network as the hub and connect to the hub's address. To have the app on the hub itself, install it once. It's a separate package on the release page, [`rbgrid-ui_v1.1.4.zip`](https://github.com/robotdyn-dimmer/RBgrid/releases/download/v1.1.4/rbgrid-ui_v1.1.4.zip). Unpack it (it holds `kit/` and `ui-manifest.json` side by side), then upload each file and commit:
 
 ```bash
 HUB=http://<your-hub-address>     # e.g. http://192.168.4.1 on the hub's own Wi-Fi
@@ -152,6 +152,8 @@ Details: [`webapp/README.md`](webapp/README.md) (build the kit, install it on a 
 ## Documentation
 
 **[rbgrid.io/webapp/docs](https://www.rbgrid.io/webapp/docs?utm_source=github&utm_medium=referral&utm_campaign=rbgrid)**: tariffs, points, sensors, time, settings. Building and flashing: [rbgrid.io/source/build](https://www.rbgrid.io/source/build?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
+
+The same user guide is in this repository: [`webapp/docs/user/`](webapp/docs/user/README.md).
 
 ## License
 
