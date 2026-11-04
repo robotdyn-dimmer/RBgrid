@@ -4,7 +4,7 @@ This page takes the shortest path: one hub and one rbAmp **STD-UI1** energy mete
 
 **You need:** an ESP32-WROVER board with PSRAM and 16 MB flash · an rbAmp STD-UI1 or STD-U3I3 with its sensors · a USB cable · a computer with Python (for esptool) and `curl` · your home Wi-Fi name and password.
 
-> Install with the power off, and have mains work done by a qualified electrician.
+> For any work inside an electrical panel, call a qualified electrician.
 
 ## 1. Wire the meter
 

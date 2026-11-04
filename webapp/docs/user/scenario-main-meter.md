@@ -29,7 +29,7 @@ Both measure in both directions (import and export), so the input stays right if
 - Your home Wi-Fi name and password. The hub uses **2.4 GHz** Wi-Fi only.
 - A browser: Chrome, Edge, Firefox or Safari for the app served by the hub.
 
-> **Safety.** The voltage input connects to mains. Switch the supply off before you work, and have the mains connection done by a qualified electrician. The current sensors clamp around the conductor and don't touch it.
+> **Safety.** The voltage input connects to mains. For any work inside an electrical panel, call a qualified electrician. The current sensors clamp around the conductor and don't touch it.
 
 ## Step 1. Wire the meter
 
@@ -154,7 +154,7 @@ Open the **Overview**:
 
 - **Now** shows the power taken from the grid and what it costs per hour at the current tariff zone.
 - Switch on a known load (a kettle, a heater). The power should rise by about its rating within a few seconds.
-- If the power shows as **export** while you're only consuming, a current sensor faces the wrong way: switch the supply off and turn the sensor round on the conductor.
+- If the power shows as **export** while you're only consuming, a current sensor faces the wrong way and needs turning round on the conductor (work inside the panel).
 
 ![A flat on one 7-channel module: what the Overview shows after setup](https://www.rbgrid.io/assets/img/webapp-docs/wa-scenario-overview-live.webp)
 
