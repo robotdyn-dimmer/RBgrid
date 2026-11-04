@@ -19,7 +19,8 @@ const num = (s: string): number | null => {
   return s.trim() !== '' && Number.isFinite(v) && v >= 0 ? v : null;
 };
 
-export const QuickTariff: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => {
+/** `factory`: the hub still runs its factory example plan (telemetry tariff.placeholder) — replacing it needs no question. */
+export const QuickTariff: React.FC<{ onSaved?: () => void; factory?: boolean }> = ({ onSaved, factory }) => {
   const [env, setEnv] = useState<BaseResponse<TariffPlanConfigData> | null>(null);
   const [currency, setCurrency] = useState('EUR');
   const [price, setPrice] = useState('');
@@ -51,7 +52,7 @@ export const QuickTariff: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => 
   const save = async () => {
     if (!ready || p == null) return;
     const current = env?.data?.list?.[0] as TariffPlan | undefined;
-    if (richPlan(current) && !(await confirm({ title: t('quickTariff.replaceTitle'), body: t('quickTariff.replaceBody'), confirmLabel: t('quickTariff.replace'), danger: true }))) return;
+    if (!factory && richPlan(current) && !(await confirm({ title: t('quickTariff.replaceTitle'), body: t('quickTariff.replaceBody'), confirmLabel: t('quickTariff.replace'), danger: true }))) return;
     setBusy(true); setMsg(null);
     try {
       const fresh = env ?? await getApiClient().getTariffPlans();

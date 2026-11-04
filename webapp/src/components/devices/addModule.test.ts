@@ -1,13 +1,17 @@
 import { addStep, nextFreeAddr, newModules, otherDevices, pullupKey, hex } from './addModule';
-import type { I2cState } from '../../types/i2c';
+import type { I2cModule, I2cState } from '../../types/i2c';
 
-const mod = (module: number, addr: number, present = true) => ({ module, bus: 0, addr, present });
+const mod = (module: number, addr: number, present = true): I2cModule => ({ module, bus: 0, addr, present });
 const st = (modules: ReturnType<typeof mod>[], max = 3): I2cState => ({ buses: [{ bus: 0, up: true }], modules, max_modules: max });
 
 describe('add an rbAmp module', () => {
   it('frees 0x50 first: the module there moves to the next free address', () => {
     expect(addStep(st([mod(0, 0x50)]))).toEqual({ kind: 'free', module: 0, to: 0x51, present: true, model: undefined });
     expect(addStep(st([mod(0, 0x51), mod(1, 0x50)]))).toMatchObject({ kind: 'free', module: 1, to: 0x52 });
+  });
+  it('v1.1.4: an empty placeholder at 0x50 is taken by the new module — no move', () => {
+    expect(addStep(st([{ ...mod(0, 0x50, false), placeholder: true }, mod(1, 0x51)], 8))).toEqual({ kind: 'adopt', module: 0 });
+    expect(addStep(st([{ ...mod(0, 0x50, false), placeholder: false }], 8))).toMatchObject({ kind: 'free', present: false });
   });
   it('an absent module at 0x50 cannot be moved', () => {
     expect(addStep(st([mod(0, 0x50, false)]))).toMatchObject({ kind: 'free', present: false });

@@ -7,7 +7,7 @@
   "full": "The hub already has {max} modules — its maximum.",
   "whyFree": "Every rbAmp module leaves the factory at address 0x50, and two modules can't share an address. So the module that sits at 0x50 now moves to a free address first, and the new one is then connected at 0x50.",
   "freeWhat": "Module {module} {model} moves to {to}. The module stores the new address itself; its points keep their names, history and settings.",
-  "freeAbsent": "Module {module} is at 0x50 but isn't answering. Check its connection, then check again — its address can only change while it answers.",
+  "freeAbsent": "Module {module} is at 0x50 but isn't answering. Check its connection, then check again — its address can only change while it answers. If your modules are set to other addresses, press «Find one at another address» instead.",
   "noFreeAddr": "No free address is left in 0x51–0x5F.",
   "move": "Move it to {to}",
   "moving": "Moving…",
@@ -34,5 +34,8 @@
   "done": "Done",
   "cancel": "Cancel",
   "noneElsewhere": "No new module answers at another address. A new module from the box is at 0x50 — move the module above first.",
-  "scanOther": "Find one at another address"
+  "scanOther": "Find one at another address",
+  "adoptWhy": "Module {module} at 0x50 is an empty slot: nothing is measured on it. A new module from the box answers at 0x50 and takes this slot as module {module} — no address change, no scan.",
+  "adoptStep2": "Connect ONE new module to the hub's I2C connector (SDA, SCL, GND, VCC), then switch the hub on.",
+  "adoptStep3": "Give it 10–20 seconds after switching on, open this window again and press «Check again»: the module shows as present, and its channels appear in Points as free sensors to bind."
 }

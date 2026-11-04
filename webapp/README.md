@@ -45,6 +45,8 @@ REACT_APP_API_BASE_URL=http://<hub-ip>
 
 More: [docs/building.md](docs/building.md).
 
+User guide (how to use the app): [docs/user/](docs/user/README.md) — also on [rbgrid.io/webapp/docs](https://rbgrid.io/webapp/docs).
+
 ## Layout
 
 | Path | What |

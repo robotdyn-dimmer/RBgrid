@@ -27,7 +27,7 @@
   "calUnknown": "calibration: no data",
   "addrI2cGroup": "module {module} · {label} (3 phases) · I2C bus {bus}",
   "unbindTitle": "Unbind “{name}”?",
-  "unbindBody": "The point stops being metered and leaves the overview. Its history on the hub is deleted for good — download it first in History (CSV) if you need it. The sensor stays free and can be bound again.",
+  "unbindBody": "The point stops being metered and leaves the overview. Deleting the point erases its stored history for good — download it first in History (CSV) if you need it. The sensor channel stays and can be used for a new point.",
   "otherHeader": "Other points ({n})",
   "noFreeChannels": "No free channels. To add a point, connect another rbAmp module or unbind a point you don’t need.",
   "basicNote": "BASIC line: counts consumption only (doesn't see export); the module firmware isn't updated through the hub.",

@@ -2,6 +2,21 @@
 
 All notable changes to the RBGrid web interface. Newest first.
 
+## 1.1.4 — 2026-11-04
+
+For hub firmware 1.1.4. Requires hub API version 1. App changes since 1.1.3:
+
+### Fixed
+- **Unbind / Delete point:** both dialogs say the point's stored history is erased for good (it is — the hub frees
+  the slot); the sensor channel stays for a new point.
+- The quick tariff doesn't ask before replacing the hub's factory example plan, only a plan you set up.
+- The input's role texts no longer send you to the setup wizard (the hub keeps it fixed).
+- **Home Assistant:** with no broker saved the panel says MQTT is off (the hub has no default broker).
+- **Add a module:** when the hub's module at 0x50 isn't answering, the dialog points to «Find one at another address».
+- **Add a module (hub 1.1.4):** an empty placeholder module at 0x50 (`placeholder: true`) no longer blocks the dialog — a new module from the box connected there takes that slot.
+- **History:** points past the first six are greyed out (there is no «Other» group).
+- **Connect screen:** the address hint names the router's device list and `rbgrid-xxxx.local`.
+
 ## 1.1.3 — 2026-11-04
 
 For hub firmware 1.1.3, which answers browsers only from allowed origins and always allows the hosted app

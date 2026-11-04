@@ -62,8 +62,7 @@ export const HomeAssistantPanel: React.FC = () => {
           <Alert severity={connected ? 'success' : 'info'}>
             {connected
               ? (effective ? t('ha.connected', { uri: effective }) : t('ha.connectedDefault'))
-              : t('ha.notConnected')}
-            {connected && !saved ? ` ${t('ha.defaultBroker')}` : ''}
+              : t(saved ? 'ha.notConnected' : 'ha.noBroker')}
           </Alert>
           <MqttBrokerForm />
           <Typography variant="subtitle2" fontWeight={700}>{t('ha.mapTitle')}</Typography>

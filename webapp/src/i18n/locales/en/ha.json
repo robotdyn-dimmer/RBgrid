@@ -3,7 +3,6 @@
   "intro": "The hub announces itself to Home Assistant over MQTT (discovery): every point shows up in HA as a device with its sensors. HA and the hub must use the same MQTT broker, with the MQTT integration on in HA.",
   "connected": "The hub is connected to broker {uri}.",
   "connectedDefault": "The hub is connected to the broker.",
-  "defaultBroker": "No broker address saved — the default broker is used; enter yours below if HA uses another.",
   "notConnected": "The device isn't connected to an MQTT broker — HA won't see it. Enter the broker address below.",
   "mapTitle": "What to pick in Home Assistant's Energy dashboard",
   "colHa": "HA field",
@@ -16,5 +15,6 @@
   "devices": "Individual devices",
   "notDay": "Pick the sensors without “(Day)”: they only grow and HA works out days and months itself. “(Day)” sensors reset at midnight — they are for cards, not for the Energy dashboard.",
   "oldHub": "Hubs before firmware 1.1.2: HA may not offer “Cost (Total)” and “Revenue (Total)” for the Energy dashboard — they carry the wrong statistics type. Firmware 1.1.2 fixes it and calls the second one Export value.",
-  "oldHubDemo": "HA may not offer “Cost (Total)” and “Revenue (Total)” for the Energy dashboard: they carry the wrong statistics type."
+  "oldHubDemo": "HA may not offer “Cost (Total)” and “Revenue (Total)” for the Energy dashboard: they carry the wrong statistics type.",
+  "noBroker": "No broker set — MQTT is off, so Home Assistant won't see the hub. Enter the broker address below."
 }

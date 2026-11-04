@@ -69,7 +69,7 @@
   "almostTitle": "Almost done",
   "almostBody": "Still to do: {list}. You can return to these steps now or later — from the “Setup wizard” menu.",
   "integrationsTitle": "Integrations — optional",
-  "integrationsBody": "The hub can send its data to Home Assistant and other smart-home systems over MQTT. If you don't have one, just press “Skip”. You can set it up any time: “Settings → Network”.",
+  "integrationsBody": "The hub can send its data to Home Assistant and other smart-home systems over MQTT. If you don't have one, just press “Skip”. You can set it up any time: “Settings → Home Assistant”.",
   "integrationsOpen": "Open MQTT / Home Assistant settings",
   "securityWhy": "The token is a password for changing the hub’s settings. Without it anyone on your network (Wi-Fi) can open this app and change settings or the tariff. For a home behind a router that is usually fine — you can skip this step and come back later. The token is kept in this browser; write it down."
 }
