@@ -14,6 +14,8 @@ The hub keeps **one tariff plan**. Editing it changes the rates used from then o
 
 Changes are kept in the page until you save. A bar stays at the top: *No unsaved changes* or *The tariff has unsaved changes*, with **Cancel** and **Save**. While a field has an error, the bar reads *Fix the fields marked red*. Saving applies at once; the hub doesn't restart. If you leave the page with unsaved changes, the app asks first.
 
+> ⚠️ **After the hub restarts, check this page.** On the current firmware a restart — a power cut, a reboot or a firmware update — leaves the hub running its built-in placeholder plan, **Test Day/Night** (0.20 / 0.30). Your plan is still in the hub's storage, but it isn't the one in use until you open Tariffs and press **Save** again. Energy measured in between is costed at the placeholder's prices and those costs are stored like any other, so re-save first and then read the figures. The cause is known — the plan loads correctly at boot and the tariff engine then overwrites it — and a fix is on its way.
+
 **Save** stays disabled while:
 - nothing has changed;
 - the plan has no name;
