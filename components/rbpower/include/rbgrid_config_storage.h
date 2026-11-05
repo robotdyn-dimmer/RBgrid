@@ -274,6 +274,23 @@ extern "C"
     esp_err_t rbgrid_storage_load_tariffs(rbgrid_config_handle_t config_handle);
 
     /**
+     * @brief Apply the saved tariff plan (/tariffs.json) to the live tariff engine.
+     *
+     * Call once at boot AFTER rbpower_init_extended(): the engine init installs the built-in
+     * placeholder plan. Uses the same parser as a live POST /api/system/tariff-plan-config, so the
+     * plan name, zone types, weekday masks and per-kWh charges come back exactly as saved.
+     * A "Builder Plan …"/"Custom Provider" file seeded by firmware before 1.1.5 was never live
+     * (the placeholder always replaced it) and is skipped, so such hubs keep the placeholder.
+     *
+     * @retval ESP_OK                The saved plan is live.
+     * @retval ESP_ERR_NOT_FOUND     No saved plan, or only the old firmware seed (placeholder stays).
+     * @retval ESP_ERR_INVALID_STATE The config partition is not mounted.
+     * @retval ESP_ERR_NO_MEM        Buffer allocation failed.
+     * @retval ESP_FAIL              The file did not parse (placeholder stays).
+     */
+    esp_err_t rbgrid_storage_reapply_tariffs(void);
+
+    /**
      * @brief Save the rbAmp fleet configuration (bus parameters and the per-module
      *        address/entry map) to /rbamp.json, then bump the hardware revision counter.
      * @param[in] cfg Fleet configuration to persist.
