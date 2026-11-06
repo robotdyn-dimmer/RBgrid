@@ -58,8 +58,11 @@ export const HubFirmwarePanel: React.FC = () => {
       const sha256 = await sha256Hex(file.buf);
       await session.transport.postOta(file.buf, { ...(sha256 ? { sha256 } : {}), onProgress: (p) => alive.current && setPct(Math.round(p * 100)) });
     } catch (e) {
-      const status = (e as { response?: { status?: number; data?: { message?: string } } })?.response;
-      setErr(status?.status === 401 || status?.status === 403 ? t('common.adminTokenRequired') : String(status?.data?.message ?? (e as Error)?.message ?? e));
+      const status = (e as { response?: { status?: number; data?: { message?: string; error_code?: string } } })?.response;
+      // fw 1.1.6: a second image within ~60 s of the last one → 409 IMAGE_NOT_CONFIRMED (was a bare 500).
+      setErr(status?.status === 401 || status?.status === 403 ? t('common.adminTokenRequired')
+        : status?.data?.error_code === 'IMAGE_NOT_CONFIRMED' ? t('hubFw.notConfirmedYet')
+          : String(status?.data?.message ?? (e as Error)?.message ?? e));
       setStage('error');
       return;
     }

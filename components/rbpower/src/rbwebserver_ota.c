@@ -149,10 +149,27 @@ esp_err_t rbwebserver_api_ota_handler(httpd_req_t *req)
          * with recv) — the same cadence OTA_WITH_SEQUENTIAL_WRITES uses. Up-front bulk erase
          * (full or 64 KB-chunked) stalls the CPU long enough that the upload socket resets
          * (observed in the field). Nothing to do here. */
-    } else if (esp_ota_begin(update, OTA_WITH_SEQUENTIAL_WRITES, &ota) != ESP_OK) {
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_sendstr(req, "{\"status\":\"error\",\"message\":\"ota_begin failed\"}");
-        return ESP_OK;
+    } else {
+        esp_err_t be = esp_ota_begin(update, OTA_WITH_SEQUENTIAL_WRITES, &ota);
+        if (be == ESP_ERR_OTA_ROLLBACK_INVALID_STATE) {
+            /* the running image came from an update less than a minute ago and is not confirmed yet
+             * (ota_confirm_task, 60 s on the network) — the bootloader refuses a new update until then */
+            rbpower_diag_printf("ota: update refused — the running image is not confirmed yet (try again in about a minute)");
+            httpd_resp_set_status(req, "409 Conflict");
+            httpd_resp_set_hdr(req, "Retry-After", "60");
+            httpd_resp_sendstr(req, "{\"status\":\"error\",\"error_code\":\"IMAGE_NOT_CONFIRMED\","
+                                    "\"message\":\"The hub is still confirming the firmware installed less than a minute ago. "
+                                    "Try again in about a minute.\",\"retry_after_s\":60}");
+            return ESP_OK;
+        }
+        if (be != ESP_OK) {
+            rbpower_diag_printf("FAIL ota: ota_begin '%s' failed: %s", update->label, esp_err_to_name(be));
+            httpd_resp_set_status(req, "500 Internal Server Error");
+            char eb[112];
+            snprintf(eb, sizeof(eb), "{\"status\":\"error\",\"message\":\"ota_begin failed: %s\"}", esp_err_to_name(be));
+            httpd_resp_sendstr(req, eb);
+            return ESP_OK;
+        }
     }
     char* buf = malloc(4096);
     if (!buf) { if (!to_factory) esp_ota_abort(ota); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom"); return ESP_FAIL; }

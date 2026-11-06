@@ -2305,6 +2305,35 @@ static esp_err_t rbwebserver_system_time_sync_handler(httpd_req_t *req)
                     return ESP_FAIL;
                 }
             }
+            {   /* NTP ranges: rbtime_init refuses a config outside them, so a value saved out of range left the
+                 * hub with no clock at all after the next boot. Reject it (400) BEFORE anything is saved. */
+                const char* bad = NULL;
+                cJSON* v;
+                if ((v = cJSON_GetObjectItem(config, "resync_interval_sec")) &&
+                    (!cJSON_IsNumber(v) || v->valuedouble < 60 || v->valuedouble > 86400))
+                    bad = "resync_interval_sec must be 60..86400 (seconds)";
+                else if ((v = cJSON_GetObjectItem(config, "sntp_timeout_ms")) &&
+                    (!cJSON_IsNumber(v) || v->valuedouble < 1000 || v->valuedouble > 60000))
+                    bad = "sntp_timeout_ms must be 1000..60000 (milliseconds)";
+                else if ((v = cJSON_GetObjectItem(config, "sync_retry_count")) &&
+                    (!cJSON_IsNumber(v) || v->valuedouble < 1 || v->valuedouble > 10))
+                    bad = "sync_retry_count must be 1..10";
+                else if ((v = cJSON_GetObjectItem(config, "sntp_server")) &&
+                    (!cJSON_IsString(v) || !v->valuestring[0] || strlen(v->valuestring) > 63 ||
+                     strpbrk(v->valuestring, " \t\r\n/")))
+                    bad = "sntp_server must be a host name or address, 1..63 characters";
+                else if ((v = cJSON_GetObjectItem(config, "sntp_server_backup")) &&
+                    (!cJSON_IsString(v) || strlen(v->valuestring) > 63 ||
+                     strpbrk(v->valuestring, " \t\r\n/")))
+                    bad = "sntp_server_backup must be empty or a host name or address, up to 63 characters";
+                if (bad) {
+                    ESP_LOGE(TAG, "time-sync save_config rejected: %s", bad);
+                    if (config_str) free(config_str);
+                    cJSON_Delete(request);
+                    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, bad);
+                    return ESP_FAIL;
+                }
+            }
             if (config_str) {
                 // Save configuration to Flash
                 esp_err_t save_err = rbgrid_storage_save_time(config_str);

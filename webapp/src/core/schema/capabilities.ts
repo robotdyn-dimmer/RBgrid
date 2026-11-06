@@ -123,6 +123,8 @@ export type CapabilityFlag =
   | 'https'
   | 'provisioning'
   | 'configBackup'
+  /** `unit=input` on /history + /economics: the grid input summed over its supply points (fw 1.1.6). */
+  | 'inputAggregate'
   | 'schema';
 
 export type TelemetryProfile = 'lean' | 'full' | 'unknown';
@@ -191,7 +193,7 @@ function limitsOf(schema: RawSchema): DeviceLimits {
 const ALL_FLAGS: CapabilityFlag[] = [
   'espnow', 'economics', 'summary', 'exportCsv', 'telemetryConfigPost',
   'mqttConfig', 'historyTimeRange', 'auth', 'https',
-  'provisioning', 'configBackup', 'schema',
+  'provisioning', 'configBackup', 'inputAggregate', 'schema',
 ];
 
 /** The pre-schema baseline: none of the new surfaces, telemetry-config GET-only. */
@@ -314,6 +316,8 @@ export function deriveCapabilities(schema: RawSchema | null): DeviceCapabilities
       https: flag('https', false), // transport-level; explicit only
       provisioning: flag('provisioning', has(eps, '/api/system/provisioning')),
       configBackup: flag('configBackup', has(eps, '/api/system/backup')),
+      // Explicit only — the endpoints are the same; older hubs answer `unit=input` with 400.
+      inputAggregate: flag('inputAggregate', false),
     },
   };
 }

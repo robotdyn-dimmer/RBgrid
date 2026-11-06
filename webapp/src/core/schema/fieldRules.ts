@@ -26,6 +26,10 @@ const FALLBACK: Record<string, HubRange> = {
   nominal_hz: { min: 45, max: 65, decimals: 0, read_only: true },
   channels_count: { min: 0, max: 8, decimals: 0 },
   json_buffer_size: { min: 1024, max: 65_536, decimals: 0, read_only: true },
+  // time-sync save_config (fw 1.1.6 answers 400 outside these, root time-ota-small-fixes)
+  resync_interval_sec: { min: 60, max: 86_400, decimals: 0 },
+  sntp_timeout_ms: { min: 1000, max: 60_000, decimals: 0 },
+  sync_retry_count: { min: 1, max: 10, decimals: 0 },
 };
 
 /** Durations, powers, counts and sizes are never negative. */

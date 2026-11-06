@@ -65,5 +65,6 @@
   "nettedBody": "The input measures all three phases as one point, phases netted, as on a meter that nets them. Its history stays. Applies after a restart.",
   "nettedBodyLegs": "The input measures all three phases as one point again, phases netted. The points {points} are deleted and their own history is erased; their totals move into the input, so the site’s totals stay. Applies after a restart.",
   "nettedConfirm": "One point, phases netted",
-  "meteringDone": "Saved. The hub meters the input this way after a restart."
+  "meteringDone": "Saved. The hub meters the input this way after a restart.",
+  "meteringPending": "The change applies after a restart — until then the card shows the old layout."
 }

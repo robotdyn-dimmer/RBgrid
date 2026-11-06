@@ -55,5 +55,6 @@
   "tzAdelaide": "South Australia — Adelaide (UTC+9:30, summer UTC+10:30)",
   "tzBrisbane": "Queensland — Brisbane (UTC+10)",
   "tzSydney": "Eastern Australia — Sydney, Melbourne, Canberra, Hobart (UTC+10, summer UTC+11)",
-  "tzAuckland": "New Zealand — Auckland, Wellington (UTC+12, summer UTC+13)"
+  "tzAuckland": "New Zealand — Auckland, Wellington (UTC+12, summer UTC+13)",
+  "ntpHostInvalid": "A server name, without spaces or “/”, up to 63 characters"
 }

@@ -11,6 +11,7 @@
  * JSON keys and values emitted here are part of the public API contract (see the API reference).
  */
 #include <string.h>
+#include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <math.h>
@@ -984,7 +985,8 @@ char* rbgrid_json_create_time_config(const rbpower_hardware_config_t* hardware_c
         
         // Time zone
         cJSON_AddStringToObject(config, "timezone", time_cfg->timezone);
-        cJSON_AddBoolToObject(config, "enable_dst", time_cfg->enable_dst);
+        /* read-only: summer time comes from the TZ rule alone; true when the rule has a summer-time part */
+        cJSON_AddBoolToObject(config, "enable_dst", rbtime_tz_has_dst(getenv("TZ")));   /* the rule in force */
         
         // Periodic resync
         cJSON_AddNumberToObject(config, "resync_interval_sec", time_cfg->resync_interval_sec);
@@ -3130,14 +3132,14 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
     cJSON_AddNumberToObject(root, "ts", (double)uptime_ms);
     cJSON_AddNumberToObject(root, "sntp", (double)unix_timestamp);
     /* Time quality: 0 unsynced · 1 synced · 2 holdover (+ sync age).
-     * Additive within frame v1. time_src: sntp only today (rtc planned). */
+     * Additive within frame v1. time_src: none | sntp | manual (who set the clock last). */
     {
         extern uint8_t rbtime_quality(uint32_t *sync_age_s_out);
         uint32_t sync_age_s = 0;
         uint8_t tq = rbtime_quality(&sync_age_s);
         cJSON_AddNumberToObject(root, "tq", tq);
         cJSON_AddNumberToObject(root, "sync_age_s", sync_age_s);
-        cJSON_AddStringToObject(root, "time_src", tq ? "sntp" : "none");
+        cJSON_AddStringToObject(root, "time_src", rbtime_clock_source_str(tq));
     }
     /* Single producer: monotonic frame seq + per-boot id let a consumer detect loss AND reboots
      * without parsing uptime. Additive keys. */

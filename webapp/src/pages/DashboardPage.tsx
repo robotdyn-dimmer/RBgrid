@@ -15,6 +15,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { SiteProfilePanel } from '../components/settings/SiteProfilePanel';
 import { usePeriodTotals } from '../hooks/usePeriodTotals';
+import { useInputSeries } from '../hooks/useInputSeries';
 import { effectiveInputLimitW } from '../entities/gridSystem';
 import { Box, Typography, Grid, CircularProgress, Alert, Button, Chip, Stack, ToggleButton, ToggleButtonGroup, Dialog, DialogContent, DialogActions } from '@mui/material';
 import { useNavigate, Link as RouterLink } from 'react-router-dom';
@@ -141,12 +142,14 @@ export const DashboardPage: React.FC = () => {
   // The input's history id (HEX4) — the hub's or the demo's (9001), never a hardcoded '0006'
   // (rerun 16.10 HA-R01/HOME-R01: the demo's hour chart read a 60 W line).
   const mainHistId = mainEarly ? (unitsCfg.forGroup(mainEarly)?.hex ?? apiUnitId(mainEarly.unitKey)) : null;
+  // The input's history series: all its supply points summed where the hub can (per-phase input).
+  const inputSeries = useInputSeries(mainHistId);
   // The site's generation point (the first) for the house view of «Today by hour» (operator 20.10).
   const genEarly = data ? lineUnits(data.units, unitsCfg).find((g) => isGenerationUnit(g, unitsCfg) && g.present) : undefined;
   const genHistId = genEarly ? (unitsCfg.forGroup(genEarly)?.hex ?? apiUnitId(genEarly.unitKey)) : null;
   const genLiveOut = genEarly ? unitMetricValue(genEarly, 'energy_out') : null;
   // Month to date — closed days + today by the hub's counters, as Economics «месяц» (HOME-21).
-  const monthTot = usePeriodTotals(mainHistId, 'month', { today: data?.system.totals?.e_day_in != null ? { inWh: Math.round(data.system.totals.e_day_in ?? 0), outWh: Math.round(data.system.totals.e_day_out ?? 0), cost: Math.round((data.system.totals.cost_day ?? 0) * 100) / 100, revenue: Math.round((data.system.totals.rev_day ?? 0) * 100) / 100, n: 1 } : null });
+  const monthTot = usePeriodTotals(inputSeries, 'month', { today: data?.system.totals?.e_day_in != null ? { inWh: Math.round(data.system.totals.e_day_in ?? 0), outWh: Math.round(data.system.totals.e_day_out ?? 0), cost: Math.round((data.system.totals.cost_day ?? 0) * 100) / 100, revenue: Math.round((data.system.totals.rev_day ?? 0) * 100) / 100, n: 1 } : null });
 
   if (!data || !frame) {
     return (
@@ -377,7 +380,7 @@ export const DashboardPage: React.FC = () => {
         })),
         lost: stale,
       } : null} /></Box>
-      <Box sx={{ mb: 2 }}><OverviewEnergyChart hasGeneration={frame.solar != null} liveEIn={(main?.present ? unitMetricValue(main, 'energy_in') : null) ?? totals?.e_in ?? null} liveEOut={(main?.present ? unitMetricValue(main, 'energy_out') : null) ?? totals?.e_out ?? null} {...(mainHistId ? { unitId: mainHistId } : {})} genUnitId={genHistId} liveGenOut={genLiveOut} /></Box>
+      <Box sx={{ mb: 2 }}><OverviewEnergyChart hasGeneration={frame.solar != null} liveEIn={(main?.present ? unitMetricValue(main, 'energy_in') : null) ?? totals?.e_in ?? null} liveEOut={(main?.present ? unitMetricValue(main, 'energy_out') : null) ?? totals?.e_out ?? null} {...(mainHistId ? { unitId: mainHistId, seriesId: inputSeries } : {})} genUnitId={genHistId} liveGenOut={genLiveOut} /></Box>
       {tiles}
     </>
   );
@@ -481,7 +484,7 @@ export const DashboardPage: React.FC = () => {
           <Box sx={{ mb: 2 }}><PhaseCards groups={data.units} join={unitsCfg} lost={stale} grid={grid} nominalV={grid.nominalV} measuredLegs={measuredLegs.current} /></Box>
         )}
         <Grid container spacing={2} sx={{ mb: 2 }}>
-          <Grid item xs={12} lg={8} sx={{ alignSelf: 'flex-start' }}><OverviewEnergyChart hasGeneration={frame.solar != null} liveEIn={(main?.present ? unitMetricValue(main, 'energy_in') : null) ?? totals?.e_in ?? null} liveEOut={(main?.present ? unitMetricValue(main, 'energy_out') : null) ?? totals?.e_out ?? null} {...(mainHistId ? { unitId: mainHistId } : {})} genUnitId={genHistId} liveGenOut={genLiveOut} /></Grid>
+          <Grid item xs={12} lg={8} sx={{ alignSelf: 'flex-start' }}><OverviewEnergyChart hasGeneration={frame.solar != null} liveEIn={(main?.present ? unitMetricValue(main, 'energy_in') : null) ?? totals?.e_in ?? null} liveEOut={(main?.present ? unitMetricValue(main, 'energy_out') : null) ?? totals?.e_out ?? null} {...(mainHistId ? { unitId: mainHistId, seriesId: inputSeries } : {})} genUnitId={genHistId} liveGenOut={genLiveOut} /></Grid>
           <Grid item xs={12} lg={4}>
             <Stack spacing={2}>
               <AlarmsPanel groups={data.units} title={t('dashboard.attention')} nameOf={nameFor} ratedOf={(g) => (isMainKey(g.unitKey) || unitsCfg.forGroup(g)?.role === 'MAIN_SUPPLY' || isGenerationUnit(g, unitsCfg) ? undefined : unitsCfg.forGroup(g)?.ratedPowerW)} />

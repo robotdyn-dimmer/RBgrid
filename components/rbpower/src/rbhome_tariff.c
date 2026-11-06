@@ -269,6 +269,20 @@ static void lifetime_cost_add(uint8_t idx, double cost, double revenue)
     if (idx >= RBPOWER_MAX_HOME_UNITS || !g_home_network.units[idx].has_valid_definition) return;
     (void)rbpower_lifetime_add_cost(g_home_network.units[idx].definition.unit_id, (float)cost, (float)revenue);
 }
+void rbpower_tariff_net_metering_forget(rbpower_unit_id_t unit_id)
+{
+    uint8_t i = find_unit_index_by_id(unit_id);
+    if (i == 0xFF || i >= RBPOWER_MAX_HOME_UNITS) return;
+    char key[12]; nvs_handle_t h;
+    if (nm_key(i, key) && nvs_open("rbnm", NVS_READWRITE, &h) == ESP_OK) {
+        (void)nvs_erase_key(h, key);
+        (void)nvs_commit(h);
+        nvs_close(h);
+    }
+    memset(&g_net_metering[i], 0, sizeof(g_net_metering[i]));
+    s_nm_restored[i] = false;   /* the slot's next unit restores its own record */
+}
+
 static void nm_restore(uint8_t i)
 {
     if (i >= RBPOWER_MAX_HOME_UNITS || s_nm_restored[i]) return;

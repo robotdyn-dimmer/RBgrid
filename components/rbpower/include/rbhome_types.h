@@ -2607,6 +2607,15 @@ rbpower_unit_id_t rbpower_home_find_unit_by_source(rbpower_source_type_t source_
                                                    rbpower_unit_id_t exclude_uid);
 
 /**
+ * @brief The points that make up the grid input: the main supply point first, then every further supply point
+ *        (MAIN_SUPPLY role) — one per phase when a three-phase input is metered per phase.
+ * @param[out] out  Unit ids (main first).
+ * @param[in]  cap  Capacity of @p out.
+ * @return Number of ids written (0 when the hub has no main supply point).
+ */
+uint8_t rbpower_home_input_supply_units(rbpower_unit_id_t* out, uint8_t cap);
+
+/**
  * @brief Point slug -> unit ID (live units only).
  * @param[in] point Point slug.
  * @return Unit ID, or RBPOWER_HOME_INVALID_ID if not found.

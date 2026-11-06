@@ -358,6 +358,7 @@ static void suite_v4_convert(void)
 
 /* ===== Suite 4: point slugs — validation, translit generation, uniquify ===== */
 #include "rbpoint.h"
+#include "rbpower.h"   /* rbtime_tz_has_dst */
 
 static bool slug_taken_fixed(const char* slug, void* arg)
 {
@@ -426,6 +427,22 @@ static void suite_point_slug(void)
     RBT_CHECK((c & RBUNIT_CAP_VOLTAGE) && !(c & RBUNIT_CAP_CURRENT), "caps voltage bus");
 }
 
+/* rbtime_tz_has_dst: the read-only enable_dst echo (summer time comes from the TZ rule alone) */
+static void suite_tz_dst(void)
+{
+    ESP_LOGI(TAG, "--- suite: TZ rule has summer time ---");
+    RBT_CHECK(rbtime_tz_has_dst("CET-1CEST,M3.5.0,M10.5.0/3"), "CET rule has DST");
+    RBT_CHECK(rbtime_tz_has_dst("EST5EDT,M3.2.0,M11.1.0"), "EST5EDT has DST");
+    RBT_CHECK(rbtime_tz_has_dst("<-04>4<-03>,M9.1.6/24,M4.1.6/24"), "Santiago <..> names have DST");
+    RBT_CHECK(rbtime_tz_has_dst("ACST-9:30ACDT,M10.1.0,M4.1.0/3"), "Adelaide hh:mm offset has DST");
+    RBT_CHECK(!rbtime_tz_has_dst("CST-8"), "CST-8 no DST");
+    RBT_CHECK(!rbtime_tz_has_dst("<+09>-9"), "<+09>-9 no DST");
+    RBT_CHECK(!rbtime_tz_has_dst("IST-5:30"), "IST-5:30 no DST");
+    RBT_CHECK(!rbtime_tz_has_dst("UTC0"), "UTC0 no DST");
+    RBT_CHECK(!rbtime_tz_has_dst(""), "empty no DST");
+    RBT_CHECK(!rbtime_tz_has_dst(NULL), "NULL no DST");
+}
+
 int rbpower_logic_run_tests(void)
 {
     s_pass = 0;
@@ -435,6 +452,7 @@ int rbpower_logic_run_tests(void)
     suite_local_buckets();
     suite_v4_convert();
     suite_point_slug();
+    suite_tz_dst();
     ESP_LOGI(TAG, "RBTEST logic SUMMARY: %d passed, %d failed", s_pass, s_fail);
     return s_fail;
 }

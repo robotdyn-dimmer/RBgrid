@@ -87,6 +87,10 @@ typedef struct {
 /** Global time system context */
 static rbtime_context_t g_time_ctx = {0};
 
+/* Who set the wall clock last: SNTP or a hand-set time (app "sync from this browser", POST time).
+ * Drives time_src and lets a hand-set clock report a quality (it used to read tq 0 / "none" forever). */
+static rbtime_source_t s_clock_setter = RBTIME_SOURCE_NONE;
+
 /* ================================================================================================
  * PRIVATE FUNCTIONS - UTILITIES
  * ================================================================================================ */
@@ -118,6 +122,15 @@ static void rbtime_unlock(void)
 static void rbtime_set_status(rbtime_status_t new_status)
 {
     rbtime_status_t old_status = g_time_ctx.status;
+
+    /* A hand-set clock (app "sync from this browser") stays SYNCED until NTP takes over: the SNTP attempt
+     * that follows it, and the 30 s retries on a hub with no NTP, used to flip the status to SYNCING/TIMEOUT,
+     * so the Time panel read "not synchronized" right after the user set the clock. */
+    if (s_clock_setter == RBTIME_SOURCE_MANUAL && old_status == RBTIME_STATUS_SYNCED &&
+        (new_status == RBTIME_STATUS_SYNCING || new_status == RBTIME_STATUS_TIMEOUT ||
+         new_status == RBTIME_STATUS_ERROR || new_status == RBTIME_STATUS_FALLBACK)) {
+        return;
+    }
 
     if (old_status != new_status) {
         g_time_ctx.status = new_status;
@@ -163,6 +176,20 @@ static bool rbtime_tz_is_valid(const char *tz)
 /* Public wrapper (declared in rbpower.h): the time-sync POST validates the TZ BEFORE
  * storing it — "<UTC+9>" (name, no offset) used to be persisted and silently ran the device in UTC. */
 bool rbtime_timezone_is_valid(const char *tz) { return rbtime_tz_is_valid(tz); }
+
+/* Does a POSIX TZ rule carry a summer-time part? "CET-1CEST,M3.5.0,M10.5.0/3" → true, "CST-8" / "<+09>-9"
+ * / "UTC0" → false. Pure parse: std name (letters or <...>), std offset ([+-]hh[:mm[:ss]]), then any
+ * further name means DST. Summer time on the hub comes from this rule alone. */
+bool rbtime_tz_has_dst(const char *tz)
+{
+    if (tz == NULL) return false;
+    const char *p = tz;
+    if (*p == '<') { while (*p && *p != '>') p++; if (*p) p++; }
+    else { while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) p++; }
+    if (*p == '+' || *p == '-') p++;
+    while ((*p >= '0' && *p <= '9') || *p == ':') p++;
+    return (*p == '<') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z');
+}
 
 /* Validate time configuration */
 static rbpower_err_t rbtime_validate_config(const rbtime_config_t *config)
@@ -212,13 +239,23 @@ static rbpower_err_t rbtime_validate_config(const rbtime_config_t *config)
 uint8_t rbtime_quality(uint32_t *sync_age_s_out)
 {
     uint64_t last_us = g_time_ctx.stats.last_sync_timestamp_us;
-    if (g_time_ctx.stats.successful_syncs == 0 || last_us == 0) {
+    /* a hand-set clock counts like a sync from the moment it was set (same 24 h holdover rule) */
+    bool set = (g_time_ctx.stats.successful_syncs > 0) || (s_clock_setter == RBTIME_SOURCE_MANUAL);
+    if (!set || last_us == 0) {
         if (sync_age_s_out) *sync_age_s_out = 0;
         return 0;
     }
     uint32_t age_s = (uint32_t)((esp_timer_get_time() - last_us) / 1000000ULL);
     if (sync_age_s_out) *sync_age_s_out = age_s;
     return (age_s <= 86400u) ? 1 : 2;
+}
+
+/* time_src for the telemetry frame and schema.time_quality: "none" while tq is 0, otherwise who set
+ * the clock last — "sntp" or "manual" (app "sync from this browser" / a POSTed time). */
+const char *rbtime_clock_source_str(uint8_t tq)
+{
+    if (tq == 0) return "none";
+    return (s_clock_setter == RBTIME_SOURCE_MANUAL) ? "manual" : "sntp";
 }
 
 /* ================================================================================================
@@ -265,6 +302,7 @@ static void rbtime_sntp_notification_cb(struct timeval *tv)
     g_time_ctx.stats.last_sync_timestamp_us = esp_timer_get_time();
     g_time_ctx.stats.active_source = RBTIME_SOURCE_SNTP;
     g_time_ctx.stats.sntp_responses_received++;
+    s_clock_setter = RBTIME_SOURCE_SNTP;
 
     // Update status
     rbtime_set_status(RBTIME_STATUS_SYNCED);
@@ -407,6 +445,7 @@ static rbpower_err_t rbtime_force_sntp_sync(uint32_t timeout_ms)
             g_time_ctx.stats.successful_syncs++;
             g_time_ctx.stats.last_sync_timestamp_us = esp_timer_get_time();
             g_time_ctx.stats.active_source = RBTIME_SOURCE_SNTP;
+            s_clock_setter = RBTIME_SOURCE_SNTP;
             return RBPOWER_OK;
         }
 
@@ -787,13 +826,12 @@ rbpower_err_t rbtime_get_statistics(rbtime_statistics_t *stats)
         return RBPOWER_ERR_NOT_INIT;
     }
 
-    if (!rbtime_lock(100)) {
-        return RBPOWER_ERR_TIMEOUT;
-    }
-
+    /* The sync task holds the lock through a whole SNTP attempt (up to sntp_timeout_ms, every 30 s on a hub
+     * with no NTP), so GET /api/system/time-sync answered 500 about a third of the time there. A read-only
+     * snapshot without the lock is fine for a status display. */
+    bool locked = rbtime_lock(100);
     memcpy(stats, &g_time_ctx.stats, sizeof(rbtime_statistics_t));
-
-    rbtime_unlock();
+    if (locked) rbtime_unlock();
     return RBPOWER_OK;
 }
 
@@ -807,13 +845,9 @@ rbpower_err_t rbtime_get_config(rbtime_config_t *config)
         return RBPOWER_ERR_NOT_INIT;
     }
 
-    if (!rbtime_lock(100)) {
-        return RBPOWER_ERR_TIMEOUT;
-    }
-
+    bool locked = rbtime_lock(100);   /* snapshot even while an SNTP attempt holds the lock (see get_statistics) */
     memcpy(config, &g_time_ctx.config, sizeof(rbtime_config_t));
-
-    rbtime_unlock();
+    if (locked) rbtime_unlock();
     return RBPOWER_OK;
 }
 
@@ -982,6 +1016,8 @@ rbpower_err_t rbtime_set_manual_time(uint64_t unix_timestamp_sec)
     g_time_ctx.last_manual_time_us = unix_timestamp_sec * 1000000ULL;
 
     g_time_ctx.active_source = RBTIME_SOURCE_MANUAL;
+    g_time_ctx.stats.active_source = RBTIME_SOURCE_MANUAL;   /* the Time panel shows this one */
+    s_clock_setter = RBTIME_SOURCE_MANUAL;
     rbtime_set_status(RBTIME_STATUS_SYNCED);
 
     rbtime_unlock();

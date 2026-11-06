@@ -20,5 +20,6 @@
   "rolledBack": "The new firmware didn't start — the hub went back to the previous one. Details in “Events → Hub log”.",
   "unconfirmed": "The hub is back, but its log doesn't show the new firmware confirmed yet. Check “Events → Hub log”.",
   "notBack": "the hub didn't come back within 3 minutes",
-  "failed": "Failed: {reason}"
+  "failed": "Failed: {reason}",
+  "notConfirmedYet": "The hub is still confirming the firmware installed less than a minute ago. Try again in about a minute."
 }
