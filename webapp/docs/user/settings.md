@@ -317,6 +317,8 @@ The panel shows the hub's current version and build. To update:
 
 If the new firmware doesn't start, the hub goes back to the previous one, and the app tells you so.
 
+For about a minute after an update the hub is still confirming the image it has just installed, and it refuses a second update in that window: the panel shows "Failed: The hub is still confirming the firmware installed less than a minute ago. Try again in about a minute." That is the only thing wrong — wait a minute and install again. (Firmware **v1.1.6** with the matching app package; on **v1.1.5 and earlier** the attempt failed with a generic error instead.)
+
 Wi-Fi, settings, points, tariff, tokens, history and the installed web app are kept. The modules keep counting during the update. Afterwards, install the release's matching `rbgrid-ui_<version>.zip`.
 
 > ⚠️ **Give the hub a minute before you restart it.** For about a minute after an update the new firmware is still unconfirmed, and a restart inside that minute — by hand or by pulling the power — rolls the hub back to the firmware it had before. Wait until the app confirms the new version.

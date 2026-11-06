@@ -2,7 +2,7 @@
 
 **History** shows what the hub has recorded for your points: energy, power, voltage, reactive power and money, by hour, day or month. Open it from the app's left navigation: **Monitoring → History**.
 
-Everything on this page comes from the records stored on the hub. The hub keeps history for up to **12 points** (see [Points](points.md)).
+Everything on this page comes from the records stored on the hub. The hub keeps history for up to **12 points** (see [Points](points.md)). A three-phase input **metered per phase** is three points here, each with its own chart, table and CSV; this page never sums them. The whole input, summed, is what the Overview and Economics show from firmware **v1.1.6**.
 
 ![History · 7 days · Money](https://www.rbgrid.io/assets/img/webapp-docs/wa-history-overview.webp)
 

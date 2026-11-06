@@ -94,7 +94,7 @@ An option marked "not validated on hardware" hasn't been checked on real hardwar
 
 ### Reusing an ID
 
-If you pick the ID of a removed point, the dialog warns that Home Assistant and MQTT know the point by its ID and will continue its old history as one point. If the channel now feeds a different load, give it a new ID. The button then reads **Bind with the previous ID**.
+If you pick the ID of a removed point, the dialog warns that Home Assistant and MQTT know the point by its ID and will continue its old history as one point. If the channel now feeds a different load, give it a new ID. The button then reads **Bind with the previous ID**. From firmware **v1.1.6** the hub clears a removed point's net-metering record along with the point, so a reused ID starts its credit at zero; on **v1.1.5 and earlier** it inherited the removed point's credit bank and period balance.
 
 ### Messages
 
@@ -161,7 +161,7 @@ A point with the **Charging station** role also shows **Current session**: **Sta
 
 At the bottom, **Point setup** opens the point's settings (see [Point settings](#point-settings)), the **Technical details** (IDs and channel, useful for support) and **Delete point**.
 
-**Delete point** asks you to confirm: the point stops being metered and leaves the overview and the points list, and its stored history is **erased for good**. The sensor channel becomes free and can be bound again. You then return to **Points**. If you may need the point's records later, download them first in [History](history.md#downloads) (CSV). The input and the voltage bus can't be deleted.
+**Delete point** asks you to confirm: the point stops being metered and leaves the overview and the points list, and its stored history is **erased for good** — from firmware **v1.1.6**, its net-metering record with it. The sensor channel becomes free and can be bound again. You then return to **Points**. If you may need the point's records later, download them first in [History](history.md#downloads) (CSV). The input and the voltage bus can't be deleted.
 
 ## Point settings
 

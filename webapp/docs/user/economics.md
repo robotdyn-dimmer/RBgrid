@@ -88,6 +88,8 @@ If any line has no records for the period, the block names those points and show
 
 If the input itself has no records for the period, the block shows "No data for this point." instead of the tiles.
 
+**A three-phase input metered per phase.** From firmware **v1.1.6**, with the matching app package, every figure on this page covers the **whole input**: the hub serves the three phase points as one summed series and the page reads it. On **v1.1.5** the page read the **L1 point** alone, so cost, the balance, generation and the export value all understated a per-phase input. One consequence worth knowing: the input's entry in the **Point** list is now the three phases summed, so **L2** and **L3** are a click away there, while **L1** on its own is on the input point's own page or in [History](history.md) — both still read each point one at a time.
+
 ![Economics · «Balance: input and lines» with the unmetered share](https://www.rbgrid.io/assets/img/webapp-docs/wa-economics-balance.webp)
 
 ## Running totals
@@ -113,6 +115,8 @@ Shown when **Net metering (monthly kWh credit)** is on in your tariff plan; hidd
 | **Credit used since net metering was on** | all credit used so far |
 
 The billing period is the calendar month: the credit is settled at each calendar-month boundary. The values are in kWh, as the hub reports them; the credit doesn't change the money figures.
+
+Deleting a point clears its net-metering record too — the credit bank and this period's balance — so a point bound later under the same ID starts at zero (firmware **v1.1.6**; on **v1.1.5 and earlier** a reused ID carried on the removed point's credit).
 
 If the input is on a BASIC module, which doesn't measure export, a note says no credit accrues and the figures shown were accumulated before.
 

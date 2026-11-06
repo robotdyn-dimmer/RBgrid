@@ -127,6 +127,7 @@ The **Today** card shows the day so far:
 - **Exported**: shown once at least 10 Wh went out; its value from the hub's export counter.
 - **Net**: imported minus exported, in energy and money. Shown together with **Exported** only.
 - **Month to date**: the closed days of this month from the hub's history plus today.
+- With a three-phase input **metered per phase**, these figures cover the whole input — the three phase points summed by the hub (firmware **v1.1.6** with the matching app package; on **v1.1.5** they covered one phase only).
 - The current zone and rate, for example "Zone: night · 0.18 €/kWh incl. VAT & levies". With no tariff the line isn't shown.
 
 "Today" means the hub's day. If the hub's clock isn't set, a note says that "today" counts from the hub's last midnight or restart, not your calendar day. Set the clock on the [Time](time.md) page.
