@@ -114,7 +114,9 @@ Shown when **Net metering (monthly kWh credit)** is on in your tariff plan; hidd
 | **Credit earned since net metering was on** | all credit earned so far |
 | **Credit used since net metering was on** | all credit used so far |
 
-The billing period is the calendar month: the credit is settled at each calendar-month boundary. The values are in kWh, as the hub reports them; the credit doesn't change the money figures.
+The billing period is the calendar month. At each boundary the hub nets that month's import against its export: a surplus is **added** to the credit, at the plan's **selling ratio**; a shortfall is **paid out of** the credit first, and only what is left is billable. The credit then carries into the next month, up to **1,000 kWh**, while the month's import and export counters start again. The values are in kWh, as the hub reports them; the credit doesn't change the money figures.
+
+Switching net metering off and on again doesn't clear the credit: it is the hub's own state, and it is cleared only when the point is deleted.
 
 Deleting a point clears its net-metering record too — the credit bank and this period's balance — so a point bound later under the same ID starts at zero (firmware **v1.1.6**; on **v1.1.5 and earlier** a reused ID carried on the removed point's credit).
 
