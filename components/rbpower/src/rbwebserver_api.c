@@ -3417,7 +3417,7 @@ char *rbgrid_build_schema_json(void)
         extern uint8_t rbtime_quality(uint32_t *sync_age_s_out);
         uint32_t sync_age_s = 0; uint8_t tq = rbtime_quality(&sync_age_s);
         cJSON *tqo = cJSON_AddObjectToObject(root, "time_quality");
-        if (tqo) { cJSON_AddNumberToObject(tqo, "tq", tq); cJSON_AddStringToObject(tqo, "time_src", tq ? "sntp" : "none"); cJSON_AddNumberToObject(tqo, "sync_age_s", sync_age_s); }
+        if (tqo) { cJSON_AddNumberToObject(tqo, "tq", tq); cJSON_AddStringToObject(tqo, "time_src", rbtime_clock_source_str(tq)); cJSON_AddNumberToObject(tqo, "sync_age_s", sync_age_s); }
     }
     {
         /* fields_by_source (per-source electrical key sets; keys will not change) */

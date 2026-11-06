@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.1.6 — unreleased
+
+### Three-phase input metered per phase
+- **History and economics of the whole input:** `GET /api/v1/history?unit=input&…` and
+  `GET /api/v1/economics?unit=input` return the grid input as one series, the records of all input points
+  (one per phase) summed by time. Same parameters and shapes as for a single point (`offset`/`limit`,
+  `from`/`to`, `since`, `type=energy|economics|all`); the reply lists the points in `units`. With the input
+  as one point it is the same as that point. `GET /api/v1/schema` → `capabilities.inputAggregate: true`.
+
+### Fixed
+- A point created with the id of a deleted point inherited the deleted point's net-metering figures
+  (period kWh and credit). Deleting a point now clears them.
+- **Time settings out of range:** `POST /api/system/time-sync` (`save_config`) now refuses, with 400 and the
+  allowed range, `resync_interval_sec` outside 60–86400, `sntp_timeout_ms` outside 1000–60000,
+  `sync_retry_count` outside 1–10 and an empty or malformed `sntp_server`. Before, such a value was saved and
+  the hub came up after the next restart with no clock sync at all. A value already saved out of range is
+  brought into range at boot.
+- **Clock set by hand:** after "sync from this browser" (or a POSTed time) the hub reported `tq: 0`,
+  `time_src: "none"` until an NTP sync. It now reports `tq: 1` and `time_src: "manual"` (2 after 24 h, as
+  for NTP), in the live frame and in `schema.time_quality`. `time_src` is `none`, `sntp` or `manual`.
+- **`enable_dst`** in the time settings did nothing: summer time comes from the time-zone rule alone. The
+  field is now read-only: it shows `true` when the hub's time-zone rule has summer time; a value written to
+  it is ignored.
+- **Update right after an update:** for about a minute after an over-the-air update the hub refuses the
+  next one (the new firmware is being confirmed). It answered `500 ota_begin failed`; it now answers
+  `409` with `error_code: "IMAGE_NOT_CONFIRMED"`, a plain message, `retry_after_s: 60` and a
+  `Retry-After` header.
+
 ## v1.1.5 — 2026-11-06
 
 ### Tariff

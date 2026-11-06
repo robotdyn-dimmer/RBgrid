@@ -208,7 +208,7 @@ extern "C"
 
         // === TIME ZONE ===
         char timezone[32]; /**< POSIX TZ string (e.g. "CET-1CEST,M3.5.0,M10.5.0/3", "UTC+0") */
-        bool enable_dst;   /**< Automatic daylight saving time */
+        bool enable_dst;   /**< Stored only; ignored. Summer time comes from the TZ rule (API echoes rbtime_tz_has_dst) */
 
         // === PERIODIC SYNCHRONIZATION ===
         uint32_t resync_interval_sec; /**< Resynchronization interval, s */
@@ -705,6 +705,12 @@ extern "C"
      * @return true if valid.
      */
     bool rbtime_timezone_is_valid(const char *timezone);
+
+    /** @brief True when a POSIX TZ rule carries a summer-time part (e.g. "CET-1CEST,M3.5.0,M10.5.0/3"). */
+    bool rbtime_tz_has_dst(const char *timezone);
+
+    /** @brief time_src text for a time quality: "none" (tq 0), "sntp" or "manual" (who set the clock last). */
+    const char *rbtime_clock_source_str(uint8_t tq);
 
     /**
      * @brief Epoch of the last detected SNTP clock step larger than 2 s.

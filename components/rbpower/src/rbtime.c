@@ -87,6 +87,10 @@ typedef struct {
 /** Global time system context */
 static rbtime_context_t g_time_ctx = {0};
 
+/* Who set the wall clock last: SNTP or a hand-set time (app "sync from this browser", POST time).
+ * Drives time_src and lets a hand-set clock report a quality (it used to read tq 0 / "none" forever). */
+static rbtime_source_t s_clock_setter = RBTIME_SOURCE_NONE;
+
 /* ================================================================================================
  * PRIVATE FUNCTIONS - UTILITIES
  * ================================================================================================ */
@@ -164,6 +168,20 @@ static bool rbtime_tz_is_valid(const char *tz)
  * storing it — "<UTC+9>" (name, no offset) used to be persisted and silently ran the device in UTC. */
 bool rbtime_timezone_is_valid(const char *tz) { return rbtime_tz_is_valid(tz); }
 
+/* Does a POSIX TZ rule carry a summer-time part? "CET-1CEST,M3.5.0,M10.5.0/3" → true, "CST-8" / "<+09>-9"
+ * / "UTC0" → false. Pure parse: std name (letters or <...>), std offset ([+-]hh[:mm[:ss]]), then any
+ * further name means DST. Summer time on the hub comes from this rule alone. */
+bool rbtime_tz_has_dst(const char *tz)
+{
+    if (tz == NULL) return false;
+    const char *p = tz;
+    if (*p == '<') { while (*p && *p != '>') p++; if (*p) p++; }
+    else { while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) p++; }
+    if (*p == '+' || *p == '-') p++;
+    while ((*p >= '0' && *p <= '9') || *p == ':') p++;
+    return (*p == '<') || (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z');
+}
+
 /* Validate time configuration */
 static rbpower_err_t rbtime_validate_config(const rbtime_config_t *config)
 {
@@ -212,13 +230,23 @@ static rbpower_err_t rbtime_validate_config(const rbtime_config_t *config)
 uint8_t rbtime_quality(uint32_t *sync_age_s_out)
 {
     uint64_t last_us = g_time_ctx.stats.last_sync_timestamp_us;
-    if (g_time_ctx.stats.successful_syncs == 0 || last_us == 0) {
+    /* a hand-set clock counts like a sync from the moment it was set (same 24 h holdover rule) */
+    bool set = (g_time_ctx.stats.successful_syncs > 0) || (s_clock_setter == RBTIME_SOURCE_MANUAL);
+    if (!set || last_us == 0) {
         if (sync_age_s_out) *sync_age_s_out = 0;
         return 0;
     }
     uint32_t age_s = (uint32_t)((esp_timer_get_time() - last_us) / 1000000ULL);
     if (sync_age_s_out) *sync_age_s_out = age_s;
     return (age_s <= 86400u) ? 1 : 2;
+}
+
+/* time_src for the telemetry frame and schema.time_quality: "none" while tq is 0, otherwise who set
+ * the clock last — "sntp" or "manual" (app "sync from this browser" / a POSTed time). */
+const char *rbtime_clock_source_str(uint8_t tq)
+{
+    if (tq == 0) return "none";
+    return (s_clock_setter == RBTIME_SOURCE_MANUAL) ? "manual" : "sntp";
 }
 
 /* ================================================================================================
@@ -265,6 +293,7 @@ static void rbtime_sntp_notification_cb(struct timeval *tv)
     g_time_ctx.stats.last_sync_timestamp_us = esp_timer_get_time();
     g_time_ctx.stats.active_source = RBTIME_SOURCE_SNTP;
     g_time_ctx.stats.sntp_responses_received++;
+    s_clock_setter = RBTIME_SOURCE_SNTP;
 
     // Update status
     rbtime_set_status(RBTIME_STATUS_SYNCED);
@@ -407,6 +436,7 @@ static rbpower_err_t rbtime_force_sntp_sync(uint32_t timeout_ms)
             g_time_ctx.stats.successful_syncs++;
             g_time_ctx.stats.last_sync_timestamp_us = esp_timer_get_time();
             g_time_ctx.stats.active_source = RBTIME_SOURCE_SNTP;
+            s_clock_setter = RBTIME_SOURCE_SNTP;
             return RBPOWER_OK;
         }
 
@@ -982,6 +1012,7 @@ rbpower_err_t rbtime_set_manual_time(uint64_t unix_timestamp_sec)
     g_time_ctx.last_manual_time_us = unix_timestamp_sec * 1000000ULL;
 
     g_time_ctx.active_source = RBTIME_SOURCE_MANUAL;
+    s_clock_setter = RBTIME_SOURCE_MANUAL;
     rbtime_set_status(RBTIME_STATUS_SYNCED);
 
     rbtime_unlock();

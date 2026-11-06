@@ -1924,10 +1924,14 @@ int rbgrid_config_set_time_advanced(rbgrid_config_handle_t config,
     
     // Advanced parameters
     if (sync_interval_sec > 0) {
+        /* clamp to rbtime_validate_config's range: a stored value outside it made rbtime_init fail,
+         * leaving the hub with no clock (older firmware saved any value) */
+        if (sync_interval_sec < 60) sync_interval_sec = 60;
+        if (sync_interval_sec > 86400) sync_interval_sec = 86400;
         ctx->hardware_config->time_config.resync_interval_sec = sync_interval_sec;
     }
     
-    if (timeout_ms > 0 && timeout_ms <= 60000) {  // at most 60 s
+    if (timeout_ms >= 1000 && timeout_ms <= 60000) {  // 1..60 s (rbtime_validate_config's range)
         ctx->hardware_config->time_config.sntp_timeout_ms = timeout_ms;
     }
     
