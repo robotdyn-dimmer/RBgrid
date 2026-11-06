@@ -123,6 +123,15 @@ static void rbtime_set_status(rbtime_status_t new_status)
 {
     rbtime_status_t old_status = g_time_ctx.status;
 
+    /* A hand-set clock (app "sync from this browser") stays SYNCED until NTP takes over: the SNTP attempt
+     * that follows it, and the 30 s retries on a hub with no NTP, used to flip the status to SYNCING/TIMEOUT,
+     * so the Time panel read "not synchronized" right after the user set the clock. */
+    if (s_clock_setter == RBTIME_SOURCE_MANUAL && old_status == RBTIME_STATUS_SYNCED &&
+        (new_status == RBTIME_STATUS_SYNCING || new_status == RBTIME_STATUS_TIMEOUT ||
+         new_status == RBTIME_STATUS_ERROR || new_status == RBTIME_STATUS_FALLBACK)) {
+        return;
+    }
+
     if (old_status != new_status) {
         g_time_ctx.status = new_status;
         // IMPORTANT: Update status in statistics as well
@@ -817,13 +826,12 @@ rbpower_err_t rbtime_get_statistics(rbtime_statistics_t *stats)
         return RBPOWER_ERR_NOT_INIT;
     }
 
-    if (!rbtime_lock(100)) {
-        return RBPOWER_ERR_TIMEOUT;
-    }
-
+    /* The sync task holds the lock through a whole SNTP attempt (up to sntp_timeout_ms, every 30 s on a hub
+     * with no NTP), so GET /api/system/time-sync answered 500 about a third of the time there. A read-only
+     * snapshot without the lock is fine for a status display. */
+    bool locked = rbtime_lock(100);
     memcpy(stats, &g_time_ctx.stats, sizeof(rbtime_statistics_t));
-
-    rbtime_unlock();
+    if (locked) rbtime_unlock();
     return RBPOWER_OK;
 }
 
@@ -837,13 +845,9 @@ rbpower_err_t rbtime_get_config(rbtime_config_t *config)
         return RBPOWER_ERR_NOT_INIT;
     }
 
-    if (!rbtime_lock(100)) {
-        return RBPOWER_ERR_TIMEOUT;
-    }
-
+    bool locked = rbtime_lock(100);   /* snapshot even while an SNTP attempt holds the lock (see get_statistics) */
     memcpy(config, &g_time_ctx.config, sizeof(rbtime_config_t));
-
-    rbtime_unlock();
+    if (locked) rbtime_unlock();
     return RBPOWER_OK;
 }
 
@@ -1012,6 +1016,7 @@ rbpower_err_t rbtime_set_manual_time(uint64_t unix_timestamp_sec)
     g_time_ctx.last_manual_time_us = unix_timestamp_sec * 1000000ULL;
 
     g_time_ctx.active_source = RBTIME_SOURCE_MANUAL;
+    g_time_ctx.stats.active_source = RBTIME_SOURCE_MANUAL;   /* the Time panel shows this one */
     s_clock_setter = RBTIME_SOURCE_MANUAL;
     rbtime_set_status(RBTIME_STATUS_SYNCED);
 

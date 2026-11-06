@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.6 — unreleased
+## v1.1.6 — 2026-11-06
 
 ### Three-phase input metered per phase
 - **History and economics of the whole input:** `GET /api/v1/history?unit=input&…` and
@@ -26,6 +26,12 @@
 - **Clock set by hand:** after "sync from this browser" (or a POSTed time) the hub reported `tq: 0`,
   `time_src: "none"` until an NTP sync. It now reports `tq: 1` and `time_src: "manual"` (2 after 24 h, as
   for NTP), in the live frame and in `schema.time_quality`. `time_src` is `none`, `sntp` or `manual`.
+- **Clock set by hand on a hub without NTP, in the app:** right after "sync from this browser" the hub
+  tried NTP; when that failed, **Settings → Time** showed "not synchronized" with source `NONE`, and the
+  setup wizard's last step waited for a synchronized clock. A hand-set clock now stays synchronized
+  (source `MANUAL`) until NTP takes over.
+- **Settings → Time failed to load now and then on a hub without NTP:** about one request in three
+  answered 500 while the hub was retrying NTP. It now always answers.
 - **`enable_dst`** in the time settings did nothing: summer time comes from the time-zone rule alone. The
   field is now read-only: it shows `true` when the hub's time-zone rule has summer time; a value written to
   it is ignored.
