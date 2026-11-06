@@ -2671,9 +2671,18 @@ static int feed_split(rbpower_unit_id_t unit_id, uint8_t module, uint8_t ch)
     uint8_t nk = 0;
     for (uint8_t e = 0; e < cm->entry_count && e < RBAMP_MAX_ENTRIES; ++e)
         if (cm->entries[e].source == RBAMP_ENTRY_VOLTAGE && nk < RBAMP_MAX_ENTRIES) s_group_pending.e[nk++] = cm->entries[e];
-    for (uint8_t c = 0; c < s_nc[module] && c < RBAMP_MAX_CHANNELS && nk < RBAMP_MAX_ENTRIES; ++c)
+    for (uint8_t c = 0; c < s_nc[module] && c < RBAMP_MAX_CHANNELS && nk < RBAMP_MAX_ENTRIES; ++c) {
+        /* a point already bound to this channel (the user pressed "split" again while a split waited for the reboot,
+         * which cancelled the pending layout that held its binding) keeps it — else it would not come back after the
+         * reboot */
+        rbpower_unit_id_t keep = 0;
+        if (c != ch) {
+            rbpower_unit_id_t b = rbpower_home_find_unit_by_source(RBPOWER_SOURCE_I2C_SENSOR, module, c, RBPOWER_HOME_INVALID_ID);
+            if (b != RBPOWER_HOME_INVALID_ID) keep = b;
+        }
         s_group_pending.e[nk++] = (rbamp_entry_cfg_t){ .source = c, .ct_code = ct,
-                                                       .unit_id = (uint16_t)(c == ch ? unit_id : 0), .ct_user = 0 };
+                                                       .unit_id = (uint16_t)(c == ch ? unit_id : keep), .ct_user = 0 };
+    }
     s_group_pending.n = nk; s_group_pending.module = module; s_group_pending.unit = (uint16_t)unit_id; s_group_pending.valid = true;
     esp_err_t se = save_cfg();
     const rbpower_unit_definition_t *d = rbpower_home_get_unit_definition(unit_id);
