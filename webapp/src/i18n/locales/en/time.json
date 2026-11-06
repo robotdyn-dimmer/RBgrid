@@ -47,5 +47,13 @@
   "useBrowserTz": "Use it",
   "browserTzHint": "This browser's zone: {zone}.",
   "unsavedHint": "The zone isn't saved yet — press “Save”.",
-  "afterRebootHint": "NTP sync, the time source and the NTP server apply after a hub restart; the time zone applies at once."
+  "afterRebootHint": "NTP sync, the time source and the NTP server apply after a hub restart; the time zone applies at once.",
+  "tzSaoPaulo": "South America — São Paulo, Buenos Aires (UTC−3)",
+  "tzSantiago": "Chile — Santiago (UTC−4, summer UTC−3)",
+  "tzJohannesburg": "South Africa — Johannesburg (UTC+2)",
+  "tzPerth": "Western Australia — Perth (UTC+8)",
+  "tzAdelaide": "South Australia — Adelaide (UTC+9:30, summer UTC+10:30)",
+  "tzBrisbane": "Queensland — Brisbane (UTC+10)",
+  "tzSydney": "Eastern Australia — Sydney, Melbourne, Canberra, Hobart (UTC+10, summer UTC+11)",
+  "tzAuckland": "New Zealand — Auckland, Wellington (UTC+12, summer UTC+13)"
 }

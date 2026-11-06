@@ -1819,6 +1819,7 @@ esp_err_t rbwebserver_api_unit_mutate_handler(httpd_req_t *req)
 
     int rc;
     bool group_phases = false;   /* rebind ch 254: three-phase grouping, applies after a reboot */
+    bool split_phases = false;   /* rebind of a phase-group point to one channel: split per phase, applies after a reboot */
     char body[400];
     if (nmatch == 1) {
         /* PARAMS PATCH — {name?, short_name?, phase?, rated_power_w?, max_current_a?, role?,
@@ -1983,6 +1984,15 @@ esp_err_t rbwebserver_api_unit_mutate_handler(httpd_req_t *req)
         /* ch 254 = group a three-phase module (STD-U3I3) as ONE input: only for the bridge-fed main input; the new
          * fleet layout is saved and applies after a reboot (requires_reboot:true in the reply) */
         group_phases = cJSON_IsNumber(jc) && jc->valueint == 254;
+        {   /* a point on a phase group (L1–L3) moved to one channel splits the module into one point per phase:
+             * saved now, applies after a reboot (requires_reboot:true, grouped:false) */
+            uint8_t fm = 0xFF, fs = 0;
+            const rbpower_unit_definition_t* od = rbpower_home_get_unit_definition(uid);
+            bool on_group = (rbpower_get_unit_rbamp_feed(uid, &fm, &fs) && fs == 254) ||
+                            (od && od->sources_count > 0 && od->sources[0].source_type == RBPOWER_SOURCE_I2C_SENSOR &&
+                             od->channel_idx == 254);
+            split_phases = on_group && !group_phases && jc->valueint < 254;
+        }
         rc = rbgrid_config_rebind_unit(uid, (uint8_t)jm->valueint, (uint8_t)jc->valueint);
         cJSON_Delete(root);
         if (rc == RBGRID_CONFIG_ERR_DUPLICATE_SENSOR) {
@@ -2037,7 +2047,8 @@ esp_err_t rbwebserver_api_unit_mutate_handler(httpd_req_t *req)
     snprintf(body, sizeof(body),
              "{\"status\":\"ok\",\"unit_id\":\"%04X\",\"point\":\"%s\",\"module\":%d,\"ch\":%u,\"persist\":\"%s\"%s}",
              uid, d ? d->point : "", d ? (int)d->device_uid : -1, d ? d->channel_idx : 0,
-             esp_err_to_name(su), group_phases ? ",\"grouped\":true,\"requires_reboot\":true" : "");
+             esp_err_to_name(su), group_phases ? ",\"grouped\":true,\"requires_reboot\":true"
+                                  : split_phases ? ",\"grouped\":false,\"requires_reboot\":true" : "");
     httpd_resp_sendstr(req, body);
     ESP_LOGW(TAG, "POST %s → ok (unit 0x%04X)", req->uri, uid);
     rbgrid_ha_discovery_request();   /* rename → HA device/entity names follow; rebind → harmless refresh */

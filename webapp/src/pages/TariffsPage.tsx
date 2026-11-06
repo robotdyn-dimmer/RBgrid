@@ -145,7 +145,8 @@ export const TariffsPage: React.FC = () => {
     const sell = list[0].zones.find((z) => z.rate_selling_per_kwh != null)?.rate_selling_per_kwh ?? list[0].default_selling_rate_per_kwh;
     const zones = [...list[0].zones, {
       zone_id: id, zone_name: tCode('zone', id), rate_buying_per_kwh: list[0].zones[0]?.rate_buying_per_kwh ?? 0, is_enabled: !!gap,
-      ...(sell != null ? { rate_selling_per_kwh: sell } : {}),
+      // Never left out: an unsent price is derived (net metering on) or kept from the slot's old zone (off).
+      rate_selling_per_kwh: sell ?? 0,
       conditions: [
         { condition_type: 'TIME_RANGE' as const, is_active: true, priority: 10, params: gap ? tr(gap.start, gap.end) : tr(0, 60) },
         ...(gap && gap.days !== ALL_DAYS ? [{ condition_type: 'WEEKDAY' as const, is_active: true, priority: 5, params: { weekday_mask: gap.days } }] : []),
@@ -171,8 +172,15 @@ export const TariffsPage: React.FC = () => {
     return { ...e, data: { ...e.data, list } };
   });
   const removeZone = async (i: number) => {
-    const z = env?.data?.list?.[0]?.zones[i];
-    if (!z || !(await confirm({ title: t('tariffs.removeZoneTitle', { name: zoneDisplayName(z.zone_id, z.zone_name) }), body: t('tariffs.removeZoneBody'), confirmLabel: t('common.delete'), danger: true }))) return;
+    const p0 = env?.data?.list?.[0];
+    const z = p0?.zones[i];
+    if (!z) return;
+    // Where the removed zone's hours go: another zone, else the plan's default zone (REVIEW-pass2).
+    const def = p0?.default_zone_id != null ? p0.zones.find((x) => String(x.zone_id) === String(p0.default_zone_id)) : undefined;
+    const body = !def ? t('tariffs.removeZoneBody')
+      : def === z ? t('tariffs.removeZoneBodyDefault')
+        : t('tariffs.removeZoneBodyToDefault', { zone: zoneDisplayName(def.zone_id, def.zone_name) });
+    if (!(await confirm({ title: t('tariffs.removeZoneTitle', { name: zoneDisplayName(z.zone_id, z.zone_name) }), body, confirmLabel: t('common.delete'), danger: true }))) return;
     setEnv((e) => {
       if (!e) return e;
       const list = [...e.data.list];
@@ -300,6 +308,11 @@ export const TariffsPage: React.FC = () => {
                 <HelpTip topic="netMetering" />
               </Stack>
             </Grid>
+            {!plan.net_metering_enabled && (plan.zones ?? []).some((z) => z.is_enabled && (z.rate_selling_per_kwh ?? 0) > 0) && (
+              <Grid item xs={12}>
+                <Typography variant="caption" color="text.secondary">{t('tariffs.sellWithoutNm')}</Typography>
+              </Grid>
+            )}
             {plan.net_metering_enabled && (
               <>
                 {/* The hub prices an export by the zone's own selling price; only a zone WITHOUT one uses
@@ -414,16 +427,17 @@ export const TariffsPage: React.FC = () => {
                 label={t('tariffs.rate', { cur: plan.currency_code ?? '' })} value={z.rate_buying_per_kwh} min={0} max={1000} decimals={rateDecimals}
                 onChange={(v, e) => { setErr(`rate${i}`, e); if (v !== null) updateZone(i, { rate_buying_per_kwh: v }); }}
               />
-              {plan.net_metering_enabled && z.rate_selling_per_kwh !== undefined && (
-                <Stack direction="row" spacing={1.5} sx={{ mt: 1.5 }}>
-                  <DecimalField
-                    label={t('tariffs.sellRate', { cur: plan.currency_code ?? '' })} value={z.rate_selling_per_kwh} min={0} max={1000} decimals={rateDecimals}
-                    onChange={(v, e) => { setErr(`sell${i}`, e); if (v !== null) updateZone(i, { rate_selling_per_kwh: v }); }}
-                  />
-                  {/* The per-zone credit ratio isn't shown: the v1.1.x hub settles net metering by the
-                      plan-wide ratio only (root 02.11) — the value is still echoed on a save. */}
-                </Stack>
-              )}
+              {/* On every zone, whatever the net-metering toggle: the hub values exports at it with net metering
+                  off too (root via content 04.11 / 06.11) — an export-only tariff (SEG) sets it here and leaves
+                  net metering off (content sellprice-gated-on-netmetering). The hub always reports it. */}
+              <Stack direction="row" spacing={1.5} sx={{ mt: 1.5 }}>
+                <DecimalField
+                  label={t('tariffs.sellRate', { cur: plan.currency_code ?? '' })} value={z.rate_selling_per_kwh} min={0} max={1000} decimals={rateDecimals} required={false}
+                  onChange={(v, e) => { setErr(`sell${i}`, e); if (v !== null) updateZone(i, { rate_selling_per_kwh: v }); }}
+                />
+                {/* The per-zone credit ratio isn't shown: the v1.1.x hub settles net metering by the
+                    plan-wide ratio only (root 02.11) — the value is still echoed on a save. */}
+              </Stack>
               <Box sx={{ mt: 1.5 }}>
                 <FormField
                   label={t('tariffs.zoneType')}

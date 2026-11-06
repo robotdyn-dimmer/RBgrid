@@ -1067,9 +1067,18 @@ export class RBGridApiClient {
    * hub's 4xx (409 SENSOR_BOUND, 400 NOT_PHASE_MODULE) come back as {status:"error",code,message}.
    */
   async rebindInputGroup(inputHex: string, module: number, options?: APIRequestOptions): Promise<UnitRebindResult> {
+    return this.rebindUnit(inputHex, module, 254, options);
+  }
+
+  /**
+   * Move a point to another channel of a module (fw 1.1.5, root u3i3-per-phase-points): ch 0..2 splits
+   * a grouped input — the point keeps that phase, the others turn into free sensors; ch 254 groups it
+   * back. Always `requires_reboot`.
+   */
+  async rebindUnit(hexId: string, module: number, ch: number, options?: APIRequestOptions): Promise<UnitRebindResult> {
     try {
       const response = await this.client.post<UnitRebindResult>(
-        `${API_ENDPOINTS.UNITS}/${inputHex}/rebind`, { module, ch: 254 }, { ...options });
+        `${API_ENDPOINTS.UNITS}/${hexId}/rebind`, { module, ch }, { ...options });
       return { ...response.data, status: 'ok' };
     } catch (err) {
       if (err instanceof ApiRequestError && err.status !== undefined && err.status < 500

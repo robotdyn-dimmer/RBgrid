@@ -84,8 +84,12 @@ export const ctRatingOf = (s: SensorListEntry | null | undefined, models: Record
   typeof s?.ct_rated_a === 'number' && s.ct_rated_a > 0 ? s.ct_rated_a : ctRatingA(s?.ct_code, models);
 
 /** A channel's accurate range: from the hub's clipping start when it gives it (ct_fs_a; the hub warns
- *  at ≥ 90 % of it), else from the rating by class (ctRange). */
-export function channelRange(s: SensorListEntry | null | undefined, ratingA: number, cls: SensorClass): { lo: number; hi: number } {
-  const r = ctRange(ratingA, cls);
-  return typeof s?.ct_fs_a === 'number' && s.ct_fs_a > 0 ? { lo: r.lo, hi: s.ct_fs_a * 0.9 } : r;
+ *  at ≥ 90 % of it); null when the hub gives no clip figure. */
+export function channelRange(s: SensorListEntry | null | undefined, ratingA: number, cls: SensorClass): { lo: number; hi: number } | null {
+  // The upper bound is the hub's own: `ct_fs_a`, where clipping starts (SCT-013 ≈ +16 % over nominal,
+  // the 2000:1 clamps ≈ +25 %; rbAmp sensor registry, root 04.11). No hub figure (STD factory sensors,
+  // an unknown model) → no range and no breaker warning. The old app-side «90 % of nominal» is gone:
+  // the sensors read correctly up to and past nominal (operator 04.11).
+  if (!(typeof s?.ct_fs_a === 'number' && s.ct_fs_a > 0)) return null;
+  return { lo: ctRange(ratingA, cls).lo, hi: s.ct_fs_a };
 }

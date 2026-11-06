@@ -1307,6 +1307,19 @@ int rbgrid_config_rebind_unit(rbpower_unit_id_t unit_id, uint8_t module, uint8_t
          * free fleet sensor here. */
         return RBGRID_CONFIG_ERR_INVALID_PARAM;
     }
+    if (def->channel_idx == RBAMP_ENTRY_PHASES && def->device_uid == module) {
+        /* a point bound to a module's phase group (L1–L3) moves to one channel: the module is split into one entry per
+         * phase (the bridge saves it for the next boot, r == 1); the point keeps id/point/history on channel ch */
+        if (rbpower_home_find_unit_by_source(RBPOWER_SOURCE_I2C_SENSOR, module, ch, unit_id) != RBPOWER_HOME_INVALID_ID)
+            return RBGRID_CONFIG_ERR_DUPLICATE_SENSOR;
+        int r = rbpower_unit_feed_rebind(unit_id, module, ch);
+        if (r == -2) return RBGRID_CONFIG_ERR_DUPLICATE_SENSOR;
+        if (r != 1) return RBGRID_CONFIG_ERR_INVALID_PARAM;
+        rbpower_data_source_t src = def->sources[0];
+        src.source_id = ch;
+        rbpower_err_t rc = rbpower_home_rebind_unit_source(unit_id, &src, module, ch, def->max_current_a);
+        return (rc == RBPOWER_OK) ? RBGRID_CONFIG_OK : RBGRID_CONFIG_ERR_INVALID_PARAM;
+    }
     if (def->device_uid == module && def->channel_idx == ch) {
         return RBGRID_CONFIG_OK;   /* no-op rebind to the same sensor */
     }

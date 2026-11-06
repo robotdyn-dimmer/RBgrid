@@ -1379,6 +1379,55 @@ esp_err_t rbgrid_storage_save_tariffs(const char *json_str)
     return ret;
 }
 
+/* True when @p root is the "Builder Plan <region>"/"Custom Provider" file that firmware before 1.1.5
+ * seeded on first boot. That plan never became live (the engine init replaced it), so it is not
+ * the user's plan. */
+static bool tariffs_file_is_old_seed(const cJSON *root)
+{
+    const cJSON *data = cJSON_GetObjectItemCaseSensitive(root, "data");
+    const cJSON *list = cJSON_GetObjectItemCaseSensitive(data ? data : root, "list");
+    const cJSON *plan = cJSON_IsArray(list) ? cJSON_GetArrayItem(list, 0) : NULL;
+    if (!plan) return false;
+    const cJSON *pn = cJSON_GetObjectItemCaseSensitive(plan, "plan_name");
+    const cJSON *pv = cJSON_GetObjectItemCaseSensitive(plan, "provider_name");
+    return cJSON_IsString(pn) && cJSON_IsString(pv) &&
+           strncmp(pn->valuestring, "Builder Plan ", 13) == 0 &&
+           strcmp(pv->valuestring, "Custom Provider") == 0;
+}
+
+/* Apply the saved tariff plan after the engine init (documented in rbgrid_config_storage.h). */
+esp_err_t rbgrid_storage_reapply_tariffs(void)
+{
+    if (!external_flash_is_config_mounted()) return ESP_ERR_INVALID_STATE;
+    if (!littlefs_raw_exists(CONFIG_FILE_TARIFFS)) return ESP_ERR_NOT_FOUND;
+
+    char *buffer = malloc(CONFIG_COMPACT_SIZE);
+    if (!buffer) return ESP_ERR_NO_MEM;
+    size_t n = 0;
+    esp_err_t ret = littlefs_raw_read(CONFIG_FILE_TARIFFS, buffer, CONFIG_COMPACT_SIZE - 1, &n);
+    if (ret != ESP_OK) { free(buffer); return ret; }
+    buffer[n] = '\0';
+
+    cJSON *root = cJSON_Parse(buffer);
+    bool seed = root && tariffs_file_is_old_seed(root);
+    cJSON_Delete(root);
+    if (seed) {
+        ESP_LOGI(TAG, "%s holds the pre-1.1.5 firmware seed, not a user plan: placeholder kept",
+                 CONFIG_FILE_TARIFFS);
+        free(buffer);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    rbgrid_json_err_t jr = rbgrid_json_parse_tariff_plan_config(buffer);
+    free(buffer);
+    if (jr != RBGRID_JSON_OK) {
+        ESP_LOGE(TAG, "Saved tariff plan did not parse (%d): placeholder kept", (int)jr);
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Saved tariff plan applied from %s (%zu bytes)", CONFIG_FILE_TARIFFS, n);
+    return ESP_OK;
+}
+
 /* Load tariffs configuration from external Flash and apply it (documented in rbgrid_config_storage.h). */
 esp_err_t rbgrid_storage_load_tariffs(rbgrid_config_handle_t config_handle)
 {

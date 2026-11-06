@@ -3207,89 +3207,12 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "=== End of units configuration load test ===");
 */
  
-    // Test loading tariff configuration from Flash
-    ESP_LOGI(TAG, "=====================================");
-    ESP_LOGI(TAG, "Testing tariff loading from Flash...");
-    ESP_LOGI(TAG, "=====================================");
-/*
-    // Try to load tariff configuration from saved file
-    esp_err_t load_err = rbgrid_storage_load_tariffs(config_handle);
-    if (load_err == ESP_OK) {
-        ESP_LOGI(TAG, "✅ Tariff configuration loaded from Flash successfully");
-    } else if (load_err == ESP_ERR_NOT_FOUND) {
-        ESP_LOGW(TAG, "⚠️ No saved tariff configuration found in Flash");
-        ESP_LOGI(TAG, "Please configure tariff via web interface and save it first");
-    } else 
-    {
-        ESP_LOGE(TAG, "❌ Failed to load tariff configuration: %s", esp_err_to_name(load_err));
-*/       
-    // === TARIFF: load-or-default-and-save ===
-    // If the configurator (web app) saved a plan, LOAD + apply it. Otherwise build the hardcoded
-    // default plan AND persist it to /tariffs.json so it survives reboot + becomes the editable
-    // base. (Same pattern as system-config above and /rbamp.json.) The hardcode is only the seed
-    // until saved data exists.
-    bool tariffs_loaded = false;
-    if (littlefs_raw_exists("/tariffs.json")) {
-        esp_err_t lt = rbgrid_storage_load_tariffs(config_handle);
-        if (lt == ESP_OK) {
-            ESP_LOGI(TAG, "✅ Tariff plan LOADED from flash (/tariffs.json)");
-            tariffs_loaded = true;
-        } else {
-            ESP_LOGW(TAG, "Tariff load failed (%s) — building default plan", esp_err_to_name(lt));
-        }
-    }
-    if (!tariffs_loaded) {
-            ESP_LOGI(TAG, "=== Configuring DEFAULT tariff plan (no saved config) ===");
-        
-        // Create tariff builder for Germany
-        rbgrid_tariff_builder_t tariff_builder = rbgrid_tariff_builder_create("EUR", "DE");
-        if (!tariff_builder) {
-            ESP_LOGE(TAG, "Failed to create tariff builder");
-        } else {
-            // Basic tariff zones (EUR/kWh)
-            rbgrid_tariff_builder_add_time_zone(tariff_builder, "Night", 0.08f, "23:00-07:00");
-            rbgrid_tariff_builder_add_time_zone(tariff_builder, "Day", 0.15f, "07:00-18:00");
-            rbgrid_tariff_builder_add_time_zone(tariff_builder, "Peak", 0.25f, "18:00-23:00");
-            
-            // Weekend days (Saturday=0x40, Sunday=0x01)
-            rbgrid_tariff_builder_add_weekday_zone(tariff_builder, "WEEKEND", 0.09f, 0x41);
-            
-            // German holidays
-            //rbgrid_tariff_builder_set_country_holidays(tariff_builder, "DE", 0.085f);
-            
-            // Monthly fee and grid fee
-            rbgrid_tariff_builder_set_monthly_fee(tariff_builder, 15.0f);
-            rbgrid_tariff_builder_add_custom_fee(tariff_builder, "Grid Fee", 8.5f, RBPOWER_TARIFF_FIXED_MONTHLY);
-            
-            // Net metering for solar panels
-            config_err = rbgrid_tariff_builder_set_net_metering(tariff_builder, 0.12f, 0.7f);
-            if (config_err != RBGRID_CONFIG_OK) {
-                ESP_LOGE(TAG, "Failed to set net metering: %d", config_err);
-            } else {
-                ESP_LOGI(TAG, "Net metering set: calculated rate mode, ratio 0.7");
-            }
-
-            // Apply tariff plan
-            config_err = rbgrid_config_apply_tariff_plan(config_handle, tariff_builder);
-            if (config_err != RBGRID_CONFIG_OK) {
-                ESP_LOGE(TAG, "Failed to apply tariff plan: %d", config_err);
-            } else {
-                ESP_LOGI(TAG, "✅ Default tariff plan applied");
-                // Persist the default so the NEXT boot LOADS it (and the web app edits from it).
-                char* tjson = rbgrid_json_create_rbpower_tariff_plan_config(g_json_ctx);
-                if (tjson) {
-                    esp_err_t st = rbgrid_storage_save_tariffs(tjson);
-                    ESP_LOGI(TAG, "Default tariff plan persisted to /tariffs.json: %s", esp_err_to_name(st));
-                    free(tjson);
-                } else {
-                    ESP_LOGW(TAG, "Could not serialize default tariff plan for persist");
-                }
-            }
-
-            // Clear builder
-            rbgrid_tariff_builder_destroy(tariff_builder);
-        }
-    }   // end if (!tariffs_loaded) — default tariff built + persisted
+    // === TARIFF PLAN ===
+    // The saved plan (/tariffs.json) is applied AFTER rbpower_init_extended(): the tariff engine
+    // init installs the built-in placeholder plan, so a plan loaded here was overwritten on every
+    // boot (fixed in 1.1.5). The old builder-based load here also dropped the plan name, zone types
+    // and weekday masks, and seeded a "Builder Plan DE" file that never became live. Both removed;
+    // see rbgrid_storage_reapply_tariffs() after rbpower_init_extended() below.
 
     // Or configure individually (commented for example):
     // Basic telemetry settings
@@ -3393,6 +3316,13 @@ extern "C" void app_main(void) {
     if (power_err != RBPOWER_OK) {
         ESP_LOGE("MAIN", "Failed to initialize extended rbpower: %d", power_err);
         ESP_LOGW("MAIN", "Continuing with limited functionality");
+    }
+
+    // Saved tariff plan: applied now that the tariff engine is initialized (its init installs the
+    // placeholder plan). Same parser as a live POST /api/system/tariff-plan-config.
+    {
+        esp_err_t tr = rbgrid_storage_reapply_tariffs();
+        ESP_LOGI("MAIN", "Saved tariff plan: %s", tr == ESP_OK ? "applied" : esp_err_to_name(tr));
     }
 
     // Persist the DEFAULT sensor+unit config on FIRST boot (no saved files) so it reloads next boot

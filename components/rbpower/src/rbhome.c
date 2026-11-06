@@ -267,6 +267,17 @@ static void calculate_final_statistics(uint8_t unit_id, const rbpower_period_acc
  * @param unit_id Unit ID (16 bit)
  * @return Array index or 0xFF if not found
  */
+/** Effective sensor orientation of a unit. Installation rule (operator 2026-11-04): a sensor's arrow always
+ * points from the source to the consumer. For loads and supplies that is "into the point" = the hub's P > 0
+ * convention; for a Generation point (RENEWABLE_SOURCE) the arrow points FROM the inverter, so its production
+ * arrives as P > 0 and must be flipped to the hub's "out of the point" (P < 0, Energy Out). invert_sign remains
+ * the per-install exception (a sensor fitted the other way) — the two combine by XOR. */
+static inline bool unit_orientation_inverted(const rbpower_unit_definition_t *d)
+{
+    bool by_role = (d->role == RBPOWER_ROLE_RENEWABLE_SOURCE);
+    return by_role != (bool)d->sources[0].invert_sign;
+}
+
 uint8_t find_unit_index_by_id(rbpower_unit_id_t unit_id) {
     for (uint8_t i = 0; i < RBPOWER_MAX_HOME_UNITS; i++) {
         if (g_unit_id_map[i].is_valid && g_unit_id_map[i].unit_id == unit_id) {
@@ -680,16 +691,17 @@ static void assign_system_units_by_type_and_role(void) {
             ESP_LOGI("RBHOME", "Assigned Voltage Bus: unit_id=0x%04X", def->unit_id);
         }
         
-        // Main Supply  
+        // Main Supply — the FIRST one: a three-phase input split per phase has one supply point per phase; the first
+        // (the input that was there before the split) stays the system's main, the others add to the system totals
         if (def->type == RBPOWER_METRIC_CURRENT_LOAD && 
-            def->role == RBPOWER_ROLE_MAIN_SUPPLY) {
+            def->role == RBPOWER_ROLE_MAIN_SUPPLY && g_home_network.system.main_supply_unit_id == 0) {
             g_home_network.system.main_supply_unit_id = def->unit_id;
             ESP_LOGI("RBHOME", "Assigned Main Supply: unit_id=0x%04X", def->unit_id);
         }
         
         // Alternative Supply
         if (def->type == RBPOWER_METRIC_CURRENT_LOAD && 
-            def->role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY) {
+            def->role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY && g_home_network.system.alternative_supply_unit_id == 0) {
             g_home_network.system.alternative_supply_unit_id = def->unit_id;
             ESP_LOGI("RBHOME", "Assigned Alternative Supply: unit_id=0x%04X", def->unit_id);
         }
@@ -2801,6 +2813,33 @@ rbpower_err_t rbpower_home_remove_unit(rbpower_unit_id_t unit_id)
     }
 
     rbpower_home_lock();
+    {   /* A further supply point (one point per phase of a split three-phase input) carries its own lifetime totals,
+         * which the system totals add. Deleting it (e.g. to group the module again) must not make the system totals
+         * go down — HA reads any decrease of a total_increasing sensor as a meter reset — so fold them into the main
+         * (or alternative) supply's accumulator first. */
+        rbpower_home_unit_t* du = &g_home_network.units[idx];
+        rbpower_lifetime_accumulators_supply_t* into = NULL;
+        rbpower_diag_printf("unit 0x%04X removed: role=%d main=0x%04X has_main=%d ms=%p lifetime in=%.0f mWh", unit_id, (int)du->definition.role,
+                            g_home_network.system.main_supply_unit_id, (int)g_home_network.specialized.has_main_supply,
+                            g_home_network.specialized.main_supply, du->statistics.lifetime_accumulators.et_in_mwh);
+        if (du->definition.role == RBPOWER_ROLE_MAIN_SUPPLY && g_home_network.specialized.has_main_supply &&
+            g_home_network.specialized.main_supply && unit_id != g_home_network.system.main_supply_unit_id)
+            into = &((rbpower_main_supply_t*)g_home_network.specialized.main_supply)->lifetime_accumulators;
+        else if (du->definition.role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY && g_home_network.specialized.has_alternative_supply &&
+                 g_home_network.specialized.alternative_supply && unit_id != g_home_network.system.alternative_supply_unit_id)
+            into = &((rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply)->lifetime_accumulators;
+        if (into) {
+            const rbpower_lifetime_accumulators_basic_t* la = &du->statistics.lifetime_accumulators;
+            into->total_energy_consumed_wh += la->total_energy_consumed_wh; into->daily_energy_consumed_wh += la->daily_energy_consumed_wh;
+            into->total_energy_supplied_wh += la->total_energy_supplied_wh; into->daily_energy_supplied_wh += la->daily_energy_supplied_wh;
+            into->et_in_mwh  += la->et_in_mwh;  into->et_out_mwh += la->et_out_mwh;
+            into->total_cost_consumed += la->total_cost_consumed; into->daily_cost_consumed += la->daily_cost_consumed;
+            into->total_cost_supplied += la->total_cost_supplied; into->daily_cost_supplied += la->daily_cost_supplied;
+            ESP_LOGW("RBHOME", "unit 0x%04X (further supply point) deleted: its totals folded into the system supply (in %.3f Wh, out %.3f Wh)",
+                     unit_id, (double)la->et_in_mwh / 1000.0, (double)la->et_out_mwh / 1000.0);
+            (void)rbpower_lifetime_sync_to_rtc();
+        }
+    }
     /* Mark the unit removed — invalid + inactive + no hardware. The compute gate, the telemetry
      * serializer, and the units.json serializer all skip !has_valid_definition. */
     g_home_network.units[idx].has_valid_definition = false;
@@ -2978,7 +3017,7 @@ rbpower_err_t rbpower_home_inject_200ms(rbpower_unit_id_t unit_id,
      * quantities at the inject boundary so every downstream consumer (direction split, 3sec/15min
      * accumulation, energy in/out, billing) sees the corrected direction. Magnitudes (I, S, PF)
      * stay as-is; the consuming/supplying pair swaps. */
-    if (g_home_network.units[unit_index].definition.sources[0].invert_sign) {
+    if (unit_orientation_inverted(&g_home_network.units[unit_index].definition)) {
         tmp.average_200ms.power_active_avg_w     = -tmp.average_200ms.power_active_avg_w;
         tmp.average_200ms.power_reactive_avg_var = -tmp.average_200ms.power_reactive_avg_var;
         tmp.instant_power_net_w = -tmp.instant_power_net_w;
@@ -3484,7 +3523,7 @@ rbpower_err_t rbpower_home_set_phase_live(rbpower_unit_id_t unit_id,
          * "export" while the phases show "consumption"). Current stays a magnitude. */
         uint8_t ui = find_unit_index_by_id(unit_id);
         if (ui != 0xFF && ui < RBPOWER_MAX_HOME_UNITS && g_home_network.units[ui].has_valid_definition &&
-            g_home_network.units[ui].definition.sources[0].invert_sign) {
+            unit_orientation_inverted(&g_home_network.units[ui].definition)) {
             for (uint8_t k = 0; k < count; k++) {
                 slot->ph[k].p = -slot->ph[k].p;
                 if (!isnan(slot->ph[k].q)) slot->ph[k].q = -slot->ph[k].q;
@@ -3619,7 +3658,7 @@ rbpower_err_t rbpower_home_inject_period_result(rbpower_unit_id_t unit_id,
      * rule as inject_200ms: flip the signed power/energy of the finished period before it reaches
      * the period slot and rollup. max flips with the sign too (the envelope keeps its meaning as
      * "largest magnitude in the corrected direction"). */
-    if (g_home_network.units[unit_index].definition.sources[0].invert_sign) {
+    if (unit_orientation_inverted(&g_home_network.units[unit_index].definition)) {
         avg_power_w = -avg_power_w;
         max_power_w = -max_power_w;
         energy_wh   = -energy_wh;
@@ -3742,7 +3781,11 @@ rbpower_err_t rbpower_home_inject_period_result(rbpower_unit_id_t unit_id,
             s_et_diag[unit_index].feeds++;
             s_et_diag[unit_index].last_feed_ts = time(NULL);
         }
-        if (erole == RBPOWER_ROLE_MAIN_SUPPLY && g_home_network.specialized.has_main_supply) {
+        /* Only THE main/alt supply unit feeds the specialized accumulator (the lifetime module, costing and the
+         * telemetry all key on main_supply_unit_id / alternative_supply_unit_id). A further supply-role unit (one point
+         * per phase of a split three-phase input) keeps its own basic accumulator; the system totals add it. */
+        if (erole == RBPOWER_ROLE_MAIN_SUPPLY && g_home_network.specialized.has_main_supply &&
+            eu->definition.unit_id == g_home_network.system.main_supply_unit_id) {
             rbpower_main_supply_t* ms = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
             if (ms) {
                 if (energy_wh >= 0.0f) { ms->lifetime_accumulators.total_energy_consumed_wh += energy_wh;
@@ -3752,7 +3795,8 @@ rbpower_err_t rbpower_home_inject_period_result(rbpower_unit_id_t unit_id,
                        ms->lifetime_accumulators.daily_energy_supplied_wh += -energy_wh;
                        ms->lifetime_accumulators.et_out_mwh += -e_mwh; }
             }
-        } else if (erole == RBPOWER_ROLE_ALTERNATIVE_SUPPLY && g_home_network.specialized.has_alternative_supply) {
+        } else if (erole == RBPOWER_ROLE_ALTERNATIVE_SUPPLY && g_home_network.specialized.has_alternative_supply &&
+                   eu->definition.unit_id == g_home_network.system.alternative_supply_unit_id) {
             rbpower_alternative_supply_t* as = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
             if (as) {
                 if (energy_wh >= 0.0f) { as->lifetime_accumulators.total_energy_consumed_wh += energy_wh;

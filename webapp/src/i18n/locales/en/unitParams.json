@@ -53,7 +53,7 @@
   "evWInvalid": "Station threshold: whole watts from 0 to 100,000.",
   "evMinInvalid": "Idle time: whole minutes from 0 to 1440.",
   "ct": "Current sensor",
-  "ctHelper": "Choose the sensor actually on the channel (the factory wrote the one it calibrated with — usually SCT-013-030). Take 10–20 % above the expected maximum, not more: a bigger sensor has a higher noise floor. Applies at once, written into the module.",
+  "ctHelper": "Choose the sensor actually on the channel (the factory wrote the one it calibrated with — usually SCT-013-030). Its nominal current should cover the line's maximum; a much bigger sensor has a higher noise floor. Applies at once, written into the module.",
   "ctFixed": "The module's own sensor (CT- series), calibrated with the channel at the factory — the model is fixed.",
   "ctFixedConflict": "CT- series module: the sensor is factory-paired and calibrated, its model can't change.",
   "ctRejected": "The hub didn't take the sensor model: {message}",

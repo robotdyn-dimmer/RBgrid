@@ -1,4 +1,4 @@
-import { inputGroupOffer, PHASE_GROUP_CH } from './phaseGroup';
+import { inputGroupOffer, inputMetering, PHASE_GROUP_CH } from './phaseGroup';
 import type { SensorListEntry, SensorModule } from '../types/sensors';
 
 const ch = (module: number, c: number, unit_id: string | null = null): SensorListEntry =>
@@ -29,5 +29,29 @@ describe('channel as printed on the module (root 16.10)', () => {
     expect(channelLabel(255)).toBe('V');
     expect(channelLabel(1, 'L2')).toBe('L2');
     expect(channelLabel(undefined)).toBe('—');
+  });
+});
+
+describe('the input on a U3I3: netted or per phase (fw 1.1.5)', () => {
+  const u3i3 = { module: 2, present: true, n_v: 3, n_i: 3, model: 'STD-U3I3' } as SensorModule;
+  const basic = { module: 1, present: true, n_v: 1, n_i: 3, model: 'BASIC-UI3' } as SensorModule;
+  const s = (module: number, ch: number, unit_id: string | null) => ({ iface: 'i2c', bus: 0, module, ch, unit_id, present: true }) as SensorListEntry;
+  const roles: Record<string, string> = { '0006': 'MAIN_SUPPLY', '0103': 'MAIN_SUPPLY', '0104': 'MAIN_SUPPLY', '0102': 'DEVICE_LOAD' };
+  const roleOf = (id: string) => roles[id];
+
+  it('split, as on .139 06.11: the input on L1, L2/L3 its legs', () => {
+    const m = inputMetering([s(2, 0, '0006'), s(2, 1, '0103'), s(2, 2, '0104'), s(1, 0, '0102'), s(1, 1, null)], [u3i3, basic], '0006', roleOf);
+    expect(m.get(2)).toMatchObject({ mode: 'split', inputCh: 0, legs: ['0103', '0104'], freePhases: [] });
+    expect(m.has(1)).toBe(false);
+  });
+  it('grouped on L1–L3', () => {
+    expect(inputMetering([s(2, PHASE_GROUP_CH, '0006')], [u3i3], '0006', roleOf).get(2)).toMatchObject({ mode: 'grouped', legs: [] });
+  });
+  it('the input on L1 alone: the free phases are offered for points', () => {
+    expect(inputMetering([s(2, 0, '0006'), s(2, 1, null), s(2, 2, null)], [u3i3], '0006', roleOf).get(2)).toMatchObject({ mode: 'single', freePhases: [1, 2] });
+  });
+  it('a line on another phase is not a leg; an input on a BASIC is not offered', () => {
+    expect(inputMetering([s(2, 0, '0006'), s(2, 1, '0102')], [u3i3], '0006', roleOf).get(2)).toMatchObject({ mode: 'single', legs: [], freePhases: [2] });
+    expect(inputMetering([s(1, 0, '0006')], [basic], '0006', roleOf).size).toBe(0);
   });
 });

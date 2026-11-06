@@ -1,0 +1,14 @@
+{
+  "pkg": "@rbgrid/design-system",
+  "globalName": "RBGridDS",
+  "projectId": "6873c788-aef3-4da4-938e-138483397fbe",
+  "shape": "package",
+  "buildCmd": "npm run build",
+  "provider": { "component": "RBGridThemeProvider" },
+  "componentSrcMap": { "RBGridThemeProvider": null },
+  "overrides": {
+    "AppShell": { "cardMode": "single", "primaryStory": "Dashboard", "viewport": "960x560" },
+    "TrendChart": { "viewport": "820x520" },
+    "SystemSummary": { "viewport": "820x320" }
+  }
+}

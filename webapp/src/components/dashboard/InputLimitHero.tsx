@@ -46,6 +46,8 @@ export interface InputLimitHeroProps {
 
 const kw = (w: number): string => `${nf(w / 1000, w >= 100_000 ? 0 : 1)} ${t('units.kW')}`;
 
+const REM_PCT_FLOOR_W = 50;
+
 const remPctOf = (unmeteredW: number | null | undefined, powerW: number | null | undefined): number =>
   unmeteredW != null && powerW ? Math.abs((unmeteredW / Math.max(1, Math.abs(powerW))) * 100) : 0;
 
@@ -76,7 +78,8 @@ export const InputLimitHero: React.FC<InputLimitHeroProps> = ({
   const phaseIncomplete = !!maxPhase && !maxPhase.measured && remPctOf(unmeteredW, powerW) > 20;
 
   // Unmetered share of the input; > 10 % is the integrator's warning.
-  const remPct = unmeteredW != null && load ? (unmeteredW / load) * 100 : null;
+  // A near-idle input (a few W) gives a meaningless share — no percent, no warning.
+  const remPct = unmeteredW != null && load != null && load >= REM_PCT_FLOOR_W ? (unmeteredW / load) * 100 : null;
   const remWarn = remPct != null && Math.abs(remPct) > 10;
 
   const num = { fontVariantNumeric: 'tabular-nums' as const };

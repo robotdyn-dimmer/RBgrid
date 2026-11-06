@@ -49,7 +49,7 @@
   "ctClip": "The current hits the sensor's limit: everything above it is clipped and metering under-counts. A higher-rated sensor is needed.",
   "ctWarn": "The load is near the sensor's limit ({pct} % of its rating): above the limit the current is clipped and metering under-counts.",
   "noChannel": "Channel {ch} is not on the fitted module ({model}, {n} channels). The point and its history are kept — data resumes when a module with this channel is back. Don’t unbind the point: unbinding deletes its history.",
-  "sctUncorrected": "This point’s readings are not corrected for its current transformer ({why}). Values may differ from the real ones — check the CT model on the module card («Points»).",
+  "sctUncorrected": "This point’s readings are not corrected for its current transformer ({why}). Values may differ from the real ones — check the sensor model in this point’s settings («Point settings» → «Current sensor»).",
   "liveOnly": "This point shows live values only — it has no stored history.",
   "liveOnlyNamed": "{name} shows live values only — it has no stored history.",
   "historyFull": "The hub keeps history for {n} points.",

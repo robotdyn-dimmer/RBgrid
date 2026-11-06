@@ -10,7 +10,7 @@
   "vat": "VAT %",
   "provider": "Provider",
   "planType": "Plan type",
-  "netMetering": "Net metering (selling to the grid)",
+  "netMetering": "Net metering (monthly kWh credit)",
   "sellRatio": "Selling ratio",
   "sellPriceComputed": "Selling price /kWh (calculated)",
   "zones": "Zones ({n})",
@@ -39,7 +39,7 @@
   "zoneTo": "To",
   "coverageGaps": "Hours without a zone: {spans}. Energy then is not priced — assign a zone or a default zone.",
   "coverageOverlaps": "{spans}: “{winner}” applies — the hub ranks it above “{losers}”.",
-  "netMeteringExplain": "A zone’s selling price is the money you get per exported kWh. The credit ratio is the share of exported kWh credited against future purchases (a kWh credit).",
+  "netMeteringExplain": "A zone’s selling price is the money you get per exported kWh. The selling ratio prices exports in zones without their own selling price (buy price × ratio), and the hub uses it in the monthly kWh-credit settlement.",
   "fixedPayment": "Fixed payment",
   "perMonth": "month",
   "perYear": "year",
@@ -55,10 +55,13 @@
   "defaultZone": "Default zone",
   "defaultZoneHint": "Applies in hours no other zone takes",
   "defaultZoneNone": "not in the plan",
-  "priorityHint": "Where zones overlap, the more important one applies: critical peak → holiday → weekend → evening peak → morning peak → night → late evening → day.",
+  "priorityHint": "Where zones overlap, the more important one applies: critical peak → holiday → weekend (on Saturday and Sunday; on weekdays it ranks last) → evening peak → morning peak → night → late evening → day. A zone's days are set with «Days», whatever its type.",
   "toSingleZone": "One zone all day",
   "planTypeMismatch": "Plan type “{type}” but {n} zones are on. The hub prices by the zones — change the plan type so the label matches.",
   "ratioUnused": "Every zone has its own selling price — the selling ratio is not used. Only zones without a price use it.",
   "expired": "The plan expired ({date}) — the hub keeps pricing with it; check the tariff is still right.",
-  "unsaved": "The tariff has unsaved changes"
+  "unsaved": "The tariff has unsaved changes",
+  "sellWithoutNm": "Exports are valued at the zones' sell prices below even with net metering off. Net metering adds the kWh credit on top. No feed-in contract? Set the sell prices to 0.",
+  "removeZoneBodyToDefault": "Its hours go to the default zone “{zone}”, unless another zone covers them.",
+  "removeZoneBodyDefault": "This is the default zone: hours without a zone of their own stay unpriced until you pick another default zone."
 }

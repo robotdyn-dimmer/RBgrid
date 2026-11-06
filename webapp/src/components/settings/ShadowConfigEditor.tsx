@@ -46,7 +46,8 @@ function setAtPath(obj: JsonObject, path: string[], value: JsonValue): JsonObjec
 const DEDICATED = new Set(['site_profile', 'groups', 'grid', 'language', 'ev']); // ev: «Зарядные станции»
 /** Envelope / transport metadata that leaks into a flattened config — never a setting
  *  (UX audit HEU-07: «Frame», «Ws clients», «List» showed up as fields). */
-const HIDDEN = new Set(['type', 'version', 'device_id', 'timestamp_local', 'timestamp_ntp', 'frame', 'ws_clients', 'list']);
+// enable_dst: the hub takes DST from the TZ rule alone, the flag changes nothing (content dst-toggle-dead).
+const HIDDEN = new Set(['type', 'version', 'device_id', 'timestamp_local', 'timestamp_ntp', 'frame', 'ws_clients', 'list', 'enable_dst']);
 /** Keys of features outside the release scope (constants/release): ESP-NOW (esp_now_*, espnow*). */
 const outOfScope = (name: string): boolean => RELEASE_HIDDEN.espnow && /^esp_?now/i.test(name);
 /** Device STATE reported next to the settings — shown as text, never as an editable field

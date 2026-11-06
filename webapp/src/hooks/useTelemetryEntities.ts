@@ -15,6 +15,7 @@
  * clears it (back to 'live' / 'snapshot'). The last data is kept — screens grey it out.
  */
 
+import { foldSplitInput } from '../entities/splitInput';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getApiClient } from '../services/api';
 import { getTelemetryClient, WebSocketEvent } from '../services/websocket';
@@ -109,7 +110,8 @@ export function useTelemetryEntities(): UseTelemetryEntitiesResult {
       if (lastHwRev != null && rev !== lastHwRev) void refreshHardware();
       lastHwRev = rev;
     }
-    const norm = normalizeTelemetryFrame(frame);
+    // The input split per phase (fw 1.1.5) is read as one input — the hub's own sum (splitInput).
+    const norm = normalizeTelemetryFrame(foldSplitInput(frame));
     lastShared = { key: deviceKey(), data: norm, at: now };
     setData(norm);
     setLastUpdate(now);

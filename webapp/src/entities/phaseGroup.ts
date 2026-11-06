@@ -49,3 +49,40 @@ export function channelLabel(ch: number | null | undefined, label?: string | nul
   if (ch === VOLTAGE_INPUT_CH) return 'V';
   return `I${ch}`;
 }
+
+/**
+ * How the input is metered on a STD-U3I3 (fw 1.1.5, operator 06.11 via root u3i3-per-phase-points):
+ * `grouped` = one point on `L1–L3` (phases netted, e.g. a German saldo meter); `split` = one point per
+ * phase, each with its own import/export (the input keeps one phase, `legs` = the other MAIN_SUPPLY
+ * points on the module). Modules that don't carry the input are absent from the map.
+ */
+export interface InputMetering {
+  /** `single` = the input on one phase of the module, no other phase bound (a split left half-done). */
+  mode: 'grouped' | 'split' | 'single';
+  inputCh: number;
+  legs: string[];
+  /** Phase channels (0..2) of the module that carry no point — bound on a split. */
+  freePhases: number[];
+  bus?: number;
+}
+
+export function inputMetering(
+  sensors: SensorListEntry[], modules: SensorModule[], inputHex: string | null, roleOf: (unitId: string) => string | undefined,
+): Map<number, InputMetering> {
+  const out = new Map<number, InputMetering>();
+  if (!inputHex) return out;
+  const id = inputHex.toUpperCase();
+  const mine = sensors.find((s) => (s.unit_id ?? '').toUpperCase() === id && s.module != null && s.ch != null && s.ch !== VOLTAGE_INPUT_CH);
+  if (!mine || mine.module == null) return out;
+  const mod = modules.find((m) => m.module === mine.module);
+  if (!mod || !isPhaseModule(mod)) return out;
+  if (isPhaseGroup(mine)) { out.set(mine.module, { mode: 'grouped', inputCh: PHASE_GROUP_CH, legs: [], freePhases: [], bus: mine.bus }); return out; }
+  const onModule = sensors.filter((s) => s.module === mine.module);
+  const freePhases = [0, 1, 2].filter((c) => c < (mod.n_i ?? 3) && !onModule.some((s) => s.ch === c && s.unit_id));
+  const legs = sensors
+    .filter((s) => s.module === mine.module && s.unit_id && (s.unit_id ?? '').toUpperCase() !== id
+      && s.ch != null && s.ch >= 0 && s.ch <= 2 && roleOf(s.unit_id) === 'MAIN_SUPPLY')
+    .map((s) => s.unit_id as string);
+  out.set(mine.module, { mode: legs.length ? 'split' : 'single', inputCh: mine.ch as number, legs, freePhases, bus: mine.bus });
+  return out;
+}

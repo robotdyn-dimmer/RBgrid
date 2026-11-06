@@ -1,5 +1,52 @@
 # Changelog
 
+## v1.1.5 — 2026-11-06
+
+### Tariff
+- Fixed: **the saved tariff plan was lost at every restart** (power cut, reboot, firmware update). The plan
+  was saved correctly, but at start-up the hub replaced it with its built-in placeholder plan
+  "Test Day/Night". The saved plan now comes back complete after a restart: name, zones, weekend days,
+  per-kWh charges and VAT.
+
+### Three-phase input: one point, or one point per phase
+- A three-phase module (STD-U3I3) can now be metered **as one point** (the phases are netted every
+  15 minutes, like a meter that sums the phases) **or as one point per phase** (each phase has its own
+  import and export, like a meter that counts each phase). Choose what matches your supply meter.
+- Split: move the three-phase point to one phase (`POST /api/v1/units/<id>/rebind {"module":m,"ch":0}`).
+  It keeps its name and history on that phase. The other phases become free sensors; add them as supply
+  points (role `MAIN_SUPPLY`) and restart the hub. Group again: delete the phase points, move the
+  remaining one back to the module's three-phase sensor (`"ch":254`) and restart.
+- With several supply points the system totals (power, energy in/out, cost, export value) are the sum of
+  all of them. The first one stays the main input. Deleting a phase point moves its totals to the main
+  input, so the system totals don't go down.
+- Before installing an older firmware on a hub whose input is metered per phase, switch it back to one
+  point: older firmware handles only one supply point and would lose the totals.
+
+### Generation points
+- A point with role **Generation** now counts the flow in the direction of the sensor arrow (from the
+  source to the consumers) as production: negative power, energy into **Energy Out**. Before, such a point
+  needed `invert_sign`. `invert_sign` still flips the result on top.
+- **After updating:** if you had set `invert_sign` on a Generation point to make it read production,
+  clear it (`POST /api/v1/units/<id> {"invert_sign":false}`), or the point will read consumption again.
+
+### Web app 1.1.5
+- **Points → the STD-U3I3 card that carries the input:** choose "One point, phases netted" or "One point per
+  phase"; the app does the steps above and offers the restart. With the input split, the live view shows
+  the input as the sum of its phase points.
+- Tariffs: every zone shows its sell price whatever the net-metering setting (export-only tariffs such as
+  SEG); the toggle reads "Net metering (monthly kWh credit)".
+- Time: southern-hemisphere zones with summer time (Sydney, Adelaide, Auckland, Santiago, …); "today" and
+  hour axes start at the hub's real midnight on clock-change days.
+- Car park: a three-phase charger bound as one point per conductor counts as one station when its points
+  share a group.
+- Full list: `webapp/CHANGELOG.md`.
+
+### Known limitation
+- With the input metered **per phase**, history and money **per period** in the app (Economics balance,
+  Overview month and "vs yesterday", the energy chart) read the first phase point (L1) only. Live values
+  and the hub's system totals (`system.*`, Home Assistant) are the sum of all phases. A summed history
+  is planned for the next release.
+
 ## v1.1.4 — 2026-11-04
 
 ### Points

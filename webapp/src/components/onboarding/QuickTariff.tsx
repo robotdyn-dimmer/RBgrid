@@ -26,6 +26,8 @@ export const QuickTariff: React.FC<{ onSaved?: () => void; factory?: boolean }> 
   const [price, setPrice] = useState('');
   const [twoZone, setTwoZone] = useState(false);
   const [night, setNight] = useState('');
+  // ON by default — content's export article tells readers to type the bill's price; changing this
+  // default → tell content.rbgrid first (sellprice-gated-on-netmetering 06.11).
   const [inclVat, setInclVat] = useState(true);
   const [vat, setVat] = useState('');
   const [sell, setSell] = useState('');
