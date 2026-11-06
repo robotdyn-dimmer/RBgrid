@@ -251,6 +251,20 @@ static double lifetime_wh(rbpower_unit_id_t uid, bool in, float fallback)
     return (double)fallback;
 }
 
+/** @brief A supply-role unit that is NOT the specialized main/alt supply: a further point of the grid boundary (one point
+ * per phase of a split three-phase input). Its energy/cost live in its own basic accumulator; the system totals add it. */
+static bool rbjson_extra_supply(const rbpower_home_unit_t* u)
+{
+    if (!u->has_valid_definition || !u->definition.is_active) return false;
+    if (u->definition.type == RBPOWER_METRIC_VOLTAGE_BUS) return false;
+    if (u->definition.role == RBPOWER_ROLE_MAIN_SUPPLY)
+        return g_home_network.specialized.has_main_supply && u->definition.unit_id != g_home_network.system.main_supply_unit_id;
+    if (u->definition.role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY)
+        return g_home_network.specialized.has_alternative_supply &&
+               u->definition.unit_id != g_home_network.system.alternative_supply_unit_id;
+    return false;
+}
+
 /** @brief Add the CT nominal of a channel in A, from the module's sensor class + the channel's model code
  * (rbAmp registry, rbamp-esp-idf 1.7.2-rc2). Omitted when unknown (class not read, legacy codes, virtual modules). */
 static void rbjson_add_ct_rated(cJSON* s, uint8_t module, int ct_code)
@@ -2595,8 +2609,10 @@ void rbgrid_json_ha_unpublish_unit(uint16_t unit_id, int role)
     char m[13];
     snprintf(m, sizeof(m), "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     char key[8];
-    if      (role == RBPOWER_ROLE_MAIN_SUPPLY)        snprintf(key, sizeof(key), "main");
-    else if (role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY) snprintf(key, sizeof(key), "alt");
+    if      (role == RBPOWER_ROLE_MAIN_SUPPLY && unit_id == g_home_network.system.main_supply_unit_id)
+        snprintf(key, sizeof(key), "main");
+    else if (role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY && unit_id == g_home_network.system.alternative_supply_unit_id)
+        snprintf(key, sizeof(key), "alt");   /* a further supply point (per phase) is keyed by its id */
     else                                              snprintf(key, sizeof(key), "%04X", (unsigned)unit_id);
     const int NM = (int)(sizeof(MET) / sizeof(MET[0]));
     for (int k = 0; k < NM; k++) {
@@ -2641,8 +2657,8 @@ void rbgrid_json_publish_ha_discovery(void)
         if (!u->has_valid_definition || !u->definition.is_active) continue;
         if (u->definition.type == RBPOWER_METRIC_VOLTAGE_BUS) continue;   // v_bus handled separately
         rbpower_load_role_t role = u->definition.role;
-        if      (role == RBPOWER_ROLE_MAIN_SUPPLY)        { snprintf(snap[n].key, 8, "main"); snprintf(snap[n].name, 40, "Main"); snap[n].is_main = true; snap[n].uid = u->definition.unit_id; }
-        else if (role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY) { snprintf(snap[n].key, 8, "alt");  snprintf(snap[n].name, 40, "Alt");  snap[n].is_main = false; snap[n].uid = u->definition.unit_id; }
+        if      (role == RBPOWER_ROLE_MAIN_SUPPLY && !rbjson_extra_supply(u))        { snprintf(snap[n].key, 8, "main"); snprintf(snap[n].name, 40, "Main"); snap[n].is_main = true; snap[n].uid = u->definition.unit_id; }
+        else if (role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY && !rbjson_extra_supply(u)) { snprintf(snap[n].key, 8, "alt");  snprintf(snap[n].name, 40, "Alt");  snap[n].is_main = false; snap[n].uid = u->definition.unit_id; }
         else { snprintf(snap[n].key, 8, "%04X", u->definition.unit_id);
                snap[n].uid = u->definition.unit_id;
                snprintf(snap[n].name, 40, "%s", u->definition.name[0] ? u->definition.name : snap[n].key);
@@ -3181,6 +3197,16 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
             net_direction = msp->realtime_200ms.direction;   // main supply drives system direction
         }
     }
+    if (g_home_network.specialized.has_main_supply || g_home_network.specialized.has_alternative_supply) {
+        /* further supply-role units beyond the specialized main/alt (a three-phase input split into one point per
+         * phase): part of the grid boundary too */
+        for (int i = 0; i < g_home_network.units_count; i++) {
+            rbpower_home_unit_t* u2 = &g_home_network.units[i];
+            if (!rbjson_extra_supply(u2)) continue;
+            net_power    += u2->realtime_average_200ms.average_200ms.power_active_avg_w;
+            net_reactive += u2->realtime_average_200ms.average_200ms.power_reactive_avg_var;
+        }
+    }
     if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
         rbpower_alternative_supply_t* asp = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
         net_power += asp->statistics_3sec.electrical_samples_count > 0 ?
@@ -3259,6 +3285,19 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
                     cost_day   += as->lifetime_accumulators.daily_cost_consumed;
                     rev_total  += as->lifetime_accumulators.total_cost_supplied;
                     rev_day    += as->lifetime_accumulators.daily_cost_supplied;
+                }
+                for (int i = 0; i < g_home_network.units_count; i++) {   /* + further supply points (per phase) */
+                    rbpower_home_unit_t* u2 = &g_home_network.units[i];
+                    if (!rbjson_extra_supply(u2)) continue;
+                    const rbpower_lifetime_accumulators_basic_t* la = &u2->statistics.lifetime_accumulators;
+                    e_in      += lifetime_wh(u2->definition.unit_id, true,  la->total_energy_consumed_wh);
+                    e_out     += lifetime_wh(u2->definition.unit_id, false, la->total_energy_supplied_wh);
+                    e_day_in  += la->daily_energy_consumed_wh;
+                    e_day_out += la->daily_energy_supplied_wh;
+                    cost_total += la->total_cost_consumed;
+                    cost_day   += la->daily_cost_consumed;
+                    rev_total  += la->total_cost_supplied;
+                    rev_day    += la->daily_cost_supplied;
                 }
                 cJSON_AddNumberToObject(sys, "e_in",      round(e_in * 100) / 100);
                 cJSON_AddNumberToObject(sys, "e_out",     round(e_out * 100) / 100);
@@ -3566,10 +3605,12 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
         // (supply = an ordinary rbAmp unit with a role) the unit is emitted under its hex key like
         // all the others.
         rbpower_load_role_t role = unit->definition.role;
-        if ((role == RBPOWER_ROLE_MAIN_SUPPLY && g_home_network.specialized.has_main_supply) ||
-            (role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY && g_home_network.specialized.has_alternative_supply) ||
+        if ((role == RBPOWER_ROLE_MAIN_SUPPLY && g_home_network.specialized.has_main_supply &&
+             unit->definition.unit_id == g_home_network.system.main_supply_unit_id) ||
+            (role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY && g_home_network.specialized.has_alternative_supply &&
+             unit->definition.unit_id == g_home_network.system.alternative_supply_unit_id) ||
             unit->definition.type == RBPOWER_METRIC_VOLTAGE_BUS) {
-            continue;
+            continue;   /* only the supply unit the specialized block emitted; a further supply point (per phase) is a regular unit */
         }
         
         // Object for a regular unit.

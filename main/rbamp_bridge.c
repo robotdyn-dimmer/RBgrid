@@ -65,8 +65,9 @@ static const char *TAG = "RBAMP_BRIDGE";
 /** @brief Number of I2C buses (ESP32 I2C controllers) the bridge can drive. */
 #define RBAMP_MAX_BUSES 2
 static rbamp_bridge_config_t   s_cfg;
-/* A three-phase grouping saved for the next boot (feed_group): every later save of the live s_cfg must keep it,
- * or the next unrelated save (a bind, a CT change) would write the old layout back over it before the restart. */
+/* A phase-module layout change saved for the next boot — grouping (feed_group) or splitting it back into one entry per
+ * phase (feed_split): every later save of the live s_cfg must keep it, or the next unrelated save (a bind, a CT change)
+ * would write the old layout back over it before the restart. Binds/unbinds on that module update it too. */
 static struct { bool valid; uint8_t module, n; uint16_t unit; rbamp_entry_cfg_t e[RBAMP_MAX_ENTRIES]; } s_group_pending;
 /** Save the fleet: the live s_cfg with any pending grouping applied (see s_group_pending). */
 static esp_err_t save_cfg(void)
@@ -2556,6 +2557,11 @@ void rbamp_bridge_unbind_unit(rbpower_unit_id_t unit_id)
 {
     if (unit_id == 0) return;
     bool changed = false;
+    if (s_group_pending.valid) {   /* the layout waiting for the reboot must not bring the deleted point back */
+        for (uint8_t e = 0; e < s_group_pending.n && e < RBAMP_MAX_ENTRIES; ++e)
+            if (s_group_pending.e[e].unit_id == unit_id) { s_group_pending.e[e].unit_id = 0; changed = true; }
+        if (s_group_pending.unit == unit_id) s_group_pending.unit = 0;
+    }
     for (uint8_t m = 0; m < s_cfg.module_count && m < RBAMP_MAX_MODULES; ++m) {
         for (uint8_t e = 0; e < s_cfg.modules[m].entry_count && e < RBAMP_MAX_ENTRIES; ++e) {
             if (s_cfg.modules[m].entries[e].unit_id == unit_id) {
@@ -2572,6 +2578,31 @@ void rbamp_bridge_unbind_unit(rbpower_unit_id_t unit_id)
     }
 }
 
+/* Drop a layout change of @p module that waits for the reboot (the user changed their mind before restarting): the
+ * live layout stays. @return true if one was pending. */
+static bool cancel_pending_layout(uint8_t module)
+{
+    if (!s_group_pending.valid || s_group_pending.module != module) return false;
+    s_group_pending.valid = false;
+    rbpower_diag_printf("m%u: phase layout change pending for the reboot cancelled", module);
+    return true;
+}
+
+/* A unit's phase label, written back as a whole struct (byte stores into PSRAM definitions corrupt neighbouring bytes
+ * on ESP32 < v3, see the unit PATCH handler). */
+static void set_unit_phase(rbpower_unit_id_t unit_id, uint8_t ph)
+{
+    rbpower_home_lock();
+    rbpower_unit_definition_t *d = rbpower_home_get_unit_definition_mutable(unit_id);
+    if (d && d->phase != ph) {
+        rbpower_unit_definition_t nd;
+        memcpy(&nd, d, sizeof nd);
+        nd.phase = ph;
+        memcpy(d, &nd, sizeof nd);
+    }
+    rbpower_home_unlock();
+}
+
 /* Group a phase module (STD-U3I3: >= 2 voltage and >= 2 current channels) as ONE three-phase unit fed by the bridge
  * (the main input): the module's channel entries are replaced by a single RBAMP_ENTRY_PHASES entry carrying unit_id —
  * the same /rbamp.json the console verb `rbampcfg phases <m> <hexunit> <ct>` writes. Every current channel entry of
@@ -2583,6 +2614,7 @@ void rbamp_bridge_unbind_unit(rbpower_unit_id_t unit_id)
 static int feed_group(rbpower_unit_id_t unit_id, uint8_t module)
 {
     if (!s_dev[module] || virt_is(module) || s_line[module] != 1 || s_nv[module] < 2 || s_nc[module] < 2) return -1;
+    bool cancelled = cancel_pending_layout(module);
     const rbamp_module_cfg_t *mod = &s_cfg.modules[module];
     uint8_t ct = 0;
     bool ct_set = false;
@@ -2590,7 +2622,10 @@ static int feed_group(rbpower_unit_id_t unit_id, uint8_t module)
         const rbamp_entry_cfg_t *en = &mod->entries[e];
         if (en->source == RBAMP_ENTRY_VOLTAGE) continue;
         if (en->source == RBAMP_ENTRY_PHASES) {
-            if (en->unit_id == unit_id) return 0;
+            if (en->unit_id == unit_id) {   /* live layout is already this group: a pending split was just cancelled */
+                if (cancelled) (void)save_cfg();
+                return 0;
+            }
             if (en->unit_id != 0) return -2;
             continue;
         }
@@ -2605,8 +2640,46 @@ static int feed_group(rbpower_unit_id_t unit_id, uint8_t module)
     s_group_pending.e[nk++] = (rbamp_entry_cfg_t){ .source = RBAMP_ENTRY_PHASES, .ct_code = ct, .unit_id = (uint16_t)unit_id, .ct_user = 0 };
     s_group_pending.n = nk; s_group_pending.module = module; s_group_pending.unit = (uint16_t)unit_id; s_group_pending.valid = true;
     esp_err_t se = save_cfg();
+    {   const rbpower_unit_definition_t *d = rbpower_home_get_unit_definition(unit_id);
+        if (d && d->phase >= 1 && d->phase <= 3) set_unit_phase(unit_id, 4); }   /* one phase → all three */
     rbpower_diag_printf("unit 0x%04X -> m%u grouped as one three-phase input (L1-L3), /rbamp.json: %s — applies after a reboot",
                         (unsigned)unit_id, module, esp_err_to_name(se));
+    return se == ESP_OK ? 1 : -1;
+}
+
+/* Split a grouped phase module (one RBAMP_ENTRY_PHASES entry carrying unit_id) back into one entry per current channel,
+ * so each phase can be its own point with its own import/export counters. unit_id moves to channel @p ch (id, point and
+ * history stay; its phase label becomes L<ch+1>); the other channels become free sensors, bindable from the app.
+ * Applied at the next boot like feed_group (the running poll keeps the group until then); binds made before the reboot
+ * are recorded in the pending layout.
+ * @return 1 saved (reboot to apply), -1 not a grouped phase module / bad channel / save failed, -2 the group carries
+ *         another unit. */
+static int feed_split(rbpower_unit_id_t unit_id, uint8_t module, uint8_t ch)
+{
+    if (!s_dev[module] || virt_is(module) || s_line[module] != 1 || s_nv[module] < 2 || s_nc[module] < 2) return -1;
+    if (ch >= s_nc[module] || ch >= RBAMP_MAX_CHANNELS) return -1;
+    const rbamp_module_cfg_t *cm = &s_cfg.modules[module];
+    uint8_t ct = 0;
+    bool grouped = false;
+    for (uint8_t e = 0; e < cm->entry_count && e < RBAMP_MAX_ENTRIES; ++e) {
+        if (cm->entries[e].source != RBAMP_ENTRY_PHASES) continue;
+        if (cm->entries[e].unit_id != unit_id) return -2;
+        ct = cm->entries[e].ct_code;
+        grouped = true;
+    }
+    if (!grouped) return -1;
+    uint8_t nk = 0;
+    for (uint8_t e = 0; e < cm->entry_count && e < RBAMP_MAX_ENTRIES; ++e)
+        if (cm->entries[e].source == RBAMP_ENTRY_VOLTAGE && nk < RBAMP_MAX_ENTRIES) s_group_pending.e[nk++] = cm->entries[e];
+    for (uint8_t c = 0; c < s_nc[module] && c < RBAMP_MAX_CHANNELS && nk < RBAMP_MAX_ENTRIES; ++c)
+        s_group_pending.e[nk++] = (rbamp_entry_cfg_t){ .source = c, .ct_code = ct,
+                                                       .unit_id = (uint16_t)(c == ch ? unit_id : 0), .ct_user = 0 };
+    s_group_pending.n = nk; s_group_pending.module = module; s_group_pending.unit = (uint16_t)unit_id; s_group_pending.valid = true;
+    esp_err_t se = save_cfg();
+    const rbpower_unit_definition_t *d = rbpower_home_get_unit_definition(unit_id);
+    if (d && (d->phase == 4 || d->phase == 0)) set_unit_phase(unit_id, (uint8_t)(ch + 1));   /* L1-L3 → the one phase it keeps */
+    rbpower_diag_printf("unit 0x%04X -> m%u split into one point per phase (unit kept on ch%u), /rbamp.json: %s — applies after a reboot",
+                        (unsigned)unit_id, module, ch, esp_err_to_name(se));
     return se == ESP_OK ? 1 : -1;
 }
 
@@ -2617,6 +2690,11 @@ int rbamp_bridge_feed_rebind(rbpower_unit_id_t unit_id, uint8_t module, uint8_t 
 {
     if (unit_id == 0 || module >= s_cfg.module_count || module >= RBAMP_MAX_MODULES) return -1;
     if (ch == RBAMP_ENTRY_PHASES) return feed_group(unit_id, module);
+    bool cancelled = cancel_pending_layout(module);   /* act on the live layout */
+    for (uint8_t e = 0; e < s_cfg.modules[module].entry_count && e < RBAMP_MAX_ENTRIES; ++e)
+        if (s_cfg.modules[module].entries[e].source == RBAMP_ENTRY_PHASES && s_cfg.modules[module].entries[e].unit_id == unit_id)
+            return feed_split(unit_id, module, ch);
+    if (cancelled) (void)save_cfg();
     rbamp_entry_cfg_t *tgt = NULL;
     for (uint8_t e = 0; e < s_cfg.modules[module].entry_count && e < RBAMP_MAX_ENTRIES; ++e)
         if (s_cfg.modules[module].entries[e].source == ch && ch < RBAMP_MAX_CHANNELS) tgt = &s_cfg.modules[module].entries[e];
@@ -2658,6 +2736,16 @@ void rbamp_bridge_bind_unit(const rbpower_unit_definition_t *def)
                 en->unit_id = (uint16_t)def->unit_id;   /* bind: resume inject into this unit */
                 changed = true;
                 apply_default_phase(module, en);        /* phase from the binding */
+            }
+        }
+    }
+    if (s_group_pending.valid && s_group_pending.module == module) {   /* layout waiting for the reboot: bind there too */
+        for (uint8_t e = 0; e < s_group_pending.n && e < RBAMP_MAX_ENTRIES; ++e) {
+            rbamp_entry_cfg_t *en = &s_group_pending.e[e];
+            if (en->source == ch && en->source != RBAMP_ENTRY_VOLTAGE && en->unit_id != (uint16_t)def->unit_id) {
+                en->unit_id = (uint16_t)def->unit_id;
+                changed = true;
+                rbpower_diag_printf("unit 0x%04X bound to m%u ch%u — live after the pending reboot", (unsigned)def->unit_id, module, ch);
             }
         }
     }
