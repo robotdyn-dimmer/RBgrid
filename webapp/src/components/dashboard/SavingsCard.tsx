@@ -19,6 +19,7 @@ import { VampireHuntDialog } from './VampireHuntDialog';
 import { Card } from '@rbgrid/design-system';
 import { useDsTokens } from '../../theme/useDsTokens';
 import { useHistory } from '../../hooks/useHistory';
+import { useInputSeries } from '../../hooks/useInputSeries';
 import { useTariffPlan } from '../../hooks/useTariffPlan';
 import { UnitEntityGroup, unitMetricValue } from '../../entities/model';
 import { UnitsConfigJoin } from '../../hooks/useUnitsConfig';
@@ -135,7 +136,8 @@ export const SavingsCard: React.FC<SavingsCardProps> = ({ groups, join, mainId, 
   // The same month as the Today card's «Month to date»: closed days + TODAY BY THE DAY COUNTERS
   // (L3P-03: the forecast used today's closed hours — another base than the figure next to it).
   const todayCounters = useMemo(() => (inputDayWh != null ? { inWh: Math.round(inputDayWh), outWh: Math.round(exportDayWh ?? 0), cost: Math.round((costDay ?? 0) * 100) / 100, revenue: Math.round((revDay ?? 0) * 100) / 100, n: 1 } : null), [inputDayWh, exportDayWh, costDay, revDay]);
-  const mtd = usePeriodTotals(mainId, 'month', { today: todayCounters });
+  const inputSeries = useInputSeries(mainId);
+  const mtd = usePeriodTotals(inputSeries, 'month', { today: todayCounters });
   // Not before the month's records arrive: «month» = today for a few seconds read a forecast of
   // €2.19 (L3P-04).
   const mtdVal = mtd && !mtd.loading && mtd.n > 0 ? (money ? mtd.cost : mtd.inWh / 1000) : 0;
@@ -144,7 +146,7 @@ export const SavingsCard: React.FC<SavingsCardProps> = ({ groups, join, mainId, 
 
   // «к вчера (к этому часу)»: today's closed hours vs the same hours yesterday (useVsYesterday —
   // the same rule as the History; HOME-R03).
-  const vsY = useVsYesterday(mainId, money);
+  const vsY = useVsYesterday(inputSeries, money);
   /** A month/day figure in the lens' unit (money or energy; energy forecasts come in kWh / Wh). */
   const kwhText = (kwh: number) => enWh(kwh * 1000);
 

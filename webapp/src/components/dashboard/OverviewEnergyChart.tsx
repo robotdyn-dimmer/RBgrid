@@ -41,6 +41,8 @@ const nf = (v: number, d: number) => v.toLocaleString(intlLocale(), { minimumFra
 
 export interface OverviewEnergyChartProps {
   unitId?: string;
+  /** The id its history is read by (the input's `input` series — hooks/useInputSeries); default unitId. */
+  seriesId?: string | null;
   /** Deprecated (kept for callers): the export legend now follows the data, not the role. */
   hasGeneration?: boolean;
   /** The input's live totalizers (Wh): the running hour = these − the last closed record's
@@ -63,14 +65,15 @@ const PAD_R = 8;
 const PAD_T = 14;
 const PAD_B = 22;
 
-export const OverviewEnergyChart: React.FC<OverviewEnergyChartProps> = ({ unitId = MAIN_UNIT_KEY, liveEIn, liveEOut, genUnitId, liveGenOut }) => {
+export const OverviewEnergyChart: React.FC<OverviewEnergyChartProps> = ({ unitId = MAIN_UNIT_KEY, seriesId, liveEIn, liveEOut, genUnitId, liveGenOut }) => {
   const ds = useDsTokens();
   const lens = useLensFormat();
   // House view: energy mode with a generation point on site.
   const solar = !lens.moneyMode && !!genUnitId;
   const gen = useHistory(solar ? genUnitId ?? null : null, 'hour', 'energy');
-  const { records, loading: histLoading, error: histError } = useHistory(unitId, 'hour', 'energy');
-  const eco = useHistory(lens.moneyMode ? unitId : null, 'hour', 'economics');
+  const sid = seriesId ?? unitId;
+  const { records, loading: histLoading, error: histError } = useHistory(sid, 'hour', 'energy');
+  const eco = useHistory(lens.moneyMode ? sid : null, 'hour', 'economics');
   // Yesterday's hours for the comparison caps (charts audit A: «cheaper than yesterday by 44 %»
   // in Savings had no picture).
   const clockY = useDeviceClock();
@@ -78,9 +81,9 @@ export const OverviewEnergyChart: React.FC<OverviewEnergyChartProps> = ({ unitId
     const d0 = clockY.dayStart(Math.floor(Date.now() / 60_000) * 60);
     return { from: clockY.dayStart(d0 - 43_200), to: d0 };
   }, [clockY]);
-  const yE = useHistory(unitId, 'hour', 'energy', 30, yRange);
+  const yE = useHistory(sid, 'hour', 'energy', 30, yRange);
   const yG = useHistory(solar ? genUnitId ?? null : null, 'hour', 'energy', 30, yRange);
-  const yM = useHistory(lens.moneyMode ? unitId : null, 'hour', 'economics', 30, yRange);
+  const yM = useHistory(lens.moneyMode ? sid : null, 'hour', 'economics', 30, yRange);
   const [measureRef, measured] = useElementWidth<HTMLDivElement>(760);
   const W = Math.max(240, measured);
 

@@ -40,6 +40,23 @@
   `409` with `error_code: "IMAGE_NOT_CONFIRMED"`, a plain message, `retry_after_s: 60` and a
   `Retry-After` header.
 
+### Web app 1.1.6
+- **Overview and Economics** with the input metered per phase: history and money per period cover all
+  three phase points (the v1.1.5 limitation is lifted).
+- **Settings → Time:** NTP servers and resync interval checked before Save; to a hub on firmware 1.1.5 or
+  earlier, Save sends the whole time configuration, so those hubs no longer lose their NTP servers either.
+- **Settings → Hub firmware:** an update sent while the hub still confirms the last one says to try again in
+  about a minute.
+- **Three-phase input switch:** the result and **Restart now** show on the module card; the buttons hide
+  until the restart.
+- Its source is in `webapp/`, and the built app is attached as `rbgrid-ui_v1.1.6.zip`. Full list:
+  `webapp/CHANGELOG.md`.
+
+### Update note
+- Install the matching app (`rbgrid-ui_v1.1.6.zip`) together with the firmware: the per-phase history and
+  the new messages are in the app.
+- After updating, open **Settings → Time** and check the time zone (see Fixed above).
+
 ## v1.1.5 — 2026-11-06
 
 ### Tariff

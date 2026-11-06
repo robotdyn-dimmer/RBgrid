@@ -110,7 +110,10 @@ export const DevicesPage: React.FC = () => {
     () => (RELEASE_HIDDEN.inputGroup ? new Map<number, 'regroup' | 'update'>() : inputGroupOffer(sensors, modules, unitsCfg.input.hex ?? null, fwAtLeast(hubVersion, [1, 1, 2]))),
     [sensors, modules, unitsCfg.input.hex, hubVersion],
   );
-  const [groupMsg, setGroupMsg] = useState<{ sev: 'warning' | 'error'; text: string; reboot?: boolean } | null>(null);
+  // `module`: the message shows on that module's card, next to the button pressed (not above the grid).
+  const [groupMsg, setGroupMsg] = useState<{ sev: 'warning' | 'error'; text: string; reboot?: boolean; module?: number } | null>(null);
+  /** Modules whose input metering was changed and waits for the restart: no second press (root 06.11). */
+  const [pendingRestart, setPendingRestart] = useState<Set<number>>(new Set());
   const regroupInput = async (m: SensorModule) => {
     const hex = unitsCfg.input.hex;
     if (!hex) return;
@@ -135,6 +138,18 @@ export const DevicesPage: React.FC = () => {
   );
   const inputName = unitsCfg.input.hex ? fullDisplayName({ unitKey: unitsCfg.input.hex } as UnitEntityGroup, cfgOf(unitsCfg.input.hex)) : '';
   const phaseName = (c: number) => `L${c + 1}`;
+  /** A 409 «already bound» on a phase we bind is fine when that channel already carries an input
+   *  point (a repeat press before the restart, root/peer 06.11). */
+  const boundAsInput = async (module: number, ch: number, code?: string, message?: string): Promise<boolean> => {
+    if (code !== 'SENSOR_BOUND' && !/already bound/i.test(message ?? '')) return false;
+    try {
+      const list = (await getApiClient().getSensors()).data?.sensors ?? [];
+      const id = list.find((s) => s.module === module && s.ch === ch)?.unit_id;
+      if (!id) return false;
+      const role = cfgOf(id)?.role;
+      return role === undefined || role === 'MAIN_SUPPLY';
+    } catch { return false; }
+  };
   const splitInput = async (m: SensorModule, im: InputMetering) => {
     const hex = unitsCfg.input.hex;
     if (!hex) return;
@@ -156,12 +171,13 @@ export const DevicesPage: React.FC = () => {
             sensor: { iface: 'i2c', bus: im.bus ?? 0, module: m.module, ch }, name: `${inputName} ${phaseName(ch)}`,
             role: 'MAIN_SUPPLY', stat_class: '1HOUR',
           });
-          if (res.status !== 'ok') failed.push(`${phaseName(ch)}: ${res.message ?? res.code ?? ''}`);
+          if (res.status !== 'ok' && !(await boundAsInput(m.module, ch, res.code, res.message))) failed.push(`${phaseName(ch)}: ${res.message ?? res.code ?? ''}`);
         } catch (e) { failed.push(`${phaseName(ch)}: ${e instanceof Error ? e.message : String(e)}`); }
       }
+      if (!failed.length) setPendingRestart((p) => new Set(p).add(m.module));
       setGroupMsg(failed.length
-        ? { sev: 'error', text: t('devices.perPhasePartial', { why: failed.join('; ') }), reboot: im.mode === 'grouped' }
-        : { sev: 'warning', text: t('devices.meteringDone'), reboot: true });
+        ? { sev: 'error', text: t('devices.perPhasePartial', { why: failed.join('; ') }), reboot: im.mode === 'grouped', module: m.module }
+        : { sev: 'warning', text: t('devices.meteringDone'), reboot: true, module: m.module });
     } catch (e) {
       setGroupMsg({ sev: 'error', text: t('devices.inputGroupRefused', { why: e instanceof Error ? e.message : String(e) }) });
     } finally { setBusyId(null); reload(); }
@@ -183,9 +199,10 @@ export const DevicesPage: React.FC = () => {
         if (d.status !== 'ok') { setGroupMsg({ sev: 'error', text: t('devices.inputGroupRefused', { why: d.message ?? '' }) }); return; }
       }
       const r = await api.rebindUnit(hex, m.module, PHASE_GROUP_CH);
+      if (r.status === 'ok') setPendingRestart((p) => new Set(p).add(m.module));
       setGroupMsg(r.status === 'ok'
-        ? { sev: 'warning', text: t('devices.meteringDone'), reboot: true }
-        : { sev: 'error', text: t('devices.inputGroupRefused', { why: r.message ?? r.code ?? '' }) });
+        ? { sev: 'warning', text: t('devices.meteringDone'), reboot: true, module: m.module }
+        : { sev: 'error', text: t('devices.inputGroupRefused', { why: r.message ?? r.code ?? '' }), module: m.module });
     } catch (e) {
       setGroupMsg({ sev: 'error', text: t('devices.inputGroupRefused', { why: e instanceof Error ? e.message : String(e) }) });
     } finally { setBusyId(null); reload(); }
@@ -281,7 +298,7 @@ export const DevicesPage: React.FC = () => {
       {/* A held-low line clears by itself when released — no restart (root 03.11, RC 0c7a397c). */}
       {busLineLowS != null && busStalledS == null && <Alert severity="error" sx={{ mb: 2 }}>{t('devices.busLineLow')}</Alert>}
       {busStalledS != null && <Alert severity="error" action={<RebootNowButton />} sx={{ mb: 2 }}>{t('devices.busStalled', { s: busStalledS })}</Alert>}
-      {groupMsg && <Alert severity={groupMsg.sev} onClose={() => setGroupMsg(null)} action={groupMsg.reboot ? <RebootNowButton /> : undefined} sx={{ mb: 2 }}>{groupMsg.text}</Alert>}
+      {groupMsg && groupMsg.module == null && <Alert severity={groupMsg.sev} onClose={() => setGroupMsg(null)} action={groupMsg.reboot ? <RebootNowButton /> : undefined} sx={{ mb: 2 }}>{groupMsg.text}</Alert>}
       {unbindErr && <Alert severity="error" onClose={() => setUnbindErr(null)} sx={{ mb: 2 }}>{unbindErr}</Alert>}
 
       {caps.flags.espnow && <NodesPanel />}
@@ -346,6 +363,16 @@ export const DevicesPage: React.FC = () => {
                         <Box sx={{ mt: 1 }}>
                           <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{t(`devices.metering_${im.mode}`)}</Typography>
                           <Typography sx={{ fontSize: 12, color: ds.inkMuted }}>{t(im.mode === 'split' ? 'devices.meteringSplitHint' : im.mode === 'grouped' ? 'devices.meteringGroupedHint' : 'devices.meteringSingleHint')}</Typography>
+                          {groupMsg?.module === m.module && (
+                            <Alert
+                              severity={groupMsg.sev} onClose={() => setGroupMsg(null)} sx={{ mt: 1 }}
+                              // after the restart the hub comes back with the new layout: re-read it then
+                              action={groupMsg.reboot ? <RebootNowButton onDone={(ok) => { if (ok) { setPendingRestart(new Set()); window.setTimeout(reload, 25_000); } }} /> : undefined}
+                            >{groupMsg.text}</Alert>
+                          )}
+                          {pendingRestart.has(m.module) ? (
+                            <Typography sx={{ fontSize: 12, color: ds.sevWarning, mt: 1 }}>{t('devices.meteringPending')}</Typography>
+                          ) : (
                           <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', rowGap: 1 }}>
                             {im.mode !== 'grouped' && (
                               <Button size="small" variant="outlined" disabled={busyId !== null} onClick={() => joinInput(m, im)}>{t('devices.toNetted')}</Button>
@@ -354,6 +381,7 @@ export const DevicesPage: React.FC = () => {
                               <Button size="small" variant="outlined" disabled={busyId !== null} onClick={() => splitInput(m, im)}>{t('devices.toPerPhase')}</Button>
                             )}
                           </Stack>
+                          )}
                         </Box>
                       );
                     })()}

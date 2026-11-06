@@ -12,6 +12,8 @@ import { t } from '../../i18n';
 import { RebootNowButton } from '../common/RebootNowButton';
 import { useCapabilities } from '../../core';
 import { endpointRebootFields } from '../../core/schema/capabilities';
+import { numberRules } from '../../core/schema/fieldRules';
+import { DecimalField } from '../common/DecimalField';
 import { REBOOT_FIELDS_FALLBACK } from '../../core/shadow/ConfigShadow';
 
 /** POSIX TZ presets (sign inverted vs UTC offset, as POSIX requires); label = phrase key. */
@@ -99,6 +101,25 @@ export function syncStatusWord(status: unknown): { label: string; kind: 'live' |
 
 type Cfg = Record<string, unknown>;
 
+/**
+ * The save_config body. fw ≤ 1.1.5 stored it as the WHOLE /time.json: the changed fields alone
+ * wiped the NTP servers, and the next start had no time sync (root v116-release-artifacts, .139).
+ * 1.1.6 merges (72df280) and checks presence for the restart, so it gets only the changes.
+ */
+export function timeSaveBody(draft: Cfg, cfg: Cfg | null, mergesPartial: boolean): Cfg {
+  if (!mergesPartial) return { ...cfg, ...draft };
+  const out: Cfg = {};
+  for (const k of Object.keys(draft)) if (JSON.stringify(draft[k]) !== JSON.stringify(cfg?.[k])) out[k] = draft[k];
+  return out;
+}
+
+/** The hub's NTP host check (fw 1.1.6 save_config → 400): a host, no spaces or «/», ≤ 63 chars. */
+export function ntpHostError(value: unknown, required: boolean): string | null {
+  const v = String(value ?? '').trim();
+  if (!v) return required ? t('form.required') : null;
+  return /[\s/]/.test(v) || v.length > 63 ? t('time.ntpHostInvalid') : null;
+}
+
 /** `compact` (the wizard): the zone and the save, without the NTP servers and interval. */
 export const TimePanel: React.FC<{ compact?: boolean }> = ({ compact }) => {
   const [cfg, setCfg] = useState<Cfg | null>(null);
@@ -107,9 +128,11 @@ export const TimePanel: React.FC<{ compact?: boolean }> = ({ compact }) => {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ sev: 'success' | 'error' | 'warning'; text: string; reboot?: boolean } | null>(null);
   const [tried, setTried] = useState(false);
+  const [resyncErr, setResyncErr] = useState<string | null>(null);
   const caps = useCapabilities();
   // The hub asks for a restart when the body CONTAINS an on-start field, changed or not (root
-  // 18.10) — so only the changed fields go out, and the hint says which of them wait for a restart.
+  // 18.10) — so only the changed fields go out (fw 1.1.6; older hubs get the whole config, see
+  // timeSaveBody), and the hint says which of them wait for a restart.
   const rebootFields = endpointRebootFields(caps, '/api/system/time-sync') ?? REBOOT_FIELDS_FALLBACK.timeSync;
   const changed = (): Cfg => {
     const out: Cfg = {};
@@ -128,13 +151,19 @@ export const TimePanel: React.FC<{ compact?: boolean }> = ({ compact }) => {
   };
   useEffect(() => { void load(); }, []);
 
-  const run = async (key: string, fn: () => Promise<Record<string, unknown>>, ok: string) => {
+  // Whether the hub merges a partial save (fw 1.1.6 — the release that added `inputAggregate`).
+  const mergesPartial = caps.flags.inputAggregate;
+  const saveBody = (): Cfg => timeSaveBody(draft ?? {}, cfg, mergesPartial);
+  /** A full body names every on-start field: the restart is due only if one of them changed. */
+  const rebootDue = (): boolean => mergesPartial || Object.keys(changed()).some((k) => rebootFields.includes(k));
+
+  const run = async (key: string, fn: () => Promise<Record<string, unknown>>, ok: string, rebootIf = true) => {
     setBusy(key);
     setMsg(null);
     try {
       const res = await fn();
       if (res.status && res.status !== 'OK') throw Object.assign(new Error(String(res.message ?? 'ERROR')), { body: res });
-      setMsg(res.requires_reboot
+      setMsg(res.requires_reboot && rebootIf
         ? { sev: 'warning', text: t('time.okNeedsReboot', { ok }), reboot: true }
         : { sev: 'success', text: ok });
       await load();
@@ -160,6 +189,11 @@ export const TimePanel: React.FC<{ compact?: boolean }> = ({ compact }) => {
   const preset = TZ_PRESETS.find((p) => p.tz === tz);
   const dirty = JSON.stringify(draft) !== JSON.stringify(cfg);
   const set = (k: string, v: unknown) => setDraft({ ...draft, [k]: v });
+  // Only the changed fields go out, so only they are checked (an untouched hub value stays its own).
+  const edited = (k: string) => draft[k] !== cfg?.[k];
+  const hostErr = edited('sntp_server') ? ntpHostError(draft.sntp_server, true) : null;
+  const backupErr = edited('sntp_server_backup') ? ntpHostError(draft.sntp_server_backup, false) : null;
+  const invalid = !compact && (!!hostErr || !!backupErr || !!resyncErr);
 
   return (
     <PanelCard title={t('time.title')}>
@@ -192,20 +226,23 @@ export const TimePanel: React.FC<{ compact?: boolean }> = ({ compact }) => {
         {!compact && <>
         <ToggleRow label={t('time.sntpEnabled')} checked={draft.enable_time_sync === true} onChange={(v) => set('enable_time_sync', v)} />
         <Box sx={{ display: 'grid', gap: 1.5, gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' } }}>
-          <FormField label={t('time.ntpServer')} value={String(draft.sntp_server ?? '')} onChange={(v) => set('sntp_server', v)} />
-          <FormField label={t('time.ntpServerBackup')} value={String(draft.sntp_server_backup ?? '')} onChange={(v) => set('sntp_server_backup', v)} />
+          <TextField size="small" fullWidth label={t('time.ntpServer')} value={String(draft.sntp_server ?? '')}
+            error={!!hostErr} helperText={hostErr ?? undefined} onChange={(e) => set('sntp_server', e.target.value)} />
+          <TextField size="small" fullWidth label={t('time.ntpServerBackup')} value={String(draft.sntp_server_backup ?? '')}
+            error={!!backupErr} helperText={backupErr ?? undefined} onChange={(e) => set('sntp_server_backup', e.target.value)} />
         </Box>
-        <FormField
-          label={t('time.resyncInterval')} type="number" value={String(draft.resync_interval_sec ?? '')}
-          onChange={(v) => set('resync_interval_sec', Number(v) || 0)}
+        <DecimalField
+          label={t('time.resyncInterval')} value={typeof draft.resync_interval_sec === 'number' ? draft.resync_interval_sec : null}
+          {...numberRules('resync_interval_sec', caps.limits)}
+          onChange={(v, e) => { setResyncErr(e); if (v !== null) set('resync_interval_sec', v); }}
         />
         </>}
 
         {msg && <Alert severity={msg.sev} action={msg.reboot ? <RebootNowButton /> : undefined}>{msg.text}</Alert>}
 
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          <Button variant="contained" disabled={!dirty || !!busy}
-            onClick={() => run('save', () => getApiClient().saveTimeConfig(changed()), t('time.saved'))}>
+          <Button variant="contained" disabled={!dirty || !!busy || invalid}
+            onClick={() => run('save', () => getApiClient().saveTimeConfig(saveBody()), t('time.saved'), rebootDue())}>
             {busy === 'save' ? t('common.saving') : t('common.save')}
           </Button>
           <Button variant="outlined" disabled={!!busy}

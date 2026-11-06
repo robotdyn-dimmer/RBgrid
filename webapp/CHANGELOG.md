@@ -2,6 +2,19 @@
 
 All notable changes to the RBGrid web interface. Newest first.
 
+## 1.1.6
+
+For hub firmware 1.1.6. Requires hub API version 1. App changes since 1.1.5. On older hubs the app keeps their behaviour: the input's history reads the main point, and the time settings are saved whole.
+
+### Added
+- **Per-phase input, history and money:** on a hub with firmware 1.1.6 the input's history and money per period cover all three phase points, not L1 only: Overview (today by hour, vs yesterday, month to date, forecast) and Economics (the input's totals, balance, generation, billing). Older hubs keep reading the main point.
+- **Settings → Time:** the NTP servers and the resync interval are checked as the hub checks them (a host without spaces or “/”, up to 63 characters; 60–86 400 s) before Save.
+- **Settings → Hub firmware:** a second image sent while the hub still confirms the last one (fw 1.1.6, 409) says to try again in about a minute instead of a bare failure.
+
+### Fixed
+- **Settings → Time on hub firmware 1.1.5 and earlier:** Save sends the whole time configuration again. Those hubs replace the stored settings with what they receive, so saving only the changed field (the time zone, say) erased the NTP servers and the hub had no time sync after the next restart. Hubs on 1.1.6 merge and still get only the changes.
+- **Three-phase input switch:** the result and **Restart now** show on the module card where the button was pressed (they sat above the module grid, often out of view); after a switch the card says the change applies after a restart and hides the buttons until then, so it can't be pressed twice; a repeat bind answered «already bound» on a phase that already carries an input point counts as done, not as «Not every phase got its point» (bench round trip on .139, 06.11).
+
 ## 1.1.5 — 2026-11-06
 
 For hub firmware 1.1.5. Requires hub API version 1. App changes since 1.1.4. With the input metered per phase, history and money per period show L1 only in 1.1.5; live values and the hub's system totals are the full sum.
@@ -10,6 +23,7 @@ For hub firmware 1.1.5. Requires hub API version 1. App changes since 1.1.4. Wit
 - **Three-phase input: one point, or one point per phase** (hub ≥ 1.1.5, root u3i3-per-phase-points). On the STD-U3I3 card that carries the input (Points): «Input: one point for all three phases (phases netted)» / «Input: one point per phase», with the buttons «One point, phases netted» and «One point per phase», a confirm saying what each means for the bill, and the restart prompt. Per phase: the input keeps its history on L1, L2/L3 become input points of their own. Back to one point: those points are deleted (their own history erased, their totals move into the input). With the input split, the app reads «the input» as the sum of its phase points, each one a phase of it, as the hub sums them.
 
 ### Fixed
+- **Sensor limit (Point settings, module cards):** the accurate range's upper bound and the «line breaker is above the sensor's limit» warning use the hub's own figure for where the clamp starts clipping (`ct_fs_a`; SCT-013 ≈ 16 % above its rating), no longer 90 % of the rating — a 10 A clamp on a 10 A breaker doesn't warn any more; with no hub figure (STD factory-paired sensors) there is no range and no warning (088381b; added to this list 06.11, it was missing at release).
 - **Tariffs, export-only tariffs (e.g. SEG):** every zone shows its **Sell price**, whatever the net-metering toggle; a new zone always gets an explicit sell price (0 when no other zone has one); the toggle reads «Net metering (monthly kWh credit)» and its help says to leave it off for a paid-per-kWh export tariff (content sellprice-gated-on-netmetering).
 - **Hub's day on a clock-change day:** «today» windows, hour axes and day totals start at the hub's real midnight on the days summer time begins or ends — after the change they started an hour early (Berlin 29.03: 22:00Z instead of 23:00Z). Where midnight doesn't exist (Santiago's 24:00 change) the day starts at 01:00, like on the hub.
 - **Time:** southern-hemisphere zones in the timezone list and detected from the browser — Sydney/Melbourne, Adelaide, Brisbane, Perth, Auckland, Santiago (with their summer time), São Paulo, Johannesburg; the raw config editor no longer shows «Daylight saving» (`enable_dst`): the hub takes summer time from the zone's rule alone, so the flag changed nothing (content dst-toggle-dead).
