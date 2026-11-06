@@ -190,7 +190,7 @@ Which mode is right for you is your meter's behaviour, not a preference: a meter
 
 A split input is **three** measurement points, not one, so it takes three of the twelve the hub keeps history for (see [Points](points.md#messages)).
 
-🔴 **Before installing firmware older than v1.1.5 on a hub whose input is metered per phase, switch it back to one point.** Older firmware handles one supply point only.
+> ⚠️ **Before installing firmware older than v1.1.5 on a hub whose input is metered per phase, switch it back to one point.** Older firmware handles one supply point only.
 
 ## Module firmware update
 
