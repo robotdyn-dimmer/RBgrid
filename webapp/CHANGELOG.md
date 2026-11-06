@@ -2,6 +2,25 @@
 
 All notable changes to the RBGrid web interface. Newest first.
 
+## 1.1.5 — 2026-11-06
+
+For hub firmware 1.1.5. Requires hub API version 1. App changes since 1.1.4. With the input metered per phase, history and money per period show L1 only in 1.1.5; live values and the hub's system totals are the full sum.
+
+### Added
+- **Three-phase input: one point, or one point per phase** (hub ≥ 1.1.5, root u3i3-per-phase-points). On the STD-U3I3 card that carries the input (Points): «Input: one point for all three phases (phases netted)» / «Input: one point per phase», with the buttons «One point, phases netted» and «One point per phase», a confirm saying what each means for the bill, and the restart prompt. Per phase: the input keeps its history on L1, L2/L3 become input points of their own. Back to one point: those points are deleted (their own history erased, their totals move into the input). With the input split, the app reads «the input» as the sum of its phase points, each one a phase of it, as the hub sums them.
+
+### Fixed
+- **Tariffs, export-only tariffs (e.g. SEG):** every zone shows its **Sell price**, whatever the net-metering toggle; a new zone always gets an explicit sell price (0 when no other zone has one); the toggle reads «Net metering (monthly kWh credit)» and its help says to leave it off for a paid-per-kWh export tariff (content sellprice-gated-on-netmetering).
+- **Hub's day on a clock-change day:** «today» windows, hour axes and day totals start at the hub's real midnight on the days summer time begins or ends — after the change they started an hour early (Berlin 29.03: 22:00Z instead of 23:00Z). Where midnight doesn't exist (Santiago's 24:00 change) the day starts at 01:00, like on the hub.
+- **Time:** southern-hemisphere zones in the timezone list and detected from the browser — Sydney/Melbourne, Adelaide, Brisbane, Perth, Auckland, Santiago (with their summer time), São Paulo, Johannesburg; the raw config editor no longer shows «Daylight saving» (`enable_dst`): the hub takes summer time from the zone's rule alone, so the flag changed nothing (content dst-toggle-dead).
+- **Tariffs, texts:** the priority hint says a Weekend zone ranks 3rd only on Saturday and Sunday (last on weekdays) and that a zone's days come from «Days»; «Remove zone» says where its hours go — to the default zone, or unpriced when there is none or the zone removed is the default.
+- **Point page:** «readings not corrected» sends you to Point settings → Current sensor, where the model is changed (it pointed at the module card).
+- **Car park:** a three-phase charger bound as one point per conductor is one station when its points share a group (2–3 station points, each on its own phase L1/L2/L3, same rated power) — one card, one load-balance segment and one «Sessions today» session, counted on the sum of its points (was ×3). The group's name from Settings → Consumer groups names the card.
+- **Economics → Balance:** «Unmetered, % of input» shows «—» when the input imported under 10 Wh for the period (was −3 157 043 % on a near-idle input); Overview's unmetered share likewise hides below 50 W of input load (root econ-balance-percent).
+- **Tariffs:** a zone's sell price stays visible and editable with net metering off (the hub values exports at it
+  either way), with a note to set it to 0 without a feed-in contract; the net-metering text calls the ratio the
+  «selling ratio», as the field does.
+
 ## 1.1.4 — 2026-11-04
 
 For hub firmware 1.1.4. Requires hub API version 1. App changes since 1.1.3:

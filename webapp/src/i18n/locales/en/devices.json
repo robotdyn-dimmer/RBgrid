@@ -48,5 +48,22 @@
   "inputGroupRefused": "The hub refused: {why}",
   "inputGroupUpdate": "Three-phase input from one {model}: update the hub to 1.1.2.",
   "busStalled": "The module bus is stuck — no readings for {s} s. Check the module connections (a module wired without power blocks the bus), then restart the hub.",
-  "busLineLow": "A module bus line is held low — no module can be read. A module may be without power, set to another mode, or wired wrong: check the module connections."
+  "busLineLow": "A module bus line is held low — no module can be read. A module may be without power, set to another mode, or wired wrong: check the module connections.",
+  "metering_grouped": "Input: one point for all three phases (phases netted)",
+  "metering_split": "Input: one point per phase",
+  "metering_single": "Input: measured on L1 only",
+  "meteringGroupedHint": "Like a meter that nets the phases: export on one phase offsets import on another.",
+  "meteringSplitHint": "Like a meter that counts each phase: every phase has its own import and export, nothing is offset.",
+  "meteringSingleHint": "Only L1 counts toward the input; L2 and L3 of this module aren’t in it.",
+  "toNetted": "One point, phases netted",
+  "toPerPhase": "One point per phase",
+  "perPhaseTitle": "Meter the input per phase?",
+  "perPhaseBody": "Each phase becomes its own input point with its own import and export, as on a meter that counts per phase. Export on one phase is no longer offset by import on another. The input point keeps its history and takes L1; L2 and L3 start from zero. Applies after a restart.",
+  "perPhaseConfirm": "One point per phase",
+  "perPhasePartial": "Not every phase got its point: {why}. Press «One point per phase» again to retry.",
+  "nettedTitle": "Meter the input as one point?",
+  "nettedBody": "The input measures all three phases as one point, phases netted, as on a meter that nets them. Its history stays. Applies after a restart.",
+  "nettedBodyLegs": "The input measures all three phases as one point again, phases netted. The points {points} are deleted and their own history is erased; their totals move into the input, so the site’s totals stay. Applies after a restart.",
+  "nettedConfirm": "One point, phases netted",
+  "meteringDone": "Saved. The hub meters the input this way after a restart."
 }

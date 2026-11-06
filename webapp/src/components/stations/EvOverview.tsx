@@ -23,8 +23,9 @@ import { ParkingHero } from './ParkingHero';
 import { ParkingPowerChart, useParkingHistory } from './ParkingPowerChart';
 import { EvThresholds } from './evStatus';
 import {
-  buildEvTree, buildStations, buildLoadSegments, stationCounts, lineUnits, isStation, isGenerationUnit,
+  buildEvTree, buildStations, buildLoadSegments, stationCounts, stationSets, lineUnits, isStation, isGenerationUnit,
 } from '../../pages/overviewData';
+import { useDeviceGroups } from '../../hooks/useDeviceGroups';
 import { enWh } from '../common/ruFormat';
 import { useLensFormat } from '../../economics/MoneyLens';
 import { t } from '../../i18n';
@@ -46,10 +47,11 @@ export interface EvOverviewProps {
 export const EvOverview: React.FC<EvOverviewProps> = ({
   units, join, ev, grid, gridHasDirection, pricePerKwh, formatMoney, lost, onOpenPoint,
 }) => {
-  const stations = buildStations(units, join, ev);
+  const { names: groupNames } = useDeviceGroups();
+  const stations = buildStations(units, join, ev, groupNames);
   const counts = stationCounts(stations);
   const offline = stations.filter((s) => s.status === 'nodata').length;
-  const segments = buildLoadSegments(units, join);
+  const segments = buildLoadSegments(units, join, groupNames);
   // Input limit from the device only (main unit rated_power_w) — never substituted (U3).
   const limitW = join.input.ratedPowerW;
 
@@ -57,7 +59,7 @@ export const EvOverview: React.FC<EvOverviewProps> = ({
   const parking = lineUnits(units, join).filter((g) => isStation(g, join) || !isGenerationUnit(g, join));
   const history = useParkingHistory(
     parking.map((g) => g.unitKey),
-    parking.filter((g) => isStation(g, join)).map((g) => g.unitKey),
+    stationSets(units, join).map((st) => st.keys),
     ev.chargeThresholdW,
     join.input.hex,
   );

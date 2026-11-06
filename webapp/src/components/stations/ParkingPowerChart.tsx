@@ -9,7 +9,8 @@
  * summed per bucket. With no lines or too many (> MAX_UNITS requests) it falls back to the
  * main input as a proxy and SAYS so in the title. The same fetch yields «Сессий сегодня»
  * (rising edges of a station's hourly average above the charge threshold) — an estimate,
- * labelled as such by the caller.
+ * labelled as such by the caller. A station made of several points (a three-phase charger, one
+ * point per conductor) is counted on the SUM of its points, so one session counts once.
  */
 import { linePath, runsOf } from '../charts/chartPath';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -65,7 +66,7 @@ async function fetchToday(key: string, from: number): Promise<HistoryElectricalR
 }
 
 /** Rising edges of the hourly average above the threshold = sessions started today. */
-function countSessions(recs: HistoryElectricalRecord[], thresholdW: number): number {
+export function countSessions(recs: Pick<HistoryElectricalRecord, 'ts' | 'p_act'>[], thresholdW: number): number {
   let n = 0;
   let prevOn = false;
   for (const r of recs) {
@@ -76,18 +77,30 @@ function countSessions(recs: HistoryElectricalRecord[], thresholdW: number): num
   return n;
 }
 
+/** One station's hourly series: its points' |P| summed per hub hour. */
+export function stationSeries(perPoint: Pick<HistoryElectricalRecord, 'ts' | 'p_act'>[][], from: number): { ts: number; p_act: number }[] {
+  const by = new Map<number, number>();
+  for (const recs of perPoint) {
+    for (const r of recs) {
+      const b = from + Math.floor((r.ts - from) / HOUR) * HOUR;
+      by.set(b, (by.get(b) ?? 0) + Math.abs(r.p_act));
+    }
+  }
+  return Array.from(by.entries()).sort(([a], [b]) => a - b).map(([ts, p_act]) => ({ ts, p_act }));
+}
+
 export function useParkingHistory(
-  lineKeys: string[], stationKeys: string[], thresholdW: number, inputHex: string = MAIN_HEX_KEY,
+  lineKeys: string[], stationGroups: string[][], thresholdW: number, inputHex: string = MAIN_HEX_KEY,
 ): ParkingHistory {
   const [state, setState] = useState<ParkingHistory>({ points: [], sessions: null, source: null, loading: false });
   const clock = useDeviceClock();
   const linesSig = lineKeys.join(',');
-  const stationsSig = stationKeys.join(',');
+  const stationsSig = stationGroups.map((g) => g.join('+')).join(',');
 
   useEffect(() => {
     let alive = true;
     const lines = linesSig ? linesSig.split(',') : [];
-    const stations = new Set(stationsSig ? stationsSig.split(',') : []);
+    const stations = stationsSig ? stationsSig.split(',').map((g) => g.split('+')) : [];
     const useInput = lines.length === 0 || lines.length > MAX_UNITS;
     const keys = useInput ? [inputHex] : lines;
 
@@ -98,12 +111,10 @@ export function useParkingHistory(
       if (!alive) return;
       const byBucket = new Map<number, ParkingPoint>();
       let anyOk = false;
-      let sessions: number | null = useInput ? null : 0;
+      const byKey = new Map<string, HistoryElectricalRecord[] | null>();
       results.forEach((res, idx) => {
-        if (res.status !== 'fulfilled') {
-          if (stations.has(keys[idx])) sessions = null;
-          return;
-        }
+        byKey.set(keys[idx], res.status === 'fulfilled' ? res.value : null);
+        if (res.status !== 'fulfilled') return;
         anyOk = true;
         for (const r of res.value) {
           const b = from + Math.floor((r.ts - from) / HOUR) * HOUR; // hub hours (half-hour zones too)
@@ -112,8 +123,13 @@ export function useParkingHistory(
           cur.partial = cur.partial || ((r.q ?? 0) & 1) === 1;
           byBucket.set(b, cur);
         }
-        if (sessions != null && stations.has(keys[idx])) sessions += countSessions(res.value, thresholdW);
       });
+      let sessions: number | null = useInput ? null : 0;
+      for (const st of stations) {
+        const recs = st.map((k) => byKey.get(k));
+        if (sessions == null || recs.some((r) => !r)) { sessions = null; break; }
+        sessions += countSessions(stationSeries(recs as HistoryElectricalRecord[][], from), thresholdW);
+      }
       setState({
         points: Array.from(byBucket.values()).sort((a, b) => a.ts - b.ts),
         sessions: anyOk ? sessions : null,

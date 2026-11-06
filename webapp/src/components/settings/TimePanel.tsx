@@ -38,6 +38,15 @@ const TZ_PRESETS: { tz: string; label: string }[] = [
   { tz: 'CST6CDT,M3.2.0,M11.1.0', label: 'time.tzUsCentral' },
   { tz: 'MST7MDT,M3.2.0,M11.1.0', label: 'time.tzUsMountain' },
   { tz: 'PST8PDT,M3.2.0,M11.1.0', label: 'time.tzUsPacific' },
+  // Southern hemisphere: summer time runs across New Year (start month > end month).
+  { tz: '<-03>3', label: 'time.tzSaoPaulo' },
+  { tz: '<-04>4<-03>,M9.1.6/24,M4.1.6/24', label: 'time.tzSantiago' },
+  { tz: 'SAST-2', label: 'time.tzJohannesburg' },
+  { tz: 'AWST-8', label: 'time.tzPerth' },
+  { tz: 'ACST-9:30ACDT,M10.1.0,M4.1.0/3', label: 'time.tzAdelaide' },
+  { tz: 'AEST-10', label: 'time.tzBrisbane' },
+  { tz: 'AEST-10AEDT,M10.1.0,M4.1.0/3', label: 'time.tzSydney' },
+  { tz: 'NZST-12NZDT,M9.5.0,M4.1.0/3', label: 'time.tzAuckland' },
   { tz: 'UTC0', label: 'time.tzUtc' },
 ];
 
@@ -56,10 +65,16 @@ export function browserTz(now = new Date()): { iana: string; posix: string } | n
     '0/60': 'GMT0BST,M3.5.0/1,M10.5.0', '60/120': 'CET-1CEST,M3.5.0,M10.5.0/3', '120/180': 'EET-2EEST,M3.5.0/3,M10.5.0/4',
     '-300/-240': 'EST5EDT,M3.2.0,M11.1.0', '-360/-300': 'CST6CDT,M3.2.0,M11.1.0', '-420/-360': 'MST7MDT,M3.2.0,M11.1.0', '-480/-420': 'PST8PDT,M3.2.0,M11.1.0',
   };
-  const exact: Record<string, string> = { 'Europe/Moscow': 'MSK-3', 'Europe/Kaliningrad': 'EET-2', 'Asia/Tokyo': 'JST-9', 'Asia/Shanghai': 'CST-8', 'Asia/Kolkata': 'IST-5:30', 'Asia/Calcutta': 'IST-5:30' };
+  const exact: Record<string, string> = {
+    'Australia/Sydney': 'AEST-10AEDT,M10.1.0,M4.1.0/3', 'Australia/Melbourne': 'AEST-10AEDT,M10.1.0,M4.1.0/3', 'Australia/Hobart': 'AEST-10AEDT,M10.1.0,M4.1.0/3',
+    'Australia/Canberra': 'AEST-10AEDT,M10.1.0,M4.1.0/3', 'Australia/Adelaide': 'ACST-9:30ACDT,M10.1.0,M4.1.0/3', 'Australia/Brisbane': 'AEST-10',
+    'Australia/Perth': 'AWST-8', 'Pacific/Auckland': 'NZST-12NZDT,M9.5.0,M4.1.0/3', 'America/Santiago': '<-04>4<-03>,M9.1.6/24,M4.1.6/24',
+    'America/Sao_Paulo': '<-03>3', 'Africa/Johannesburg': 'SAST-2',
+    'Europe/Moscow': 'MSK-3', 'Europe/Kaliningrad': 'EET-2', 'Asia/Tokyo': 'JST-9', 'Asia/Shanghai': 'CST-8', 'Asia/Kolkata': 'IST-5:30', 'Asia/Calcutta': 'IST-5:30' };
   if (exact[iana]) return { iana, posix: exact[iana] };
   const k = `${Math.min(jan, jul)}/${Math.max(jan, jul)}`;
-  // Northern-hemisphere DST pairs above; southern zones and the rest fall back to a fixed offset.
+  // Northern-hemisphere DST pairs above; known southern DST zones are matched by name (exact);
+  // other zones with DST get no guess, zones without it a fixed offset.
   if (jan < jul && known[k]) return { iana, posix: known[k] };
   if (jan === jul) {
     if (jan === 0) return { iana, posix: 'UTC0' };

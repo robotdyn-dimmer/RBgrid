@@ -96,7 +96,10 @@ export const dm = (rub: number): number => Math.round(rub * demoRegion().k * 100
 export interface DemoPlan { plan: string; provider: string; dayFrom: number; dayTo: number; day: number; night: number; vat: number; fixed: number; sell: number | null }
 export function demoTariff(): DemoPlan {
   const t = demoSite().tariff;
-  if (!t) return { plan: 'Two-rate (demo)', provider: 'Utility (demo)', dayFrom: 7, dayTo: 23, day: dm(6.43), night: dm(3.21), vat: 20, fixed: dm(120), sell: dm(1.8) };
+  // A sell price (and net metering) only where something exports — a site without generation had the same
+  // fixed kWh-credit figures as the solar house (content 04.11).
+  const exports = demoSite().points.some((p) => p.role === 'RENEWABLE_SOURCE');
+  if (!t) return { plan: 'Two-rate (demo)', provider: 'Utility (demo)', dayFrom: 7, dayTo: 23, day: dm(6.43), night: dm(3.21), vat: 20, fixed: dm(120), sell: exports ? dm(1.8) : null };
   const net = (g: number) => Math.round((g / (1 + t.vat / 100)) * 10_000) / 10_000;
   return { plan: t.plan, provider: t.provider, dayFrom: t.dayFrom, dayTo: t.dayTo, day: net(t.dayGross), night: net(t.nightGross), vat: t.vat, fixed: t.fixed, sell: t.sell };
 }
@@ -178,9 +181,13 @@ export function demoTelemetryFrame(): TelemetryFrame {
       module: pt.module, ch: pt.ch, dayIn: gen ? 0 : Math.round(day.inWh), dayOut: gen ? Math.round(day.outWh) : undefined,
     });
     if (pt.absent) { units[pt.id] = { ...u, present: false, p_act: 0, i: 0 }; continue; }
-    // The CT's load (BASIC d03f19ed): % of its rating, near the limit ≥ 85 %, clipping ≥ 100 %.
+    // The CT's load as the hub reports it (root 04.11): % of the nominal; ct_warn at 0.9 × ct_fs_a,
+    // clip at ct_fs_a (SCT-013 clipping starts ≈ +16 % over nominal). STD factory sensors (CT-) have
+    // no limits in the registry — no load / warn / clip.
+    const onStd = site.modules.find((m) => m.module === pt.module)?.line === 'std';
     const loadPct = Math.round(((u.i ?? 0) / pt.ct.a) * 100);
-    const ctState = pt.ch === 254 ? {} : { load_pct: loadPct, ...(loadPct >= 100 ? { clip: true } : loadPct >= 85 ? { ct_warn: true } : {}) };
+    const fsA = pt.ct.a * SCT_FS;
+    const ctState = pt.ch === 254 || onStd ? {} : { load_pct: loadPct, ...((u.i ?? 0) >= fsA ? { clip: true } : (u.i ?? 0) >= 0.9 * fsA ? { ct_warn: true } : {}) };
     // A three-phase input (STD-U3I3 group): three legs, slightly unbalanced; US: two legs. A site
     // with every line on a phase sums each leg from its points (+ the unmetered rest split evenly).
     const legW = site.legsFromPoints && pt.ch === 254
@@ -243,14 +250,21 @@ export function demoSensors(): SensorListEntry[] {
   });
 }
 
+/** SCT-013 clipping starts ≈ 16 % over nominal (rbAmp sensor registry, root 04.11). */
+const SCT_FS = 1.16;
+
 function demoSensorsBase(): SensorListEntry[] {
   // The variant's wiring (mock/demoSites): a point per channel, a phase group as ONE entry ch 254
   // (delta №5 — its channels aren't listed), and the free channels.
   const site = demoSite();
   const addr = (m: number) => site.modules.find((x) => x.module === m)?.addr ?? 0x50 + m;
+  const std = (m: number) => site.modules.find((x) => x.module === m)?.line === 'std';
+  // As a real hub lists them (root 04.11): an SCT channel carries its model, nominal and clipping start
+  // (ct_rated_a / ct_fs_a); a channel of an STD module (factory-paired CT-) carries no model or limits.
+  const ct = (m: number, code: number, a: number) => (std(m) ? { ct_code: 0 } : { ct_code: code, ct_rated_a: a, ct_fs_a: Math.round(a * SCT_FS * 10) / 10 });
   return [
-    ...site.points.map((p): SensorListEntry => ({ iface: 'i2c', present: !p.absent, unit_id: p.id, bus: 0, module: p.module, ch: p.ch, ct_code: p.ct.code, addr: addr(p.module), src_class: 'rbamp' } as SensorListEntry)),
-    ...site.free.map((f): SensorListEntry => ({ iface: 'i2c', present: true, unit_id: null, bus: 0, module: f.module, ch: f.ch, ct_code: 3, addr: addr(f.module), src_class: 'rbamp' } as SensorListEntry)),
+    ...site.points.map((p): SensorListEntry => ({ iface: 'i2c', present: !p.absent, unit_id: p.id, bus: 0, module: p.module, ch: p.ch, ...ct(p.module, p.ct.code, p.ct.a), addr: addr(p.module), src_class: 'rbamp' } as SensorListEntry)),
+    ...site.free.map((f): SensorListEntry => ({ iface: 'i2c', present: true, unit_id: null, bus: 0, module: f.module, ch: f.ch, ...ct(f.module, 3, 30), addr: addr(f.module), src_class: 'rbamp' } as SensorListEntry)),
   ];
 }
 
@@ -594,7 +608,7 @@ export function demoHubEvents(level: 'all' | 'event' | 'fail'): HubEventsPage {
     { seq: 3, b: 1, ts: t0 + 5, up: 5, lvl: 'event', msg: 'fw: image 10723b74' },
     { seq: 4, b: 1, ts: t0 + 3600, up: 3600, lvl: 'event', msg: 'HOUR closed E=812.4Wh' },
     // One poll timeout of the site's last module that cleared by itself (the next polls answer).
-    { seq: 5, b: 1, ts: t0 + 5400, up: 5400, lvl: 'fail', msg: `FAIL poll m${Math.max(0, demoSite().modules.length - 1)} timeout` },
+    { seq: 5, b: 1, ts: t0 + 5400, up: 5400, lvl: 'fail', msg: `FAIL m${(demoSite().modules.find((m) => !m.present) ?? demoSite().modules[demoSite().modules.length - 1]).module} poll: timeout — module unreachable` },
     { seq: 6, b: 1, ts: t0 + 7200, up: 7200, lvl: 'event', msg: 'ota: rebooting' },
     { seq: 7, b: 2, ts: t0 + 7230, up: 2, lvl: 'event', msg: 'boot: reset=planned restart' },
     { seq: 8, b: 2, ts: t0 + 7235, up: 7, lvl: 'event', msg: 'ota: new image confirmed valid' },

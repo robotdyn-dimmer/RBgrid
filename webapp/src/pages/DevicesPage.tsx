@@ -33,7 +33,7 @@ import { refreshHardware } from '../hooks/useHardware';
 import { RELEASE_HIDDEN } from '../constants/release';
 import AddIcon from '@mui/icons-material/Add';
 import { fwLabel } from '../components/devices/moduleFw';
-import { isPhaseGroup, inputGroupOffer, PHASE_GROUP_CH, VOLTAGE_INPUT_CH } from '../entities/phaseGroup';
+import { isPhaseGroup, inputGroupOffer, inputMetering, InputMetering, PHASE_GROUP_CH, VOLTAGE_INPUT_CH } from '../entities/phaseGroup';
 import { fwAtLeast } from '../entities/hubVersion';
 import { useHubVersion } from '../hooks/useHubVersion';
 import { RebootNowButton } from '../components/common/RebootNowButton';
@@ -124,6 +124,71 @@ export const DevicesPage: React.FC = () => {
     } catch (e) {
       setGroupMsg({ sev: 'error', text: t('devices.inputGroupRefused', { why: e instanceof Error ? e.message : String(e) }) });
     } finally { setBusyId(null); }
+  };
+  // fw 1.1.5: the input on a U3I3 as one point (phases netted) or one point per phase (root
+  // u3i3-per-phase-points). Older hubs keep the «Use as the three-phase input» offer above.
+  const perPhaseOk = fwAtLeast(hubVersion, [1, 1, 5]) === true && !RELEASE_HIDDEN.inputGroup;
+  const metering = useMemo(
+    () => (perPhaseOk ? inputMetering(sensors, modules, unitsCfg.input.hex ?? null, (id) => cfgOf(id)?.role) : new Map<number, InputMetering>()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [perPhaseOk, sensors, modules, unitsCfg],
+  );
+  const inputName = unitsCfg.input.hex ? fullDisplayName({ unitKey: unitsCfg.input.hex } as UnitEntityGroup, cfgOf(unitsCfg.input.hex)) : '';
+  const phaseName = (c: number) => `L${c + 1}`;
+  const splitInput = async (m: SensorModule, im: InputMetering) => {
+    const hex = unitsCfg.input.hex;
+    if (!hex) return;
+    if (!(await confirm({ title: t('devices.perPhaseTitle'), body: t('devices.perPhaseBody'), confirmLabel: t('devices.perPhaseConfirm') }))) return;
+    setBusyId(`split-${m.module}`); setGroupMsg(null);
+    const api = getApiClient();
+    try {
+      let free = im.freePhases;
+      if (im.mode === 'grouped') {
+        const r = await api.rebindUnit(hex, m.module, 0);
+        if (r.status !== 'ok') { setGroupMsg({ sev: 'error', text: t('devices.inputGroupRefused', { why: r.message ?? r.code ?? '' }) }); return; }
+        free = [1, 2].filter((c) => c < (m.n_i ?? 3));
+      }
+      // The other phases as input points: a supply role can't be changed later (ROLE_SUPPLY_LOCKED).
+      const failed: string[] = [];
+      for (const ch of free) {
+        try {
+          const res = await api.createUnit({
+            sensor: { iface: 'i2c', bus: im.bus ?? 0, module: m.module, ch }, name: `${inputName} ${phaseName(ch)}`,
+            role: 'MAIN_SUPPLY', stat_class: '1HOUR',
+          });
+          if (res.status !== 'ok') failed.push(`${phaseName(ch)}: ${res.message ?? res.code ?? ''}`);
+        } catch (e) { failed.push(`${phaseName(ch)}: ${e instanceof Error ? e.message : String(e)}`); }
+      }
+      setGroupMsg(failed.length
+        ? { sev: 'error', text: t('devices.perPhasePartial', { why: failed.join('; ') }), reboot: im.mode === 'grouped' }
+        : { sev: 'warning', text: t('devices.meteringDone'), reboot: true });
+    } catch (e) {
+      setGroupMsg({ sev: 'error', text: t('devices.inputGroupRefused', { why: e instanceof Error ? e.message : String(e) }) });
+    } finally { setBusyId(null); reload(); }
+  };
+  const joinInput = async (m: SensorModule, im: InputMetering) => {
+    const hex = unitsCfg.input.hex;
+    if (!hex) return;
+    const legNames = im.legs.map((id) => fullDisplayName({ unitKey: id } as UnitEntityGroup, cfgOf(id))).join(', ');
+    if (!(await confirm({
+      title: t('devices.nettedTitle'),
+      body: im.legs.length ? t('devices.nettedBodyLegs', { points: legNames }) : t('devices.nettedBody'),
+      confirmLabel: t('devices.nettedConfirm'), danger: im.legs.length > 0,
+    }))) return;
+    setBusyId(`join-${m.module}`); setGroupMsg(null);
+    const api = getApiClient();
+    try {
+      for (const id of im.legs) {
+        const d = await api.deleteUnit(id);
+        if (d.status !== 'ok') { setGroupMsg({ sev: 'error', text: t('devices.inputGroupRefused', { why: d.message ?? '' }) }); return; }
+      }
+      const r = await api.rebindUnit(hex, m.module, PHASE_GROUP_CH);
+      setGroupMsg(r.status === 'ok'
+        ? { sev: 'warning', text: t('devices.meteringDone'), reboot: true }
+        : { sev: 'error', text: t('devices.inputGroupRefused', { why: r.message ?? r.code ?? '' }) });
+    } catch (e) {
+      setGroupMsg({ sev: 'error', text: t('devices.inputGroupRefused', { why: e instanceof Error ? e.message : String(e) }) });
+    } finally { setBusyId(null); reload(); }
   };
   const bound = sensors.filter((s) => s.unit_id !== null);
   const unbound = freeSensors(sensors, modules);
@@ -256,7 +321,7 @@ export const DevicesPage: React.FC = () => {
                       return (
                         <Typography key={`${s.module}-${s.ch}`} sx={{ ...tnum, fontSize: 12, color: ds.inkMuted }}>
                           {t('devices.channelSensor', { ch: channelLabel(s.ch, s.ch_label), sensor: s.ct_name || ctName(s.ct_code, m, caps.ctModels, caps.ctModelsFixed) })}
-                          {r ? ` · ${t('devices.ctRange', { lo: nf(r.lo, 2), hi: nf(r.hi, 0) })}` : ''}
+                          {r ? ` · ${t('devices.ctRange', { lo: nf(r.lo, 2), hi: nf(r.hi, 1) })}` : ''}
                           {/* a module may be wired partly, any channels (operator 18.10): free is normal, not an alarm */}
                           {s.unit_id ? ` → ${fullDisplayName({ unitKey: s.unit_id } as UnitEntityGroup, cfgOf(s.unit_id))}` : ` · ${t('devices.chFree')}`}
                           {s.sct_correction === 'corrected' && typeof s.sct_scale === 'number' ? ` · ${t('devices.sctScale', { k: nf(s.sct_scale, 3) })}` : ''}
@@ -274,8 +339,26 @@ export const DevicesPage: React.FC = () => {
                       <Button size="small" variant="outlined" sx={{ alignSelf: 'flex-start', mt: 1 }} onClick={() => setFwModule(m)}>{t('modfw.update')}</Button>
                     )}
 
+                    {/* The input's metering on this module (fw 1.1.5): netted in one point, or one point per phase. */}
+                    {metering.get(m.module) && (() => {
+                      const im = metering.get(m.module) as InputMetering;
+                      return (
+                        <Box sx={{ mt: 1 }}>
+                          <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{t(`devices.metering_${im.mode}`)}</Typography>
+                          <Typography sx={{ fontSize: 12, color: ds.inkMuted }}>{t(im.mode === 'split' ? 'devices.meteringSplitHint' : im.mode === 'grouped' ? 'devices.meteringGroupedHint' : 'devices.meteringSingleHint')}</Typography>
+                          <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', rowGap: 1 }}>
+                            {im.mode !== 'grouped' && (
+                              <Button size="small" variant="outlined" disabled={busyId !== null} onClick={() => joinInput(m, im)}>{t('devices.toNetted')}</Button>
+                            )}
+                            {(im.mode === 'grouped' || (im.mode === 'single' && im.freePhases.length > 0)) && (
+                              <Button size="small" variant="outlined" disabled={busyId !== null} onClick={() => splitInput(m, im)}>{t('devices.toPerPhase')}</Button>
+                            )}
+                          </Stack>
+                        </Box>
+                      );
+                    })()}
                     {/* Binding a NEW point as a group (POST /units ch 254) is gone: every hub refuses it (root 03.11). */}
-                    {groupOffer.get(m.module) === 'regroup' && (
+                    {!metering.has(m.module) && groupOffer.get(m.module) === 'regroup' && (
                       <Button
                         size="small" variant="contained" startIcon={<AddLinkIcon />} sx={{ alignSelf: 'flex-start', mt: 1 }}
                         disabled={busyId !== null} onClick={() => regroupInput(m)}
@@ -283,7 +366,7 @@ export const DevicesPage: React.FC = () => {
                         {t('devices.inputGroup')}
                       </Button>
                     )}
-                    {groupOffer.get(m.module) === 'update' && (
+                    {!metering.has(m.module) && groupOffer.get(m.module) === 'update' && (
                       <Typography sx={{ fontSize: 12, color: ds.inkMuted, mt: 0.5 }}>{t('devices.inputGroupUpdate', { model: m.model ?? '' })}</Typography>
                     )}
                   </Stack>

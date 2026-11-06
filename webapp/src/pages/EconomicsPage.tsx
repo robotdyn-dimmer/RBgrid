@@ -321,6 +321,9 @@ function useLiveToday(ids: string[], field: 'energy_day_in' | 'energy_day_out'):
  * lines — the unmetered remainder in kWh and %. A line with no records for the period (offline,
  * new) makes the balance INCOMPLETE and says which (never «everything is unmetered»).
  */
+// Below this the input reads ~0 kWh (a bench input, a solar house at noon): a share of it means nothing.
+const BALANCE_PCT_FLOOR_WH = 10;
+
 const BalanceSection: React.FC<{ lineIds: string[]; mainId: string; period: TotalsPeriod; todayLive: WindowTotals | null; nameOf: (id: string) => string }> = ({ lineIds, mainId, period, todayLive, nameOf }) => {
   const [lines, setLines] = useState<Record<string, PeriodTotals | null>>({});
   const onTotals = React.useCallback((id: string, v: PeriodTotals | null) => setLines((g) => (g[id] === v ? g : { ...g, [id]: v })), []);
@@ -343,7 +346,7 @@ const BalanceSection: React.FC<{ lineIds: string[]; mainId: string; period: Tota
               <Grid item xs={6} sm={3}><StatTile label={t('economics.balanceInput')} value={enWh(inWh)} emphasis /></Grid>
               <Grid item xs={6} sm={3}><StatTile label={t('economics.balanceLines', { n: lineIds.length - missing.length })} value={enWh(sum)} /></Grid>
               <Grid item xs={6} sm={3}><StatTile label={t('economics.balanceRest')} value={missing.length ? '—' : enWh(rest)} /></Grid>
-              <Grid item xs={6} sm={3}><StatTile label={t('economics.balanceRestPct')} value={missing.length || inWh <= 0 ? '—' : `${nf((rest / inWh) * 100)} %`} /></Grid>
+              <Grid item xs={6} sm={3}><StatTile label={t('economics.balanceRestPct')} value={missing.length || inWh < BALANCE_PCT_FLOOR_WH ? '—' : `${nf((rest / inWh) * 100)} %`} /></Grid>
             </Grid>
             {missing.length > 0 && (
               <Alert severity="info" sx={{ mt: 1.5 }}>{t('economics.balanceIncomplete', { points: missing.map(nameOf).join(', ') })}</Alert>

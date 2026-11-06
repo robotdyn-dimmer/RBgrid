@@ -101,7 +101,12 @@ export function makeDeviceClock(tzString: string | null | undefined): DeviceCloc
     dayStart: (ts) => {
       const off = tzOffsetAt(tz, ts);
       const local = ts + off;
-      return local - (((local % 86400) + 86400) % 86400) - off;
+      const localMidnight = local - (((local % 86400) + 86400) % 86400);
+      // Midnight takes ITS OWN offset, not the moment's: on a changeover day the two differ
+      // (Berlin 29.03 after 02:00 read 22:00Z, not 23:00Z). When local midnight doesn't exist
+      // (Santiago's 24:00 spring-forward) this lands on the changeover, where the hub's day starts
+      // too («T01:00:00-03:00», root tz-southern-presets).
+      return localMidnight - tzOffsetAt(tz, localMidnight - off);
     },
   };
 }

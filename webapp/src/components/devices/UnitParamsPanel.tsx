@@ -30,7 +30,7 @@ import { useUnsavedChanges } from '../../app/unsavedGuard';
 import { savedText } from '../../services/savedText';
 import { evThresholds } from '../stations/evStatus';
 import { useHardware, refreshHardware, markModuleRestart } from '../../hooks/useHardware';
-import { pointHardware, ctRatingA, ctRatingOf, channelRange, ctSettable, ctName, ctRange, sensorClassOf } from '../../entities/moduleLine';
+import { pointHardware, ctRatingA, ctRatingOf, channelRange, ctSettable, ctName, sensorClassOf } from '../../entities/moduleLine';
 import type { EvConfig } from '../../types/config';
 
 const MAX_FULL_BODY = 8000; // hub body cap for the full units-config POST (~8 KB) — fallback path
@@ -202,9 +202,10 @@ export const UnitParamsPanel: React.FC<{ apiId: string | null }> = ({ apiId }) =
   const ctRangeOf = (code: number) => {
     const rating = ctRatingA(code, { ...caps.ctModelsFixed, ...caps.ctModels });
     if (!rating) return null;
-    // The fitted CT: the hub's clipping start (ct_fs_a); other models: by rating.
-    const r = code === hwCt ? channelRange(hwSensor, ctRatingOf(hwSensor, caps.ctModels) ?? rating, sensorCls) : ctRange(rating, sensorCls);
-    return { lo: nf(r.lo, 2), hi: nf(r.hi, 0), hiA: r.hi };
+    // Only the fitted CT has a limit — the hub's clipping start (ct_fs_a); another model picked here
+    // gets its figure from the hub once saved, so no guess before that.
+    const r = code === hwCt ? channelRange(hwSensor, ctRatingOf(hwSensor, caps.ctModels) ?? rating, sensorCls) : null;
+    return r ? { lo: nf(r.lo, 2), hi: nf(r.hi, 1), hiA: r.hi } : null;
   };
   const ctNow = ctRangeOf(draft.ct || hwCt || 0);
   const ctOverLimit = ctNow != null && maxA != null && maxA > ctNow.hiA;

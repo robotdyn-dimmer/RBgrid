@@ -122,46 +122,90 @@ function nodeFor(g: UnitEntityGroup, join: UnitsConfigJoin) {
   };
 }
 
+/**
+ * The site's charging stations. A three-phase charger bound as one point per conductor (a Basic per
+ * phase) is ONE station — one card, one segment, one session, not three (content
+ * use-cases-persona-facts #3). The hub has no «same charger» field, so the app reads it from a
+ * consumer group (G5 `group_id`) whose station points are 2–3 conductors: each on its own phase
+ * L1/L2/L3, with the same rated power. Any other group (a car park's «Charging stations» group of
+ * separate chargers) keeps one station per point. A group's trunk point measures the whole charger.
+ * `keys` = the points whose readings make the station.
+ */
+export interface StationSet { lead: UnitEntityGroup; keys: string[]; units: UnitEntityGroup[]; groupId?: number }
+
+export function stationSets(groups: UnitEntityGroup[], join: UnitsConfigJoin): StationSet[] {
+  const out: StationSet[] = [];
+  const byGroup = new Map<number, StationSet>();
+  for (const g of lineUnits(groups, join).filter((u) => isStation(u, join))) {
+    const cfg = join.forGroup(g);
+    const gid = cfg?.groupId;
+    if (!gid) { out.push({ lead: g, keys: [g.unitKey], units: [g] }); continue; }
+    let set = byGroup.get(gid);
+    if (!set) { set = { lead: g, keys: [], units: [], groupId: gid }; byGroup.set(gid, set); out.push(set); }
+    set.units.push(g);
+  }
+  const singles = (set: StationSet): StationSet[] => set.units.map((u) => ({ lead: u, keys: [u.unitKey], units: [u] }));
+  return out.flatMap((set) => {
+    if (set.groupId == null) return [set];
+    const trunk = set.units.find((u) => join.forGroup(u)?.trunk);
+    const parts = set.units.filter((u) => u !== trunk);
+    const cfgs = parts.map((u) => join.forGroup(u));
+    const phases = new Set(cfgs.map((c) => c?.phase));
+    const oneCharger = parts.length >= 2 && parts.length <= 3
+      && cfgs.every((c) => !!c?.phase && c.phase >= 1 && c.phase <= 3 && !c.phaseGroup) && phases.size === parts.length
+      && new Set(cfgs.map((c) => c?.ratedPowerW ?? 0)).size === 1;
+    if (!oneCharger) return singles(set);
+    const units = trunk ? [trunk] : parts;
+    return [{ lead: units[0], keys: units.map((u) => u.unitKey), units, groupId: set.groupId }];
+  });
+}
+
+const sumOrNull = (vs: (number | null | undefined)[]): number | null =>
+  vs.some((v) => v != null) ? vs.reduce<number>((a, v) => a + (v ?? 0), 0) : null;
+
+/** A station set's name: the device's group name → the lead point's name (its members share a charger). */
+const stationName = (set: StationSet, join: UnitsConfigJoin, groupNames?: Map<number, string>): string =>
+  (set.groupId != null && set.units.length > 1 ? groupNames?.get(set.groupId) : undefined) || nameOf(set.lead, join);
+
 /** Station cards for the Станции grid. Energy on the wire is Wh → kWh for the card. */
 export function buildStations(
   groups: UnitEntityGroup[],
   join: UnitsConfigJoin,
   ev: EvThresholds,
+  groupNames?: Map<number, string>,
 ): StationView[] {
-  return lineUnits(groups, join)
-    .filter((g) => isStation(g, join))
-    .map((g) => {
-      const cfg = join.forGroup(g);
-      const { w: p, estimated } = fullPower(g, cfg);
-      const powerW = p == null ? null : Math.abs(p);
-      const dayWh = unitMetricValue(g, 'energy_day_in');
-      return {
-        id: g.unitKey,
-        name: nameOf(g, join),
-        powerW,
-        present: g.present,
-        // Session start isn't tracked until the hub sessions journal (G8) → no «Ожидает» yet.
-        status: deriveStationStatus(powerW, g.present, null, stationThresholds(ev, cfg)),
-        sessionKwh: dayWh == null ? null : dayWh / W_PER_KW,
-        maxPowerW: cfg?.ratedPowerW ?? null,
-        estimated,
-      };
-    });
+  return stationSets(groups, join).map((set) => {
+    const powers = set.units.map((g) => fullPower(g, join.forGroup(g)));
+    const p = sumOrNull(powers.map((x) => (x.w == null ? null : Math.abs(x.w))));
+    const present = set.units.every((g) => g.present);
+    const dayWh = sumOrNull(set.units.map((g) => unitMetricValue(g, 'energy_day_in')));
+    const rated = set.units.map((g) => join.forGroup(g)?.ratedPowerW);
+    return {
+      id: set.lead.unitKey,
+      name: stationName(set, join, groupNames),
+      powerW: present ? p : null,
+      present,
+      // Session start isn't tracked until the hub sessions journal (G8) → no «Ожидает» yet.
+      status: deriveStationStatus(present ? p : null, present, null, stationThresholds(ev, join.forGroup(set.lead))),
+      sessionKwh: dayWh == null ? null : dayWh / W_PER_KW,
+      maxPowerW: rated.every((r) => r != null) ? rated.reduce<number>((a, r) => a + (r ?? 0), 0) : null,
+      estimated: powers.some((x) => x.estimated),
+    };
+  });
 }
 
 /** Load-balance segments: infra (aggregate consumption) + one per station. */
-export function buildLoadSegments(groups: UnitEntityGroup[], join: UnitsConfigJoin): LoadSegment[] {
+export function buildLoadSegments(groups: UnitEntityGroup[], join: UnitsConfigJoin, groupNames?: Map<number, string>): LoadSegment[] {
   const lines = lineUnits(groups, join);
-  const stations = lines.filter((g) => isStation(g, join));
   const infra = lines.filter((g) => !isStation(g, join) && !isGenerationUnit(g, join));
   const segs: LoadSegment[] = [];
   const infraW = infra.reduce((s, g) => s + Math.max(0, fullPowerW(g, join.forGroup(g)) ?? 0), 0);
   if (infraW > 0) segs.push({ id: 'infra', name: t('overview.infrastructure'), valueW: infraW, kind: 'infra' });
-  for (const g of stations) {
+  for (const set of stationSets(groups, join)) {
     segs.push({
-      id: g.unitKey,
-      name: nameOf(g, join),
-      valueW: Math.abs(fullPowerW(g, join.forGroup(g)) ?? 0),
+      id: set.lead.unitKey,
+      name: stationName(set, join, groupNames),
+      valueW: set.units.reduce((a, g) => a + Math.abs(fullPowerW(g, join.forGroup(g)) ?? 0), 0),
       kind: 'station',
     });
   }
