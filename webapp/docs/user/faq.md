@@ -69,7 +69,7 @@ One measured line with a name and a role: the grid input, a circuit, an applianc
 Up to 8 rbAmp modules (hub firmware v1.1.2 and later). The hub keeps history for up to 12 points; more points show live values only.
 
 **Can I rename a point?**
-Yes, on hub firmware v1.1.4. On v1.1.3 and earlier, on ESP32 chip revisions before v3, a renamed point could disappear after the next restart, together with its history: update the hub to v1.1.4 first. → [Points](points.md#point-settings)
+Yes, on hub firmware v1.1.4 and later. On v1.1.3 and earlier, on ESP32 chip revisions before v3, a renamed point could disappear after the next restart, together with its history: update the hub first. → [Points](points.md#point-settings)
 
 **I added a point, but it has no history.**
 Restart the hub: a newly bound point starts keeping history after a restart. If all 12 history slots are used, the point shows live values only.
@@ -135,4 +135,4 @@ There's no way to reset it from the app: every change, factory reset included, n
 At webapp.rbgrid.io it's always the latest; nothing to do. For the app installed on the hub, install the new `rbgrid-ui_<version>.zip` from the release the same way as the first time. Your settings and history are on the hub and stay. → [Opening the app](opening-the-app.md)
 
 **How do I update the hub's firmware?**
-In **Settings → Hub firmware**, upload `main_release.bin` from the new release (the other three files are for USB flashing only). Wi-Fi, settings, points, tariff, tokens and history are kept, and the modules keep counting during the update. If the new firmware doesn't start, the hub goes back to the previous one by itself. Then install the release's matching `rbgrid-ui_<version>.zip`. → [Settings](settings.md#hub-firmware)
+In **Settings → Hub firmware**, upload `main_release.bin` from the new release (the other three files are for USB flashing only). Wi-Fi, settings, points, tariff, tokens and history are kept, and the modules keep counting during the update. If the new firmware doesn't start, the hub goes back to the previous one by itself. Then install the release's matching `rbgrid-ui_<version>.zip`. Don't restart the hub in the first minute after an update: the new firmware isn't confirmed yet, and a restart inside that minute rolls it back to the previous one. → [Settings](settings.md#hub-firmware)

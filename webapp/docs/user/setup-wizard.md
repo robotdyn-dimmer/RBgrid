@@ -131,7 +131,7 @@ A quick way to give a new hub a simple price plan: one price for the whole day, 
 | **Night price (23–7)** | empty | Shown when the night rate is on. Must be above 0. |
 | **Price as on the bill — incl. VAT** | on | Leave on if the price you entered includes VAT. The hub then stores the price without VAT and adds VAT back when it computes cost. |
 | **VAT, %** | the plan's VAT (21 % on a new hub, from the factory example) | Your VAT rate. Check it: the field is pre-filled from the hub's plan. |
-| **The grid pays per exported kWh (if any)** | empty | Only with solar panels and a feed-in contract: what you're paid per exported kWh. Otherwise leave it empty: the hub values every exported kWh at this price, even with net metering off, and the Tariffs editor shows sell prices only with net metering on. → [Tariffs](tariffs.md#export-valuation) |
+| **The grid pays per exported kWh (if any)** | empty | Only with solar panels and a feed-in contract: what you're paid per exported kWh. Otherwise leave it empty: the hub values every exported kWh at this price, even with net metering off. The Tariffs page shows every zone's sell price afterwards, so you can check what was written (on app v1.1.4 and earlier it shows them only with net metering on). → [Tariffs](tariffs.md#export-valuation) |
 
 A total line shows the result, for example "Total: day …, night … incl. VAT." and the net price and VAT the hub will store.
 

@@ -84,7 +84,7 @@ Shown when an input exists and at least one **line** is metered. A line here is 
 
 The unmetered part is the consumption at the input that none of your points measures, for example circuits without a sensor.
 
-If any line has no records for the period, the block names those points and shows "—" for **Unmetered** and **Unmetered, % of input**: they aren't counted until every line has data. **Unmetered, % of input** also shows "—" when the input imported nothing.
+If any line has no records for the period, the block names those points and shows "—" for **Unmetered** and **Unmetered, % of input**: they aren't counted until every line has data. **Unmetered, % of input** also shows "—" when the input imported less than 10 Wh in the period, since a share of almost nothing is noise rather than a reading. (On app v1.1.4 and earlier the threshold was exactly nothing imported.)
 
 If the input itself has no records for the period, the block shows "No data for this point." instead of the tiles.
 
@@ -102,7 +102,7 @@ The figures count from the hub's **last restart**. If there are no zone charges 
 
 ### Net metering — kWh credit
 
-Shown when **Net metering (selling to the grid)** is on in your tariff plan; hidden while it's off (see [Tariffs](tariffs.md#export-valuation)).
+Shown when **Net metering (monthly kWh credit)** is on in your tariff plan; hidden while it's off (see [Tariffs](tariffs.md#export-valuation)). On app v1.1.4 and earlier the toggle is labelled **Net metering (selling to the grid)**.
 
 | Line | What it is |
 |---|---|

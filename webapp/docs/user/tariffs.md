@@ -14,7 +14,7 @@ The hub keeps **one tariff plan**. Editing it changes the rates used from then o
 
 Changes are kept in the page until you save. A bar stays at the top: *No unsaved changes* or *The tariff has unsaved changes*, with **Cancel** and **Save**. While a field has an error, the bar reads *Fix the fields marked red*. Saving applies at once; the hub doesn't restart. If you leave the page with unsaved changes, the app asks first.
 
-> ⚠️ **After the hub restarts, check this page.** On the current firmware a restart — a power cut, a reboot or a firmware update — leaves the hub running its built-in placeholder plan, **Test Day/Night** (0.20 / 0.30). Your plan is still in the hub's storage, but it isn't the one in use until you open Tariffs and press **Save** again. Energy measured in between is costed at the placeholder's prices and those costs are stored like any other, so re-save first and then read the figures. The cause is known — the plan loads correctly at boot and the tariff engine then overwrites it — and a fix is on its way.
+> ⚠️ **Updating from v1.1.4? Open this page once afterwards.** On firmware **v1.1.4** a restart — a power cut, a reboot or a firmware update — left the hub running its built-in placeholder plan, **Test Day/Night** (0.20 / 0.30): your plan stayed safe in storage but wasn't the one in use until you opened Tariffs and pressed **Save** again, and energy measured in between was costed at the placeholder's prices and stored like any other cost. **Fixed in v1.1.5.** After the update, open **Tariffs**: if it still shows *Test Day/Night*, press **Save** once more and it stays from then on. (A v1.1.4 boot could overwrite the stored plan with its own default, so the new firmware keeps the placeholder rather than guess at an unknown plan.)
 
 **Save** stays disabled while:
 - nothing has changed;
@@ -35,7 +35,7 @@ The header shows the plan name with an **active** chip. If the plan has an end d
 | **Currency** | The currency for all prices and costs. |
 | **VAT %** | 0–100. Added to the energy price and the per-kWh fees (see *How cost is calculated*). |
 | **Default zone** | The zone used for any hour that no other zone covers. |
-| **Net metering (selling to the grid)** | Turns on the monthly kWh credit (see *Export valuation*). It's part of the plan: whatever it shows when you press **Save** is what the hub keeps. Set it to match your contract. |
+| **Net metering (monthly kWh credit)** | Turns on the monthly kWh credit (see *Export valuation*). It's part of the plan: whatever it shows when you press **Save** is what the hub keeps. Set it to match your contract: on only if your supplier nets a month's export against a month's import. If you're paid per exported kWh instead (a Smart Export Guarantee tariff, for example), leave it off and enter the sell price on each zone — exports are valued at it either way. On app v1.1.4 and earlier the toggle is labelled **Net metering (selling to the grid)** and also governs whether the zones' sell-price fields are shown (see *Sell price* under *Zone fields*). |
 
 ### Taxes and charges
 
@@ -71,7 +71,7 @@ A zone is a price that applies during a time window on chosen days of the week.
 | **Buy price, <currency>/kWh** | The energy price in this zone, before taxes, fees and VAT. A new zone starts with the first zone's price. |
 | **From / To** | The time window. It can cross midnight (22:00–06:00 works). From = To (for example 00:00–00:00) means the whole day: use it for whole-day zones, and not by accident. |
 | **Days** | Monday to Sunday on/off. At least one day. |
-| **Sell price, <currency>/kWh** | The value of one exported kWh in this zone. The field appears only with net metering on, and only on a zone that already has a sell price. A zone without one shows no field, and the editor can't add one. A new zone copies the sell price from the plan's other zones. |
+| **Sell price, <currency>/kWh** | The value of one exported kWh in this zone. Every zone shows the field, whatever the net-metering toggle. A zone added in the app always gets a price of its own: the other zones' price, or 0 if they have none. On app v1.1.4 and earlier the field appeared only with **Net metering** on, and only on a zone that already had a sell price — a zone without one showed no field and the editor couldn't add one. |
 
 The bin icon removes a zone after you confirm; the last zone can't be removed.
 
@@ -118,9 +118,11 @@ Exported energy is valued at a sell price:
 
 What the page shows for this:
 
-- The **selling ratio** field is part of the net-metering block, so it shows only with net metering on, and then only while some enabled zone has no sell price of its own. When every enabled zone has its own price, the field is replaced by a note: "Every zone has its own selling price — the selling ratio is not used. Only zones without a price use it."
-- A read-only **Selling price /kWh (calculated)** shows, with net metering on, only when no zone has a sell price and the plan has a default selling rate.
-- The **Sell price** field shows on a zone only with net metering on, and only if that zone already has a sell price (see *Zone fields*). With net metering off, the editor doesn't show the zones' sell prices.
+- The **Sell price** field shows on **every zone**, whatever the net-metering toggle (see *Zone fields*). On app v1.1.4 and earlier it showed only with net metering on, and only on a zone that already had a price.
+- Everything else here lives **inside the net-metering block**, so it shows only with the toggle on: the **selling ratio** field (0–1, a share of the buy price), the read-only **Selling price /kWh (calculated)**, and the explainer "A zone's selling price is the money you get per exported kWh. The selling ratio prices exports in zones without their own selling price (buy price × ratio), and the hub uses it in the monthly kWh-credit settlement."
+- The **selling ratio** field itself shows only while some enabled zone has no sell price of its own. When every enabled zone has its own price, this line replaces it: "Every zone has its own selling price — the selling ratio is not used. Only zones without a price use it."
+- **Selling price /kWh (calculated)** appears only when **no** zone carries a sell price and the plan has a default selling rate. A real hub reports a sell price on every zone, 0 included, so in practice you won't meet it.
+- With net metering **off**, none of that block is shown. In its place, when some enabled zone has a sell price above 0, the page says: "Exports are valued at the zones' sell prices below even with net metering off. Net metering adds the kWh credit on top. No feed-in contract? Set the sell prices to 0."
 
 The hub values exports this way **whether net metering is on or off**. If your contract pays nothing for exported energy, the sell prices and the selling ratio must be 0. Watch for this after the setup wizard's quick tariff: its export price is written into every zone even though net metering stays off.
 
@@ -176,7 +178,8 @@ The tariff plan is part of the hub's **restore point** (**Settings → Restore p
 - Check that the point has measured energy in that period.
 
 **Export has no value, or a value you didn't expect**
-- Exports are valued at the zones' sell prices or the selling ratio, with net metering on or off (see *Export valuation*).
+- Exports are valued at the zones' sell prices or the selling ratio, with net metering on or off (see *Export valuation*). A zone exports at its own zone's price, so check them all, not just the one in force now.
+- On app v1.1.4 and earlier the zones' sell prices are hidden while net metering is off: to see what they are, open **Economics** and look at the export value for a period with exports.
 - Check the sell prices and the ratio the page shows; set them to your contract's price, or 0. Leave **Net metering** as your contract has it.
 
 **I can't save**

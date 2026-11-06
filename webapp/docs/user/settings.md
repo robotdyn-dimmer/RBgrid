@@ -228,7 +228,7 @@ The app never shows or makes up a password. Keep yours somewhere safe.
 
 Shown when your hub supports MQTT. The hub sends its measurements to an MQTT broker; Home Assistant finds the hub's sensors there by itself.
 
-At the top, the panel shows whether the hub is connected to a broker ("The hub is connected to broker …"), or that it isn't ("The device isn't connected to an MQTT broker — HA won't see it."). With no broker saved, app v1.1.4 says "No broker set — MQTT is off, so Home Assistant won't see the hub."
+At the top, the panel shows whether the hub is connected to a broker ("The hub is connected to broker …"), or that it isn't ("The device isn't connected to an MQTT broker — HA won't see it."). With no broker saved, the panel says "No broker set — MQTT is off, so Home Assistant won't see the hub."
 
 **MQTT broker**:
 
@@ -318,6 +318,8 @@ The panel shows the hub's current version and build. To update:
 If the new firmware doesn't start, the hub goes back to the previous one, and the app tells you so.
 
 Wi-Fi, settings, points, tariff, tokens, history and the installed web app are kept. The modules keep counting during the update. Afterwards, install the release's matching `rbgrid-ui_<version>.zip`.
+
+> ⚠️ **Give the hub a minute before you restart it.** For about a minute after an update the new firmware is still unconfirmed, and a restart inside that minute — by hand or by pulling the power — rolls the hub back to the firmware it had before. Wait until the app confirms the new version.
 
 ## Administration
 

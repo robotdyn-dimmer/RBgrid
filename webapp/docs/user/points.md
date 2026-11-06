@@ -129,7 +129,7 @@ When something needs attention, an alert appears under the header:
 |---|---|
 | The channel isn't on the fitted module | The point and its history are kept; data resumes when a module with this channel is back. Don't unbind the point while you wait. |
 | The current sensor seems fitted backwards (BASIC module) | A BASIC module meters forward flow only, so this load is **not** being metered. Turn the sensor round on the wire, with the arrow on its body towards the load. |
-| Readings not corrected for the current transformer | Values may differ from the real ones. Check the sensor model on the module card (see [Sensors and modules](sensors.md#module-cards)). |
+| Readings not corrected for the current transformer | Values may differ from the real ones. The message points you at **Point settings → Current sensor**: set the clamp that is actually fitted. You can also check the model on the module card (see [Sensors and modules](sensors.md#module-cards)). On app v1.1.4 and earlier it pointed at the CT model on the module card instead. |
 | Live values only | The point keeps no stored history (see [History](history.md#incomplete-periods-restarts-and-live-only-points)). |
 | The current hits the sensor's limit | Everything above the limit is clipped and metering under-counts. Fit a sensor with a higher rating. |
 | The load is near the sensor's limit | Above the limit the current is clipped and metering under-counts. |
@@ -187,7 +187,7 @@ At the bottom, **Point setup** opens the point's settings (see [Point settings](
 
 - Over 1000 kW: the app asks you to check the units (the field is in kW) and won't save.
 - More than the breaker allows, or (for the input) well below it: the app warns and offers a matching value worked out from the breaker, the nominal voltage and the number of conductors.
-- If the breaker is above the sensor's limit, the app warns that current above the limit is clipped and metering under-counts: fit a sensor with a higher rating. Known issue in app 1.1.4: this check uses a limit below the clamp's rating (9 A for a 10 A clamp), so it also warns when the clamp's rating equals the breaker. A clamp rated at the breaker reads correctly; the check will be corrected in an upcoming release.
+- If the breaker is above the sensor's limit, the app warns that current above the limit is clipped and metering under-counts: fit a sensor with a higher rating. The limit is the current at which the clamp starts clipping, as the hub reports it — for SCT-013 clamps about 16 % above the rating, so roughly 11.6 A for a 10 A clamp — and it is the upper end of the "accurate … A" range shown on the module card and in Point settings. A clamp rated at the breaker doesn't warn. Where the hub reports no such figure there is no range and no warning, which is the case for an STD module's factory-paired sensors. On app v1.1.4 and earlier the check used a limit 10 % below the clamp's rating, so it warned even when the rating equalled the breaker.
 
 ### Current sensor
 

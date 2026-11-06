@@ -168,6 +168,30 @@ After the restart the input is one point, **L1–L3**, with per-phase readings (
 
 If the hub refuses, the app shows the reason.
 
+### One point, or one point per phase
+
+From app and hub **v1.1.5** the same module card also decides *how* the three phases are counted. The mode is in bold under the firmware line, with a one-line hint, and the button switches to the other mode. A hub on firmware older than v1.1.5 shows no mode line at all: its card offers only **Use as the three-phase input**, as above.
+
+| The card says | Its hint | The button offers |
+|---|---|---|
+| "Input: one point for all three phases (phases netted)" | "Like a meter that nets the phases: export on one phase offsets import on another." | **One point per phase** |
+| "Input: one point per phase" | "Like a meter that counts each phase: every phase has its own import and export, nothing is offset." | **One point, phases netted** |
+| "Input: measured on L1 only" | "Only L1 counts toward the input; L2 and L3 of this module aren't in it." | **One point, phases netted**, and **One point per phase** while L2 and L3 are free |
+
+Which mode is right for you is your meter's behaviour, not a preference: a meter that nets the phases and a meter that counts each phase bill the same house differently.
+
+**To one point per phase.** The confirm asks "Meter the input per phase?": "Each phase becomes its own input point with its own import and export, as on a meter that counts per phase. Export on one phase is no longer offset by import on another. The input point keeps its history and takes L1; L2 and L3 start from zero. Applies after a restart." If a phase doesn't get its point, the card says which and why; pressing **One point per phase** again retries.
+
+**Back to one point.** The confirm asks "Meter the input as one point?". When there are phase points to remove, the button is red and the text names them: "The points *…* are deleted and their own history is erased; their totals move into the input, so the site's totals stay." Their totals survive; their own records don't — so download anything you need from [History](history.md#downloads) **before** you regroup. With no phase points to remove, the input simply keeps its history.
+
+**Either way the change needs a restart.** The app says "Saved. The hub meters the input this way after a restart." and offers **Restart now**, which asks "Reboot the device now?" ("The hub goes offline for about half a minute; metering resumes after start-up."). On app **v1.1.5** that message appears above the module list, where it can sit off the top of the screen: if you pressed a mode button and nothing seems to have happened, scroll up — the restart is still needed.
+
+**What the app shows per period while the input is split.** On app and hub **v1.1.5** the per-period figures for the input — the Economics balance, the Overview month and "vs yesterday", the energy chart — show the **L1 point only**. Live values and the hub's system totals are the full sum, and each phase point keeps its own history on the hub.
+
+A split input is **three** measurement points, not one, so it takes three of the twelve the hub keeps history for (see [Points](points.md#messages)).
+
+🔴 **Before installing firmware older than v1.1.5 on a hub whose input is metered per phase, switch it back to one point.** Older firmware handles one supply point only.
+
 ## Module firmware update
 
 **STD modules** can have their firmware updated through the hub, with an image file supplied by **RobotDyn**. The module card shows **Update firmware** when the module supports it and is present. BASIC modules aren't updated through the hub.
