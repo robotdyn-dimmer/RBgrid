@@ -2715,6 +2715,26 @@ rbpower_unit_definition_t* rbpower_home_get_unit_definition_mutable(rbpower_unit
     return (rbpower_unit_definition_t*)rbpower_home_get_unit_definition(unit_id);
 }
 
+/* The points that make up the grid input (documented in rbhome_types.h). */
+uint8_t rbpower_home_input_supply_units(rbpower_unit_id_t* out, uint8_t cap)
+{
+    if (!out || cap == 0 || !g_home_network_initialized) return 0;
+    rbpower_unit_id_t main_id = g_home_network.system.main_supply_unit_id;
+    if (main_id == 0) return 0;
+    uint8_t n = 0;
+    out[n++] = main_id;
+    rbpower_home_lock();
+    for (int i = 0; i < g_home_network.units_count && n < cap; i++) {
+        const rbpower_home_unit_t* u = &g_home_network.units[i];
+        if (!u->has_valid_definition || !u->definition.is_active) continue;
+        if (u->definition.role != RBPOWER_ROLE_MAIN_SUPPLY || u->definition.type != RBPOWER_METRIC_CURRENT_LOAD) continue;
+        if (u->definition.unit_id == main_id) continue;
+        out[n++] = u->definition.unit_id;
+    }
+    rbpower_home_unlock();
+    return n;
+}
+
 rbpower_unit_id_t rbpower_home_find_unit_by_source(rbpower_source_type_t source_type,
                                                    uint64_t device_uid, uint8_t channel_idx,
                                                    rbpower_unit_id_t exclude_uid)
@@ -2812,6 +2832,7 @@ rbpower_err_t rbpower_home_remove_unit(rbpower_unit_id_t unit_id)
         return RBPOWER_ERR_INVALID_STATE;
     }
 
+    rbpower_tariff_net_metering_forget(unit_id);   /* a later point with this id must not inherit its credit/period */
     rbpower_home_lock();
     {   /* A further supply point (one point per phase of a split three-phase input) carries its own lifetime totals,
          * which the system totals add. Deleting it (e.g. to group the module again) must not make the system totals

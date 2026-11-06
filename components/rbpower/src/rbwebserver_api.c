@@ -2085,6 +2085,10 @@ esp_err_t rbwebserver_api_sensors_handler(httpd_req_t *req)
 /* fwd decl — defined later (used by the type=all / from-to history branch). */
 static cJSON *rbapi_history_filtered_array(rbpower_unit_id_t unit, rbpower_period_t period,
                                            rbpower_data_type_t type, uint32_t from, uint32_t to, uint32_t limit);
+static esp_err_t rbapi_input_history_reply(httpd_req_t *req, const char *period_str, rbpower_period_t period,
+                                           const char *type_str, bool type_all, rbpower_data_type_t data_type,
+                                           uint32_t offset, uint32_t limit, const char *from_str, const char *to_str,
+                                           const char *since_str);
 
 esp_err_t rbwebserver_api_history_handler(httpd_req_t *req)
 {
@@ -2161,9 +2165,10 @@ esp_err_t rbwebserver_api_history_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    // 4. Convert unit_id from hex string
+    // 4. Convert unit_id from hex string ("input" = the grid input as one series, handled after the period/type parse)
     rbpower_unit_id_t unit_id = 0;
-    if (sscanf(unit_id_str, "%hx", &unit_id) != 1) {
+    bool unit_input = (strcmp(unit_id_str, "input") == 0);
+    if (!unit_input && sscanf(unit_id_str, "%hx", &unit_id) != 1) {
         ESP_LOGW(TAG, "Invalid unit_id format: %s", unit_id_str);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid unit_id format (expected hex)");
         return ESP_FAIL;
@@ -2219,6 +2224,10 @@ esp_err_t rbwebserver_api_history_handler(httpd_req_t *req)
 
     ESP_LOGI(TAG, "Parsed: unit=0x%04X, period=%s, type=%s, offset=%lu, limit=%lu",
              unit_id, period_str, type_str, (unsigned long)offset, (unsigned long)limit);
+
+    if (unit_input)
+        return rbapi_input_history_reply(req, period_str, period, type_str, type_all, data_type, offset, limit,
+                                         from_str, to_str, since_str);
 
     // 8b. since-cursor (API contract v4): strictly ts > since, ASCENDING, up to `limit`,
     // + next_since/has_more. Keyed on ts (not offsets) → stable across ring wrap. ts==0 records
@@ -2426,6 +2435,61 @@ char *rbgrid_build_economics_json(rbpower_unit_id_t unit)
     return out;
 }
 
+#define RBAPI_INPUT_MAX 8   ///< Max points of the grid input (main + one per further phase)
+static void rbapi_add_input_units(cJSON *root, const rbpower_unit_id_t *ids, uint8_t n);
+
+/* Add the numbers of object @p src into @p dst by key (counts and money of the per-point economics JSON). */
+static void rbapi_obj_sum(cJSON *dst, const cJSON *src)
+{
+    const cJSON *f = NULL;
+    cJSON_ArrayForEach(f, src) {
+        if (!f->string || !cJSON_IsNumber(f)) continue;
+        if (!strcmp(f->string, "tier") || !strcmp(f->string, "rate_mult") || !strcmp(f->string, "v")) continue;
+        cJSON *d = cJSON_GetObjectItem(dst, f->string);
+        if (d && cJSON_IsNumber(d)) cJSON_SetNumberValue(d, round((d->valuedouble + f->valuedouble) * 10000) / 10000);
+    }
+}
+
+/* GET /api/v1/economics?unit=input — the grid input's economics summed over its points (per-zone cost/revenue,
+ * net-metering kWh). The progressive block is the main point's. */
+static esp_err_t rbapi_input_economics_reply(httpd_req_t *req)
+{
+    rbpower_unit_id_t ids[RBAPI_INPUT_MAX];
+    uint8_t n = rbpower_home_input_supply_units(ids, RBAPI_INPUT_MAX);
+    if (n == 0) { httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "No input point"); return ESP_FAIL; }
+    cJSON *root = NULL;
+    for (uint8_t k = 0; k < n; k++) {
+        char *js = rbgrid_build_economics_json(ids[k]);
+        if (!js) continue;
+        cJSON *e = cJSON_Parse(js);
+        free(js);
+        if (!e) continue;
+        if (!root) { root = e; continue; }
+        cJSON *zr = cJSON_GetObjectItem(root, "zones"), *ze = cJSON_GetObjectItem(e, "zones"), *z = NULL;
+        cJSON_ArrayForEach(z, ze) {
+            const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(z, "zone"));
+            cJSON *t = NULL;
+            cJSON_ArrayForEach(t, zr) {
+                const char *tn = cJSON_GetStringValue(cJSON_GetObjectItem(t, "zone"));
+                if (name && tn && !strcmp(name, tn)) { rbapi_obj_sum(t, z); break; }
+            }
+        }
+        cJSON *nr = cJSON_GetObjectItem(root, "net_metering"), *ne = cJSON_GetObjectItem(e, "net_metering");
+        if (nr && ne) rbapi_obj_sum(nr, ne);
+        cJSON_Delete(e);
+    }
+    if (!root) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json"); return ESP_FAIL; }
+    cJSON_ReplaceItemInObject(root, "unit", cJSON_CreateString("input"));
+    rbapi_add_input_units(root, ids, n);
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!out) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, out, strlen(out));
+    free(out);
+    return ESP_OK;
+}
+
 /* HTTP GET /api/v1/economics?unit=<hex> — thin wrapper over rbgrid_build_economics_json. */
 esp_err_t rbwebserver_api_economics_handler(httpd_req_t *req)
 {
@@ -2442,8 +2506,9 @@ esp_err_t rbwebserver_api_economics_handler(httpd_req_t *req)
         free(q);
     }
     rbpower_unit_id_t unit = 0;
+    if (strcmp(unit_str, "input") == 0) return rbapi_input_economics_reply(req);
     if (strlen(unit_str) == 0 || sscanf(unit_str, "%hx", &unit) != 1) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Required: unit=<hex>");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Required: unit=<hex> or unit=input");
         return ESP_FAIL;
     }
     char *out = rbgrid_build_economics_json(unit);
@@ -2680,6 +2745,190 @@ static cJSON *rbapi_history_filtered_array(rbpower_unit_id_t unit, rbpower_perio
         cJSON_Delete(root);
     }
     return arr;
+}
+
+/* ---- Grid input aggregate (unit=input) ---------------------------------------------------------------------
+ * A three-phase input metered per phase is several supply points (main + one per further phase). The app's input
+ * views need one series: records of all input points summed by ts. Energy/money fields add, dur = max, q = OR,
+ * res = max, the rest from the first record seen (the main point's). */
+
+static bool rbapi_sum_key(const char *k)
+{
+    static const char *const keys[] = { "ec", "es", "en", "et_in", "et_out", "c", "r", "n" };
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) if (!strcmp(k, keys[i])) return true;
+    return false;
+}
+
+static void rbapi_rec_add(cJSON *dst, const cJSON *src)
+{
+    const cJSON *f = NULL;
+    cJSON_ArrayForEach(f, src) {
+        if (!f->string || !cJSON_IsNumber(f)) continue;
+        cJSON *d = cJSON_GetObjectItem(dst, f->string);
+        if (!d) { cJSON_AddNumberToObject(dst, f->string, f->valuedouble); continue; }
+        if (!cJSON_IsNumber(d)) continue;
+        double a = d->valuedouble, b = f->valuedouble, v;
+        if (rbapi_sum_key(f->string))      v = a + b;
+        else if (!strcmp(f->string, "q"))  v = (double)((uint32_t)a | (uint32_t)b);
+        else if (!strcmp(f->string, "dur") || !strcmp(f->string, "res")) v = (a > b) ? a : b;
+        else continue;   /* ts and the rest: first record wins */
+        cJSON_SetNumberValue(d, v);
+    }
+}
+
+static int rbapi_ts_desc(const void *a, const void *b)
+{
+    const cJSON *x = *(const cJSON * const *)a, *y = *(const cJSON * const *)b;
+    double tx = cJSON_GetNumberValue(cJSON_GetObjectItem(x, "ts")), ty = cJSON_GetNumberValue(cJSON_GetObjectItem(y, "ts"));
+    return (tx < ty) ? 1 : (tx > ty) ? -1 : 0;
+}
+
+/* Summed records of the grid input, newest first, within [from, to]; at most @p limit per point are read.
+ * @p ids/@p n_ids receive the points used. */
+static cJSON *rbapi_input_history_array(rbpower_period_t period, rbpower_data_type_t type, uint32_t from, uint32_t to,
+                                        uint32_t limit, rbpower_unit_id_t *ids, uint8_t *n_ids)
+{
+    uint8_t n = rbpower_home_input_supply_units(ids, RBAPI_INPUT_MAX);
+    if (n_ids) *n_ids = n;
+    cJSON *acc = cJSON_CreateArray();
+    if (!acc) return NULL;
+    for (uint8_t k = 0; k < n; k++) {
+        cJSON *a = rbapi_history_filtered_array(ids[k], period, type, from, to, limit);
+        if (!a) continue;
+        cJSON *rec = a->child;
+        while (rec) {
+            cJSON *next = rec->next;
+            double ts = cJSON_GetNumberValue(cJSON_GetObjectItem(rec, "ts"));
+            cJSON *dst = NULL, *it = NULL;
+            cJSON_ArrayForEach(it, acc) {
+                if (cJSON_GetNumberValue(cJSON_GetObjectItem(it, "ts")) == ts) { dst = it; break; }
+            }
+            if (dst) rbapi_rec_add(dst, rec);
+            else cJSON_AddItemToArray(acc, cJSON_DetachItemViaPointer(a, rec));
+            rec = next;
+        }
+        cJSON_Delete(a);
+    }
+    /* sort newest first, round the sums (records carry 3 dp energy, cents money) */
+    int cnt = cJSON_GetArraySize(acc);
+    if (cnt > 1) {
+        cJSON **v = malloc(sizeof(cJSON *) * (size_t)cnt);
+        if (v) {
+            int i = 0;
+            while (acc->child) v[i++] = cJSON_DetachItemViaPointer(acc, acc->child);
+            qsort(v, (size_t)cnt, sizeof(cJSON *), rbapi_ts_desc);
+            for (i = 0; i < cnt; i++) cJSON_AddItemToArray(acc, v[i]);
+            free(v);
+        }
+    }
+    cJSON *it = NULL;
+    cJSON_ArrayForEach(it, acc) {
+        cJSON *f = NULL;
+        cJSON_ArrayForEach(f, it) {
+            if (!f->string || !cJSON_IsNumber(f) || !rbapi_sum_key(f->string)) continue;
+            bool money = !strcmp(f->string, "c") || !strcmp(f->string, "r") || !strcmp(f->string, "n");
+            cJSON_SetNumberValue(f, money ? round(f->valuedouble * 100) / 100 : round(f->valuedouble * 1000) / 1000);
+        }
+    }
+    return acc;
+}
+
+static void rbapi_add_input_units(cJSON *root, const rbpower_unit_id_t *ids, uint8_t n)
+{
+    cJSON *u = cJSON_AddArrayToObject(root, "units");
+    for (uint8_t k = 0; u && k < n; k++) {
+        char hx[8];
+        snprintf(hx, sizeof(hx), "%04X", (unsigned)ids[k]);
+        cJSON_AddItemToArray(u, cJSON_CreateString(hx));
+    }
+}
+
+/* GET /api/v1/history?unit=input&… — the grid input as one series (energy | economics | all). */
+static esp_err_t rbapi_input_history_reply(httpd_req_t *req, const char *period_str, rbpower_period_t period,
+                                           const char *type_str, bool type_all, rbpower_data_type_t data_type,
+                                           uint32_t offset, uint32_t limit, const char *from_str, const char *to_str,
+                                           const char *since_str)
+{
+    if (!type_all && data_type == RBPOWER_DATA_TYPE_ELECTRICAL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "unit=input: type energy, economics or all");
+        return ESP_FAIL;
+    }
+    rbpower_unit_id_t ids[RBAPI_INPUT_MAX];
+    uint8_t n = 0;
+    uint32_t from = from_str[0] ? (uint32_t)strtoul(from_str, NULL, 10) : 0;
+    uint32_t to   = to_str[0]   ? (uint32_t)strtoul(to_str,   NULL, 10) : 0xFFFFFFFFu;
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json"); return ESP_FAIL; }
+    if (type_all) {
+        cJSON_AddNumberToObject(root, "v", 1);
+        cJSON_AddStringToObject(root, "unit", "input");
+        cJSON_AddStringToObject(root, "period", period_str);
+        cJSON *d = cJSON_AddObjectToObject(root, "data");
+        cJSON_AddItemToObject(d, "electrical", cJSON_CreateArray());   /* not aggregated (per phase: read the points) */
+        cJSON_AddItemToObject(d, "energy",    rbapi_input_history_array(period, RBPOWER_DATA_TYPE_ENERGY, from, to, 720, ids, &n));
+        cJSON_AddItemToObject(d, "economics", rbapi_input_history_array(period, RBPOWER_DATA_TYPE_ECONOMICS, from, to, 720, ids, &n));
+    } else if (since_str[0]) {
+        uint32_t since = (uint32_t)strtoul(since_str, NULL, 10);
+        cJSON *all = rbapi_input_history_array(period, data_type, since + 1, 0xFFFFFFFFu, 720, ids, &n);
+        cJSON *arr = cJSON_CreateArray();
+        int cnt = all ? cJSON_GetArraySize(all) : 0;
+        uint32_t emitted = 0, next_since = since;
+        for (int i = cnt - 1; i >= 0 && emitted < limit; i--) {   /* ascending, oldest first */
+            cJSON *r = cJSON_GetArrayItem(all, i);
+            next_since = (uint32_t)cJSON_GetNumberValue(cJSON_GetObjectItem(r, "ts"));
+            cJSON_AddItemToArray(arr, cJSON_Duplicate(r, 1));
+            emitted++;
+        }
+        cJSON_Delete(all);
+        cJSON_AddStringToObject(root, "unit", "input");
+        cJSON_AddStringToObject(root, "period", period_str);
+        cJSON_AddStringToObject(root, "type", type_str);
+        cJSON_AddNumberToObject(root, "schema_ver", 4);
+        cJSON_AddItemToObject(root, "data", arr);
+        cJSON_AddNumberToObject(root, "next_since", next_since);
+        cJSON_AddBoolToObject(root, "has_more", (uint32_t)cnt > emitted);
+        cJSON_AddNumberToObject(root, "total_available", cnt);
+    } else if (from_str[0] || to_str[0]) {
+        cJSON_AddNumberToObject(root, "v", 1);
+        cJSON_AddStringToObject(root, "unit", "input");
+        cJSON_AddStringToObject(root, "period", period_str);
+        cJSON_AddItemToObject(root, "data", rbapi_input_history_array(period, data_type, from, to, 720, ids, &n));
+    } else {
+        uint32_t want = offset + limit; if (want > 720) want = 720;
+        cJSON *all = rbapi_input_history_array(period, data_type, 0, 0xFFFFFFFFu, want, ids, &n);
+        int cnt = all ? cJSON_GetArraySize(all) : 0;
+        cJSON *arr = cJSON_CreateArray();
+        uint32_t ret = 0;
+        for (int i = (int)offset; i < cnt && ret < limit; i++, ret++) cJSON_AddItemToArray(arr, cJSON_Duplicate(cJSON_GetArrayItem(all, i), 1));
+        cJSON_Delete(all);
+        cJSON_AddStringToObject(root, "status", "ok");
+        cJSON_AddNumberToObject(root, "schema_ver", 4);
+        cJSON *rq = cJSON_AddObjectToObject(root, "request");
+        cJSON_AddStringToObject(rq, "period", period_str);
+        cJSON_AddStringToObject(rq, "type", type_str);
+        cJSON_AddNumberToObject(rq, "offset", offset);
+        cJSON_AddNumberToObject(rq, "limit", limit);
+        cJSON_AddStringToObject(rq, "unit_id", "input");
+        /* total = the largest record count among the input points (their records share the period grid) */
+        uint32_t total = (uint32_t)cnt;
+        for (uint8_t k = 0; k < n; k++) {
+            uint32_t t = 0;
+            if (rbgrid_history_get_buffer_info(ids[k], period, data_type, &t) == RBGRID_OK && t > total) total = t;
+        }
+        cJSON *meta = cJSON_AddObjectToObject(root, "meta");
+        cJSON_AddNumberToObject(meta, "total_available", total);
+        cJSON_AddNumberToObject(meta, "returned", ret);
+        cJSON_AddBoolToObject(meta, "has_more", total > offset + ret);
+        cJSON_AddItemToObject(root, "data", arr);
+    }
+    rbapi_add_input_units(root, ids, n);
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!out) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, out, strlen(out));
+    free(out);
+    return ESP_OK;
 }
 
 /* GET /api/v1/export.csv?unit=<hex>&period=hour&type=electrical|energy|economics|all&from=&to=
@@ -3208,6 +3457,7 @@ char *rbgrid_build_schema_json(void)
     cJSON_AddBoolToObject(cap, "https", true);
     cJSON_AddBoolToObject(cap, "provisioning", true);
     cJSON_AddBoolToObject(cap, "configBackup", true);
+    cJSON_AddBoolToObject(cap, "inputAggregate", true);   /* history/economics ?unit=input: the grid input summed over its points (1.1.6) */
 
     /* Configurable-surface descriptor: units of measure, key format,
      * canonical enums and money formatting — so the UI renders from data instead of hardcoding.

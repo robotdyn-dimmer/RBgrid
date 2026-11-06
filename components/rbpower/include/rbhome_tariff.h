@@ -2335,6 +2335,13 @@ void rbpower_tariff_get_zone_stats(rbpower_unit_id_t unit_id, float *cost_by_zon
 void rbpower_tariff_net_metering_settle(rbpower_unit_id_t unit_id);
 
 /**
+ * @brief Forget a unit's net-metering state (RAM + its NVS record) — call when the unit is deleted, before it is
+ *        removed, so a later point that gets the same id does not inherit the old period/credit figures.
+ * @param[in] unit_id  Unit being deleted.
+ */
+void rbpower_tariff_net_metering_forget(rbpower_unit_id_t unit_id);
+
+/**
  * @brief Read a unit's net-metering state (`netmeter` diagnostic command).
  *
  * Any output pointer may be NULL. All outputs are 0 if the unit is unknown.
