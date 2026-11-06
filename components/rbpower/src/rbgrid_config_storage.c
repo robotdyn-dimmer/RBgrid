@@ -12,6 +12,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -1179,9 +1180,42 @@ esp_err_t rbgrid_storage_save_time(const char* json_config)
         }
     }
 
+    /* MERGE the incoming fields over the stored config. The app sends only the fields the user changed
+     * (since kit 1.1.2), and writing that as the whole file dropped the rest: after saving the time zone
+     * alone, the next boot had no NTP servers (rbtime_init refused the config → no clock sync at all). */
+    char* merged_str = NULL;
+    {
+        cJSON* in_root = cJSON_Parse(json_config);
+        cJSON* in_cfg = in_root ? cJSON_GetObjectItem(in_root, "config") : NULL;
+        cJSON* old_root = NULL;
+        char* old_buf = malloc(4096);
+        size_t old_len = 0;
+        if (old_buf && littlefs_raw_exists(CONFIG_FILE_TIME) &&
+            littlefs_raw_read(CONFIG_FILE_TIME, old_buf, 4095, &old_len) == ESP_OK) {
+            old_buf[old_len < 4096 ? old_len : 4095] = '\0';
+            old_root = cJSON_Parse(old_buf);
+        }
+        free(old_buf);
+        cJSON* old_cfg = old_root ? cJSON_GetObjectItem(old_root, "config") : NULL;
+        if (in_cfg && old_cfg && cJSON_IsObject(old_cfg)) {
+            for (cJSON* it = in_cfg->child; it; it = it->next) {
+                if (!it->string) continue;
+                cJSON* dup = cJSON_Duplicate(it, true);
+                if (!dup) continue;
+                if (cJSON_GetObjectItem(old_cfg, it->string)) cJSON_ReplaceItemInObject(old_cfg, it->string, dup);
+                else cJSON_AddItemToObject(old_cfg, it->string, dup);
+            }
+            merged_str = cJSON_PrintUnformatted(old_root);
+        }
+        cJSON_Delete(old_root);
+        cJSON_Delete(in_root);
+    }
+
     // Write new configuration
-    size_t json_len = strlen(json_config);
-    esp_err_t ret = littlefs_raw_write(CONFIG_FILE_TIME, json_config, json_len);
+    const char* out = merged_str ? merged_str : json_config;
+    size_t json_len = strlen(out);
+    esp_err_t ret = littlefs_raw_write(CONFIG_FILE_TIME, out, json_len);
+    free(merged_str);
 
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "✅ Time configuration saved successfully (%zu bytes)", json_len);
@@ -1250,12 +1284,20 @@ esp_err_t rbgrid_storage_load_time(rbgrid_config_handle_t config_handle)
     cJSON* sntp_backup = cJSON_GetObjectItem(config, "sntp_server_backup");
     cJSON* timezone = cJSON_GetObjectItem(config, "timezone");
 
-    if (sntp_server && sntp_backup && timezone) {
+    /* Always applied, a missing or empty field taking its default: a file written by a partial save
+     * (firmware before v1.1.6) may hold only some of them, and skipping the block left the servers empty →
+     * rbtime_init refused the config → no clock sync at all. */
+    {
+        bool srv_ok = sntp_server && cJSON_IsString(sntp_server) && sntp_server->valuestring[0];
+        bool tz_ok = timezone && cJSON_IsString(timezone) && timezone->valuestring[0];
+        if (!srv_ok || !tz_ok)
+            ESP_LOGW(TAG, "time config incomplete (server %s, time zone %s) — defaults used for the missing ones",
+                     srv_ok ? "ok" : "missing", tz_ok ? "ok" : "missing");
         config_err = rbgrid_config_set_sntp_time(
             config_handle,
-            cJSON_IsString(sntp_server) ? sntp_server->valuestring : "pool.ntp.org",
-            cJSON_IsString(sntp_backup) ? sntp_backup->valuestring : "time.nist.gov",
-            cJSON_IsString(timezone) ? timezone->valuestring : "UTC+0"
+            srv_ok ? sntp_server->valuestring : "pool.ntp.org",
+            (sntp_backup && cJSON_IsString(sntp_backup) && sntp_backup->valuestring[0]) ? sntp_backup->valuestring : "time.nist.gov",
+            tz_ok ? timezone->valuestring : "UTC0"
         );
         if (config_err != RBGRID_CONFIG_OK) {
             ESP_LOGW(TAG, "Failed to apply SNTP configuration: %d", config_err);

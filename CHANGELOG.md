@@ -10,6 +10,12 @@
   as one point it is the same as that point. `GET /api/v1/schema` → `capabilities.inputAggregate: true`.
 
 ### Fixed
+- **Time settings lost after a restart.** The app saves only the time settings you changed, and the hub
+  wrote them as the whole settings file. After changing the time zone in the app (web app 1.1.2–1.1.5),
+  the next restart left the hub with no time zone and no NTP server, so the clock was never synced again.
+  The hub now merges what it receives into the saved settings. A hub already in that state recovers at
+  the first boot on v1.1.6: the saved time zone is kept and the NTP servers go back to `pool.ntp.org` /
+  `time.nist.gov`. If the time zone was lost too, set it again in **Settings → Time**.
 - A point created with the id of a deleted point inherited the deleted point's net-metering figures
   (period kWh and credit). Deleting a point now clears them.
 - **Time settings out of range:** `POST /api/system/time-sync` (`save_config`) now refuses, with 400 and the
