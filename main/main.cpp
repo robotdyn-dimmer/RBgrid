@@ -2673,38 +2673,14 @@ static void rbgrid_cjson_free(void *p) { free(p); }
  * forensics → debug console verbs. In debug builds rbbench owns
  * UART0; otherwise the IDF console/ESP_LOG serves UART0.
  */
-extern "C" void app_main(void) {
-    { cJSON_Hooks h = { rbgrid_cjson_malloc, rbgrid_cjson_free }; cJSON_InitHooks(&h); }   /* before any JSON */
-    /* factory reset (POST /api/system/factory-reset) runs here, before NVS and the config file system open */
-    const bool factory_reset_done = rbgrid_core_factory_reset_at_boot();
-    rbevlog_init();   /* event log ring + diag log sink: before the first diag line */
-    if (factory_reset_done) rbpower_diag_printf("factory reset carried out at boot — starting as on first boot");
+/* ==== Boot stages. app_main() runs them in this order: network (Wi-Fi), core init (storage, config, points,
+ * tariffs, statistics engine), interfaces (web server, WebSocket, telemetry; MQTT/mDNS start from the Wi-Fi
+ * callback), core start (rbAmp bridge = metering source + period collection). A host other than this
+ * application (e.g. ESPHome) would skip the network and interface stages and run the two core stages. ==== */
 
-#if defined(RBGRID_BENCH_RELAY_FAILSAFE)
-    // SAFETY FIRST: drive the test-rig load-bank relays OFF before anything else (see above).
-    bench_relays_failsafe_off();
-#endif
-
-#if RBGRID_RBBENCH && !RBGRID_WIFI
-    /* System deps that normally run inside rbwifi_init() — which the debug-bridge build gates
-     * out. NVS is required by config/storage/console paths; the default event loop by
-     * component event handlers. Without these the boot cascades (storage disables,
-     * console RX dies). The non-debug build keeps them in rbwifi_init. */
-    {
-        esp_err_t nvs_ret = nvs_flash_init();
-        if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-            nvs_flash_erase();
-            nvs_ret = nvs_flash_init();
-        }
-        ESP_LOGI("MAIN", "NVS init (debug-bridge build): %s", esp_err_to_name(nvs_ret));
-        esp_err_t evt_ret = esp_event_loop_create_default();
-        ESP_LOGI("MAIN", "default event loop (debug-bridge build): %s", esp_err_to_name(evt_ret));
-    }
-#endif
-
-    // NOTE: the flash module tests run after rbgrid_config_create(), after the flash init and before
-    // rbgrid_init_system() (see the flash test block further down).
-
+/** Boot stage 1: Wi-Fi (AP+STA). @return true if Wi-Fi is up (the interface stage needs it). */
+static bool app_net_init(void)
+{
     // WIFI initialization through rbwifi
     ESP_LOGI(TAG, "=== rbpower WiFi AP+STA Test ===");
     
@@ -2809,6 +2785,13 @@ extern "C" void app_main(void) {
     ESP_LOGW(TAG, "WiFi + webserver DISABLED (debug-bridge build) — RAM headroom");
 #endif
 
+    return wifi_initialized;
+}
+
+/** Boot stage 2: core init — config store, hardware/points/time, ESP-NOW node points, telemetry config,
+ *  flash statistics, rbgrid_init_system + rbpower_init_extended, tariffs. @return extended config, or NULL. */
+static rbpower_extended_config_t* app_core_init(void)
+{
 #if !RBGRID_RBBENCH
     printf("\n=== RBgrid ===\n");
 #endif
@@ -2827,7 +2810,7 @@ extern "C" void app_main(void) {
     rbgrid_config_handle_t config_handle = rbgrid_config_create("Test House", "HongKong");
     if (!config_handle) {
         ESP_LOGE(TAG, "Failed to create config via rbgrid_config_api");
-        return;
+        return NULL;
     }
     
     // Get pointers to internal structures for additional configuration
@@ -3304,6 +3287,12 @@ extern "C" void app_main(void) {
     }
 
     // JSON context already initialized earlier
+    return extended_config;
+}
+
+/** Boot stage 3: interfaces (web server + WebSocket + telemetry + ESP-NOW HTTP), only with Wi-Fi up. */
+static void app_ifaces_start(rbpower_extended_config_t* extended_config, bool wifi_initialized)
+{
     if (extended_config->rbhome_JSON_settings.enable_json_api) {
         // Update JSON context if needed for production use
         ESP_LOGI(TAG, "JSON module already initialized, updating for production use");
@@ -3339,6 +3328,11 @@ extern "C" void app_main(void) {
     }
     
     // ===== TEST 5: Network structure =====
+}
+
+/** Boot stage 4: core start — the rbAmp bridge (metering source) and the 15-min period collection. */
+static void app_core_start(void)
+{
     rbpower_home_print_network_structure();
 
     // ===== TEST 6 (opt-in): external-source injection API self-test =====
@@ -3436,6 +3430,46 @@ extern "C" void app_main(void) {
         ESP_LOGI("MAIN", "rbAmp auto 15-min period collection armed");
     }
 #endif
+
+}
+
+extern "C" void app_main(void) {
+    { cJSON_Hooks h = { rbgrid_cjson_malloc, rbgrid_cjson_free }; cJSON_InitHooks(&h); }   /* before any JSON */
+    /* factory reset (POST /api/system/factory-reset) runs here, before NVS and the config file system open */
+    const bool factory_reset_done = rbgrid_core_factory_reset_at_boot();
+    rbevlog_init();   /* event log ring + diag log sink: before the first diag line */
+    if (factory_reset_done) rbpower_diag_printf("factory reset carried out at boot — starting as on first boot");
+
+#if defined(RBGRID_BENCH_RELAY_FAILSAFE)
+    // SAFETY FIRST: drive the test-rig load-bank relays OFF before anything else (see above).
+    bench_relays_failsafe_off();
+#endif
+
+#if RBGRID_RBBENCH && !RBGRID_WIFI
+    /* System deps that normally run inside rbwifi_init() — which the debug-bridge build gates
+     * out. NVS is required by config/storage/console paths; the default event loop by
+     * component event handlers. Without these the boot cascades (storage disables,
+     * console RX dies). The non-debug build keeps them in rbwifi_init. */
+    {
+        esp_err_t nvs_ret = nvs_flash_init();
+        if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            nvs_flash_erase();
+            nvs_ret = nvs_flash_init();
+        }
+        ESP_LOGI("MAIN", "NVS init (debug-bridge build): %s", esp_err_to_name(nvs_ret));
+        esp_err_t evt_ret = esp_event_loop_create_default();
+        ESP_LOGI("MAIN", "default event loop (debug-bridge build): %s", esp_err_to_name(evt_ret));
+    }
+#endif
+
+    // NOTE: the flash module tests run after rbgrid_config_create(), after the flash init and before
+    // rbgrid_init_system() (see the flash test block further down).
+
+    const bool wifi_initialized = app_net_init();
+    rbpower_extended_config_t* extended_config = app_core_init();
+    if (!extended_config) return;
+    app_ifaces_start(extended_config, wifi_initialized);
+    app_core_start();
 
     /* Event log files (after rbpower storage init — it may own the `logs` mount) + boot forensics in EVERY
      * build: the classification feeds system.boot and the log; debug builds also echo it on the console. */
