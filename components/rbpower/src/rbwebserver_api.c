@@ -3436,11 +3436,15 @@ esp_err_t rbwebserver_api_backup_handler(httpd_req_t *req)
         httpd_resp_set_type(req, "application/json");
         /* meta = {ts,fw,files} stamped at POST time (additive; absent on pre-meta slots). */
         char meta[128]; int ml = (n > 0) ? rbgrid_storage_backup_meta(meta, sizeof(meta)) : 0;
-        char out[224];
+        /* sealed: present only for a 1.1.7+ slot — false = restore will refuse it (a save failed part-way) */
+        int sv = (n > 0) ? rbgrid_storage_backup_sealed() : -1;
+        char seal[24] = "";
+        if (sv >= 0) snprintf(seal, sizeof(seal), ",\"sealed\":%s", sv == 1 ? "true" : "false");
+        char out[256];
         if (ml > 0)
-            snprintf(out, sizeof(out), "{\"exists\":true,\"files\":%d,\"meta\":%s}", n, meta);
+            snprintf(out, sizeof(out), "{\"exists\":true,\"files\":%d%s,\"meta\":%s}", n, seal, meta);
         else
-            snprintf(out, sizeof(out), "{\"exists\":%s,\"files\":%d}", n > 0 ? "true" : "false", n);
+            snprintf(out, sizeof(out), "{\"exists\":%s,\"files\":%d%s}", n > 0 ? "true" : "false", n, seal);
         httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
         return ESP_OK;
     }

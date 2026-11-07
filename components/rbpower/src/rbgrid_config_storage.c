@@ -43,7 +43,10 @@ static const char *TAG = "RBGRID_STORAGE";
 
 // Backup folder and file paths
 #define BACKUP_FOLDER        "/backup"               ///< Backup folder on the config partition
-#define BACKUP_FILE_DEFAULT  "/backup/config.json"   ///< Default backup of /config.json
+/* The "undo the last settings save" copy of /config.json (rbgrid_storage_create_backup / restore_from_backup,
+ * POST /api/system/restore-system-config). It lived at /backup/config.json — the restore point's own copy — so
+ * every settings save silently replaced the restore point's system config with the pre-save one. */
+#define BACKUP_FILE_DEFAULT  "/config_prev.json"      ///< Copy of /config.json taken before each settings save
 
 // Forward declarations for internal use
 esp_err_t rbgrid_storage_create_backup(const char* tag);
@@ -526,6 +529,46 @@ int rbgrid_storage_backup_meta(char *out, size_t cap)
     return (int)sz;
 }
 
+/* Check the slot against its seal. want[i] = file i belongs to the slot. Returns 1 = sealed and every listed file
+ * matches its CRC; 0 = unusable (seal pending/unreadable, a file missing or changed); -1 = no seal at all (a slot
+ * saved before 1.1.7: want[] = the files present, restored unchecked as before). */
+static int rbgrid_backup_verify(bool want[RBGRID_MODULE_CONFIG_COUNT])
+{
+    char bp[80];
+    for (size_t i = 0; i < RBGRID_MODULE_CONFIG_COUNT; i++) want[i] = false;
+    char *cj = NULL; size_t cl = 0;
+    if (rbgrid_read_whole(BACKUP_CRC_FILE, &cj, &cl) != ESP_OK) {
+        for (size_t i = 0; i < RBGRID_MODULE_CONFIG_COUNT; i++) {
+            rbgrid_backup_path_of(RBGRID_MODULE_CONFIGS[i], bp, sizeof(bp));
+            want[i] = littlefs_raw_exists(bp);
+        }
+        return -1;
+    }
+    cj[cl < CONFIG_UNITS_SIZE ? cl : CONFIG_UNITS_SIZE - 1] = 0;
+    cJSON *crcs = cJSON_Parse(cj);
+    free(cj);
+    if (!crcs) return 0;
+    bool ok = cJSON_GetObjectItem(crcs, "pending") == NULL;   /* a backup that never finished */
+    for (size_t i = 0; ok && i < RBGRID_MODULE_CONFIG_COUNT; i++) {
+        const cJSON *c = cJSON_GetObjectItem(crcs, RBGRID_MODULE_CONFIGS[i]);
+        if (!cJSON_IsNumber(c)) continue;          /* not part of this generation */
+        rbgrid_backup_path_of(RBGRID_MODULE_CONFIGS[i], bp, sizeof(bp));
+        char *buf = NULL; size_t sz = 0;
+        if (rbgrid_read_whole(bp, &buf, &sz) != ESP_OK) { ok = false; break; }
+        ok = (esp_rom_crc32_le(0, (const uint8_t *)buf, sz) == (uint32_t)c->valuedouble);
+        free(buf);
+        want[i] = true;
+    }
+    cJSON_Delete(crcs);
+    return ok ? 1 : 0;
+}
+
+int rbgrid_storage_backup_sealed(void)
+{
+    bool want[RBGRID_MODULE_CONFIG_COUNT];
+    return rbgrid_backup_verify(want);
+}
+
 /* Restore the module config files from the slot, all or nothing:
  *  1. a sealed slot (_crc.json) must have every listed file present with a matching CRC, else nothing is
  *     touched (-2). A slot from before the seal existed restores what it holds, as before.
@@ -535,32 +578,9 @@ int rbgrid_storage_backup_meta(char *out, size_t cap)
 int rbgrid_storage_restore_all(void)
 {
     char bp[80], pp[80];
-    bool want[RBGRID_MODULE_CONFIG_COUNT] = {0};
-    char *cj = NULL; size_t cl = 0;
-    if (rbgrid_read_whole(BACKUP_CRC_FILE, &cj, &cl) == ESP_OK) {
-        cj[cl < CONFIG_UNITS_SIZE ? cl : CONFIG_UNITS_SIZE - 1] = 0;
-        cJSON *crcs = cJSON_Parse(cj);
-        free(cj);
-        if (!crcs) { ESP_LOGE(TAG, "restore: seal unreadable — refused"); return -2; }
-        bool ok = cJSON_GetObjectItem(crcs, "pending") == NULL;   /* a backup that never finished */
-        for (size_t i = 0; ok && i < RBGRID_MODULE_CONFIG_COUNT; i++) {
-            const cJSON *c = cJSON_GetObjectItem(crcs, RBGRID_MODULE_CONFIGS[i]);
-            if (!cJSON_IsNumber(c)) continue;          /* not part of this generation */
-            rbgrid_backup_path_of(RBGRID_MODULE_CONFIGS[i], bp, sizeof(bp));
-            char *buf = NULL; size_t sz = 0;
-            if (rbgrid_read_whole(bp, &buf, &sz) != ESP_OK) { ok = false; break; }
-            ok = (esp_rom_crc32_le(0, (const uint8_t *)buf, sz) == (uint32_t)c->valuedouble);
-            free(buf);
-            want[i] = true;
-        }
-        cJSON_Delete(crcs);
-        if (!ok) { ESP_LOGE(TAG, "restore: slot incomplete or mixed (CRC mismatch) — refused, nothing changed"); return -2; }
-    } else {
-        for (size_t i = 0; i < RBGRID_MODULE_CONFIG_COUNT; i++) {   /* legacy, unsealed slot */
-            rbgrid_backup_path_of(RBGRID_MODULE_CONFIGS[i], bp, sizeof(bp));
-            want[i] = littlefs_raw_exists(bp);
-        }
-    }
+    bool want[RBGRID_MODULE_CONFIG_COUNT];
+    int sv = rbgrid_backup_verify(want);
+    if (sv == 0) { ESP_LOGE(TAG, "restore: slot incomplete or mixed (CRC mismatch) — refused, nothing changed"); return -2; }
     /* save the live files for a rollback; without a complete rollback copy nothing is touched */
     littlefs_raw_mkdir(BACKUP_PREV_DIR);
     for (size_t i = 0; i < RBGRID_MODULE_CONFIG_COUNT; i++) {
