@@ -2978,6 +2978,10 @@ rbpower_err_t rbpower_home_create_unit(const rbpower_unit_definition_t* def)
     /* Same id as a unit removed in this boot → its runtime flash buffers still exist; re-occupy their
      * (erased) slot so the records written from now on survive the next boot. No-op otherwise. */
     rbpower_flash_reattach_unit(def->unit_id);
+    /* A brand-new id created after boot (a node paired, a sensor bound in the app): its history slot now, not at the
+     * next restart. No-op at boot (flash init comes later and allocates every configured unit). */
+    if (def->type != RBPOWER_METRIC_VOLTAGE_BUS)
+        (void)rbpower_flash_attach_unit(def->unit_id, def->name, (int)def->role);
 
     /* Bind at the source layer (rbAmp bridge sets the fleet entry unit_id + persists /rbamp.json so
      * the source starts injecting + the unit survives reboot). No-op for sources with no binding. */

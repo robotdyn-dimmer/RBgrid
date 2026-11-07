@@ -2514,6 +2514,85 @@ esp_err_t rbpower_flash_repair_buffer(rbpower_unit_id_t unit_id,
  * BUFFER INITIALIZATION FROM THE CONFIGURATION
  * ================================================================================================ */
 
+/* Describe one unit's ring buffers in its slot (the RBPOWER_BUFFER_SECTORS matrix, packed from the slot base) and
+ * register them with the runtime manager. Shared by the boot-time init and the runtime attach of a new unit. */
+static esp_err_t build_unit_buffers(rbpower_unit_id_t uid, const char *name, rbpower_load_role_t role, int slot_idx,
+                                    uint16_t *total_out, uint16_t *ok_out)
+{
+    extern const uint8_t RBPOWER_BUFFER_SECTORS[RBPOWER_PERIOD_MAX][RBPOWER_DATA_TYPE_MAX];
+    extern const uint32_t RBPOWER_RECORDS_COUNT[RBPOWER_PERIOD_MAX];
+    uint16_t total_buffers = 0, initialized_buffers = 0;
+    uint32_t slot_base_offset = g_flash_slots[slot_idx].base_offset;
+    uint32_t buffer_offset = slot_base_offset;
+    uint8_t unit_buffers = 0;
+    esp_err_t ret = rbpower_runtime_add_unit(&g_runtime_manager, uid, name, role);
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_ARG) {
+        ESP_LOGE(TAG, "❌ Failed to add unit to runtime: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    for (uint8_t period = RBPOWER_PERIOD_HOUR; period < RBPOWER_PERIOD_MAX; period++) {
+        for (uint8_t data_type = 0; data_type < RBPOWER_DATA_TYPE_MAX; data_type++) {
+            uint8_t sectors = RBPOWER_BUFFER_SECTORS[period][data_type];
+            if (sectors == 0) continue;
+            total_buffers++;
+            unit_buffers++;
+            uint16_t record_size = rbpower_get_transfer_size((rbpower_data_type_t)data_type);
+            uint16_t records_per_sector = RBPOWER_FLASH_SECTOR_SIZE / record_size;
+            uint32_t buffer_size_bytes = sectors * RBPOWER_FLASH_SECTOR_SIZE;
+            rbpower_buffer_runtime_t buffer;
+            memset(&buffer, 0, sizeof(buffer));
+            buffer.unit_id = uid;
+            buffer.period = (rbpower_period_t)period;
+            buffer.data_type = (rbpower_data_type_t)data_type;
+            buffer.total_sectors = sectors;
+            buffer.record_size = record_size;
+            buffer.flash_offset = buffer_offset;
+            buffer.buffer_size_bytes = buffer_size_bytes;
+            buffer.physical_capacity = records_per_sector * sectors;
+            buffer.logical_capacity = RBPOWER_RECORDS_COUNT[period];
+            ret = rbpower_runtime_add_buffer(&g_runtime_manager, &buffer);
+            if (ret == ESP_OK) {
+                initialized_buffers++;
+                buffer_offset += buffer_size_bytes;
+            } else {
+                ESP_LOGE(TAG, "  ❌ Failed to add buffer (period=%d, type=%d): %s", period, data_type, esp_err_to_name(ret));
+            }
+        }
+    }
+    ESP_LOGD(TAG, "Unit 0x%04X: %d buffers, %lu KB of its slot", uid, unit_buffers,
+             (unsigned long)((buffer_offset - slot_base_offset) / 1024));
+    if (total_out) *total_out = total_buffers;
+    if (ok_out) *ok_out = initialized_buffers;
+    return ESP_OK;
+}
+
+/* Public: give a unit created at runtime (a node paired, a sensor bound in the app) its flash history NOW instead of
+ * at the next boot: take a free slot (free slots are erased when their unit is deleted, or never written) and
+ * describe its buffers; their caches start invalid, so the first access scans the empty slot and the first write
+ * starts the ring. No-op when flash is unavailable, the unit is already slotted, or it has buffers from earlier in
+ * this boot (rbpower_flash_reattach_unit handles that case). */
+esp_err_t rbpower_flash_attach_unit(rbpower_unit_id_t uid, const char *name, int role)
+{
+    if (!g_is_initialized || !rbpower_flash_is_available()) return ESP_OK;
+    if (find_slot_for_unit(uid) >= 0) return ESP_OK;
+    for (uint16_t i = 0; i < g_runtime_manager.buffer_count; i++)
+        if (g_runtime_manager.buffers[i].unit_id == uid) return ESP_OK;
+    if (!flash_lock_write(pdMS_TO_TICKS(2000))) return ESP_ERR_TIMEOUT;
+    esp_err_t r = ESP_OK;
+    int slot = find_first_free_slot();
+    if (slot < 0) {
+        r = ESP_ERR_NO_MEM;
+    } else if ((r = allocate_slot_for_unit(uid, slot)) == ESP_OK) {
+        uint16_t tot = 0, ok = 0;
+        r = build_unit_buffers(uid, name, (rbpower_load_role_t)role, slot, &tot, &ok);
+        if (r == ESP_OK && ok != tot) r = ESP_FAIL;
+    }
+    flash_unlock_write();
+    if (r == ESP_OK) ESP_LOGW(TAG, "attach 0x%04X: history slot %d ready (no restart needed)", uid, slot);
+    else ESP_LOGE(TAG, "attach 0x%04X: %s (history starts after the next restart, if a slot is free then)", uid, esp_err_to_name(r));
+    return r;
+}
+
 esp_err_t rbpower_flash_init_buffers_from_network(void)
 {
 #if CONFIG_RBPOWER_VERBOSE_DEBUG
@@ -2624,82 +2703,10 @@ esp_err_t rbpower_flash_init_buffers_from_network(void)
             ESP_LOGD(TAG, "✓ Unit 0x%04X already in slot %d", uid, slot_idx);
         }
 
-        // Get the slot base offset
-        uint32_t slot_base_offset = g_flash_slots[slot_idx].base_offset;
-        uint32_t buffer_offset = slot_base_offset;  // Running offset inside the slot
-
-        ESP_LOGD(TAG, "Slot %d base offset: 0x%06lX", slot_idx, (unsigned long)slot_base_offset);
-
-        uint8_t unit_buffers = 0;
-
-        // 5. Add the unit to the runtime manager
-        esp_err_t ret = rbpower_runtime_add_unit(&g_runtime_manager, uid,
-                                                   unit->definition.name,
-                                                   role);
-        if (ret != ESP_OK && ret != ESP_ERR_INVALID_ARG) {
-            ESP_LOGE(TAG, "❌ Failed to add unit to runtime: %s", esp_err_to_name(ret));
-            continue;
-        }
-
-        // 6. Initialize buffers per the RBPOWER_BUFFER_SECTORS matrix
-        for (uint8_t period = RBPOWER_PERIOD_HOUR; period < RBPOWER_PERIOD_MAX; period++) {
-            for (uint8_t data_type = 0; data_type < RBPOWER_DATA_TYPE_MAX; data_type++) {
-
-                // Check: is a buffer needed for this combination?
-                uint8_t sectors = RBPOWER_BUFFER_SECTORS[period][data_type];
-                if (sectors == 0) {
-                    // Skip: no buffer is used for this combination
-                    continue;
-                }
-
-                total_buffers++;
-                unit_buffers++;
-
-                // Compute the buffer parameters
-                uint16_t record_size = rbpower_get_transfer_size((rbpower_data_type_t)data_type);
-                uint16_t records_per_sector = RBPOWER_FLASH_SECTOR_SIZE / record_size;
-                uint32_t buffer_size_bytes = sectors * RBPOWER_FLASH_SECTOR_SIZE;
-                uint32_t physical_capacity = records_per_sector * sectors;
-                uint32_t logical_capacity = RBPOWER_RECORDS_COUNT[period];
-
-                // Build the buffer descriptor
-                rbpower_buffer_runtime_t buffer;
-                buffer.unit_id = uid;
-                buffer.period = (rbpower_period_t)period;
-                buffer.data_type = (rbpower_data_type_t)data_type;
-                buffer.total_sectors = sectors;
-                buffer.record_size = record_size;
-                buffer.flash_offset = buffer_offset;
-                buffer.buffer_size_bytes = buffer_size_bytes;
-                buffer.physical_capacity = physical_capacity;
-                buffer.logical_capacity = logical_capacity;
-
-                // Add the buffer to the runtime manager
-                ret = rbpower_runtime_add_buffer(&g_runtime_manager, &buffer);
-                if (ret == ESP_OK) {
-                    initialized_buffers++;
-
-                    ESP_LOGD(TAG, "  ✓ Buffer[%d]: period=%d, type=%d, sectors=%d, offset=0x%06lX, size=%lu B",
-                             unit_buffers - 1, period, data_type, sectors,
-                             (unsigned long)buffer_offset,
-                             (unsigned long)buffer_size_bytes);
-
-                    // Advance the offset inside the slot
-                    buffer_offset += buffer_size_bytes;
-
-                    // NOTE: diagnostics and cache initialization run AFTER the
-                    // optional flash clear (if CLEAR_BUFFERS_ON_INIT == 1).
-                    // See the code after the initialization summary.
-                } else {
-                    ESP_LOGE(TAG, "  ❌ Failed to add buffer (period=%d, type=%d): %s",
-                             period, data_type, esp_err_to_name(ret));
-                }
-            }
-        }
-
-        uint32_t unit_flash_used = buffer_offset - slot_base_offset;
-        ESP_LOGD(TAG, "Unit[%d]: initialized %d buffers, Flash used in slot: %lu KB",
-                 unit_idx, unit_buffers, (unsigned long)(unit_flash_used / 1024));
+        uint16_t ub = 0, ui = 0;
+        if (build_unit_buffers(uid, unit->definition.name, role, slot_idx, &ub, &ui) != ESP_OK) continue;
+        total_buffers += ub;
+        initialized_buffers += ui;
     }
 
 #if CONFIG_RBPOWER_VERBOSE_DEBUG

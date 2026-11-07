@@ -1055,6 +1055,55 @@ int rbgrid_config_add_rbamp_module(rbgrid_config_handle_t config,
  * from (node MAC, channel). Config-time registration ⇒ the units get the full standard treatment at
  * rbpower_home_init (flash buffers, source mappings, period accumulators) — identical to a local rbAmp
  * unit, so history/billing/tariff all work. The ESP-NOW hub then just feeds them by the same unit_id. */
+/* Fill the definition of one ESP-NOW node channel point (shared by the boot-time builder and live pairing). */
+static float espnow_fill_unit(rbpower_unit_definition_t* u, const uint8_t node_mac[6], const rbgrid_rbamp_channel_t* ch,
+                              bool (*taken)(const char*, void*), void* taken_arg)
+{
+    memset(u, 0, sizeof(*u));
+    u->unit_id = rbgrid_create_espnow_unit_id(node_mac, ch->channel);
+    if (ch->name && ch->name[0]) strncpy(u->name, ch->name, sizeof(u->name) - 1);
+    else snprintf(u->name, sizeof(u->name), "ESPNOW %02X%02X.%u", node_mac[4], node_mac[5], ch->channel);
+    strncpy(u->location, "ESP-NOW node", sizeof(u->location) - 1);
+    u->type = RBPOWER_METRIC_CURRENT_LOAD;
+    u->role = RBPOWER_ROLE_DEVICE_LOAD;
+    u->stat_class = RBPOWER_STAT_PERIOD_1HOUR;
+
+    u->sources[0].source_type       = RBPOWER_SOURCE_ESP_NOW;
+    u->sources[0].source_id          = ch->channel;     /* the node's flat channel_id (module*4+ch) */
+    u->sources[0].sensor_profile_id  = (uint8_t)ch->sensor_type;
+    u->sources[0].weight_factor      = 1.0f;
+    u->sources[0].is_primary         = true;
+    u->sources[0].invert_sign        = false;
+    u->sources_count = 1;
+
+    /* Identity: device_uid = node MAC packed LE48, channel_idx = flat channel. */
+    u->device_uid = ((uint64_t)node_mac[0]) | ((uint64_t)node_mac[1] << 8) |
+                    ((uint64_t)node_mac[2] << 16) | ((uint64_t)node_mac[3] << 24) |
+                    ((uint64_t)node_mac[4] << 32) | ((uint64_t)node_mac[5] << 40);
+    u->channel_idx = ch->channel;
+    u->caps = rbpoint_caps_for_source(RBPOWER_SOURCE_ESP_NOW, u->type, false);
+    {
+        char base[RBPOINT_SLUG_MAX + 1];
+        rbpoint_slug_from_name(u->name, base);
+        rbpoint_slug_uniquify(base, u->point, taken, taken_arg);
+    }
+
+    u->parent_unit_id = RBPOWER_HOME_INVALID_ID;
+    float rated = rbamp_sensor_rated_current(ch->sensor_type);
+    u->accumulate_energy = true;
+    u->max_current_a  = rated;
+    u->rated_voltage_v = 230.0f;
+    u->rated_power_w   = rated * 230.0f;
+    u->thresholds.over_current_a = rated * 0.9f;
+    u->thresholds.over_power_w   = u->rated_power_w * 0.9f;
+    u->thresholds.under_voltage_v = 207.0f;
+    u->thresholds.over_voltage_v  = 253.0f;
+    u->thresholds.enable_alerts   = true;
+    u->billing.cost_per_kwh = 5.50f;
+    u->is_active = true;
+    return rated;
+}
+
 int rbgrid_config_add_espnow_module(rbgrid_config_handle_t config,
                                     const uint8_t node_mac[6],
                                     const rbgrid_rbamp_channel_t* channels,
@@ -1094,48 +1143,7 @@ int rbgrid_config_add_espnow_module(rbgrid_config_handle_t config,
         }
 
         rbpower_unit_definition_t* u = &ctx->units_array[ctx->units_count];
-        memset(u, 0, sizeof(*u));
-        u->unit_id = cand_uid;
-        if (ch->name && ch->name[0]) strncpy(u->name, ch->name, sizeof(u->name) - 1);
-        else snprintf(u->name, sizeof(u->name), "ESPNOW %02X%02X.%u", node_mac[4], node_mac[5], ch->channel);
-        strncpy(u->location, "ESP-NOW node", sizeof(u->location) - 1);
-        u->type = RBPOWER_METRIC_CURRENT_LOAD;
-        u->role = RBPOWER_ROLE_DEVICE_LOAD;
-        u->stat_class = RBPOWER_STAT_PERIOD_1HOUR;
-
-        u->sources[0].source_type       = RBPOWER_SOURCE_ESP_NOW;
-        u->sources[0].source_id          = ch->channel;     /* the node's flat channel_id (module*4+ch) */
-        u->sources[0].sensor_profile_id  = (uint8_t)ch->sensor_type;
-        u->sources[0].weight_factor      = 1.0f;
-        u->sources[0].is_primary         = true;
-        u->sources[0].invert_sign        = false;
-        u->sources_count = 1;
-
-        /* Identity: device_uid = node MAC packed LE48, channel_idx = flat channel. */
-        u->device_uid = ((uint64_t)node_mac[0]) | ((uint64_t)node_mac[1] << 8) |
-                        ((uint64_t)node_mac[2] << 16) | ((uint64_t)node_mac[3] << 24) |
-                        ((uint64_t)node_mac[4] << 32) | ((uint64_t)node_mac[5] << 40);
-        u->channel_idx = ch->channel;
-        u->caps = rbpoint_caps_for_source(RBPOWER_SOURCE_ESP_NOW, u->type, false);
-        {
-            char base[RBPOINT_SLUG_MAX + 1];
-            rbpoint_slug_from_name(u->name, base);
-            rbpoint_slug_uniquify(base, u->point, point_taken_builder, ctx);
-        }
-
-        u->parent_unit_id = RBPOWER_HOME_INVALID_ID;
-        float rated = rbamp_sensor_rated_current(ch->sensor_type);
-        u->accumulate_energy = true;
-        u->max_current_a  = rated;
-        u->rated_voltage_v = 230.0f;
-        u->rated_power_w   = rated * 230.0f;
-        u->thresholds.over_current_a = rated * 0.9f;
-        u->thresholds.over_power_w   = u->rated_power_w * 0.9f;
-        u->thresholds.under_voltage_v = 207.0f;
-        u->thresholds.over_voltage_v  = 253.0f;
-        u->thresholds.enable_alerts   = true;
-        u->billing.cost_per_kwh = 5.50f;
-        u->is_active = true;
+        float rated = espnow_fill_unit(u, node_mac, ch, point_taken_builder, ctx);
 
         ctx->units_count++;
         ctx->status.units_configured = true;
@@ -1144,6 +1152,26 @@ int rbgrid_config_add_espnow_module(rbgrid_config_handle_t config,
                  ch->channel, u->unit_id, u->name, rated);
     }
     return RBGRID_CONFIG_OK;
+}
+
+/* Live pairing: create the points of a newly paired node now (no restart). Each one gets its history slot at once
+ * (rbpower_home_create_unit → rbpower_flash_attach_unit) and units.json is saved, so it also exists after a restart.
+ * ch_ids/ct_codes: node flat channel ids + rbAmp CT codes (as in the node registry). Returns the number created. */
+static rbsensor_type_t rbamp_ct_code_to_sensor_type(uint8_t ct_code);
+int rbgrid_config_espnow_node_live(const uint8_t node_mac[6], const uint8_t* ch_ids, const uint8_t* ct_codes, uint8_t n)
+{
+    int made = 0;
+    for (uint8_t i = 0; i < n; i++) {
+        rbgrid_rbamp_channel_t ch = { .channel = ch_ids[i], .sensor_type = rbamp_ct_code_to_sensor_type(ct_codes[i]), .name = NULL };
+        rbpower_unit_definition_t u;
+        espnow_fill_unit(&u, node_mac, &ch, point_taken_live, NULL);
+        if (rbpower_home_get_unit_definition(u.unit_id)) continue;   /* already there */
+        rbpower_err_t rc = rbpower_home_create_unit(&u);
+        if (rc == RBPOWER_OK) made++;
+        else ESP_LOGE(TAG, "espnow live: unit 0x%04X not created (%d)", (unsigned)u.unit_id, (int)rc);
+    }
+    if (made) (void)rbgrid_storage_save_units(NULL);
+    return made;
 }
 
 /** @brief Recover the RBgrid sensor type for an rbAmp hardware CT code (1=5A, 2=10A,

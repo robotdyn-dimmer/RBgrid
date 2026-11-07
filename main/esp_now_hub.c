@@ -37,7 +37,10 @@
 #include "esp_mac.h"        /* esp_read_mac — hub MAC for the HA node sensor device id */
 #include "nvs.h"            /* last injected PERIOD frame per node (dedup across a restart) */
 #include "rbfault.h"        /* test builds: lost-ACK simulation */
+#include "rbgrid_config_api.h"   /* live point registration on pairing */
+#include "rbjson.h"              /* rbgrid_ha_discovery_request */
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
 
@@ -360,6 +363,33 @@ static wifi_interface_t hub_ifidx(void)
 /** Add or refresh a node as an ENCRYPTED (CCMP) unicast peer, keyed by LMK = HMAC(PMK, node_mac). The node
  * derives the same LMK from its own MAC, so encrypted data frames flow both ways without a key on the air.
  * The broadcast beacon/followup stay on the separate unencrypted BCAST peer. */
+/* Live registration of a node's points runs in its own short-lived task: creating a point, saving units.json and
+ * describing its history buffers need far more stack than the beacon task (4 KB) — it overflowed there on the bench —
+ * and the HTTP / MQTT tasks calling the `add` action. */
+typedef struct { uint8_t mac[6]; uint8_t n; uint8_t ids[ESPNOW_REG_MAX_CH]; uint8_t cts[ESPNOW_REG_MAX_CH]; } enh_live_job_t;
+static void enh_live_task(void *arg)
+{
+    enh_live_job_t *j = (enh_live_job_t *)arg;
+    int made = rbgrid_config_espnow_node_live(j->mac, j->ids, j->cts, j->n);
+    rbgrid_ha_discovery_request();
+    rbpower_diag_printf("espnow: node %02X:%02X:%02X:%02X:%02X:%02X — %d point(s) registered live, no restart needed",
+                        j->mac[0], j->mac[1], j->mac[2], j->mac[3], j->mac[4], j->mac[5], made);
+    free(j);
+    vTaskDelete(NULL);
+}
+static void enh_register_live(const uint8_t mac[6], const espnow_reg_chan_t *ch, uint8_t n)
+{
+    enh_live_job_t *j = (enh_live_job_t *)calloc(1, sizeof(*j));
+    if (!j) return;
+    memcpy(j->mac, mac, 6);
+    j->n = n > ESPNOW_REG_MAX_CH ? ESPNOW_REG_MAX_CH : n;
+    for (int c = 0; c < j->n; c++) { j->ids[c] = ch[c].ch; j->cts[c] = ch[c].ct_code; }
+    if (xTaskCreate(enh_live_task, "espnow_live", 8192, j, 4, NULL) != pdPASS) {
+        free(j);
+        rbpower_diag_printf("FAIL espnow: live registration task not started — points appear after a restart");
+    }
+}
+
 static void hub_add_enc_peer(const uint8_t mac[6])
 {
     esp_now_peer_info_t p = { .channel = s_channel, .ifidx = hub_ifidx(), .encrypt = true };
@@ -514,9 +544,8 @@ static void beacon_task(void *arg)
                 s_paired_count++;
                 hub_add_enc_peer(s_pending_pair_mac);   /* encrypt this node's link immediately */
                 espnow_publish_ha_node(s_pending_pair_mac, false);   /* HA "Online" sensor for the new node */
-                ESP_LOGW(TAG, "PAIRED node %02X:%02X:%02X:%02X:%02X:%02X (%u ch) → registry; run `reboot` to register its units",
-                         s_pending_pair_mac[0],s_pending_pair_mac[1],s_pending_pair_mac[2],
-                         s_pending_pair_mac[3],s_pending_pair_mac[4],s_pending_pair_mac[5], s_pending_pair_n);
+                /* Its points now, with history slots: no restart (pairing used to say "reboot to register"). */
+                enh_register_live(s_pending_pair_mac, s_pending_pair_ch, s_pending_pair_n);
             }
             s_pending_pair = false;
         }
@@ -946,7 +975,11 @@ char *esp_now_hub_action(const cJSON *req, int *status)
         else {
             esp_err_t e2 = esp_now_registry_add_node(mac, ch, n);
             if (e2 != ESP_OK) ENH_ERR(500, "{\"ok\":false,\"error\":\"REGISTRY\",\"message\":\"%s\"}", esp_err_to_name(e2));
-            else snprintf(out, sizeof(out), "{\"ok\":true,\"reboot_to_register\":true,\"channels\":%u}", n);
+            else {
+                enh_register_live(mac, ch, n);
+                if (esp_now_hub_running()) hub_add_enc_peer(mac);
+                snprintf(out, sizeof(out), "{\"ok\":true,\"reboot_to_register\":false,\"channels\":%u}", n);
+            }
         }
     } else {
         ENH_ERR(400, "{\"ok\":false,\"error\":\"BAD_REQUEST\",\"message\":\"action = hub_on|hub_off|pair|pair_cancel|latch|remove|disable|enable|add (+ mac)\"}");
