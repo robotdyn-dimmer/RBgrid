@@ -17,6 +17,7 @@
  *  - inject_task feeds REALTIME/PERIOD data into rbpower and runs the presence-timeout sweep.
  *  - The public functions are called from the console, the HTTP server and the HA discovery task.
  */
+#include "esp_idf_version.h"
 #include "esp_now_hub.h"
 #include "espnow_proto.h"
 #include "espnow_crypto.h"  /* PMK + PAIR_REQ auth-tag verification */
@@ -496,7 +497,11 @@ static void hub_add_enc_peer(const uint8_t mac[6])
 }
 
 /** TX done (Wi-Fi task): if it was the beacon, send its SYNC_FOLLOWUP with the egress esp_timer (two-step PTP). */
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+static void on_send(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)   /* IDF 5.5: tx info, not the MAC */
+#else
 static void on_send(const uint8_t *mac, esp_now_send_status_t status)
+#endif
 {
     int64_t t_tx = esp_timer_get_time();
     uint32_t bid = s_pending_beacon_id;

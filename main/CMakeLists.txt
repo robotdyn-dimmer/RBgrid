@@ -3,6 +3,7 @@
 idf_component_register(SRCS "main.cpp" "rbamp_bridge.c" "esp_now_hub.c" "rbevlog.c" "modfw.c" "rbi2c_api.c"
                     INCLUDE_DIRS "."
                     REQUIRES rbpower
+                            esp_psram   # the firmware requires PSRAM; with MINIMAL_BUILD, IDF 5.5 drops it unless asked
                             console
                             bench_kit
                             nvs_flash
