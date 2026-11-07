@@ -120,6 +120,9 @@ typedef struct {
     float    resid_sd, resid_maxabs, skew_ppm;
     uint32_t fits, beacons_recv, max_beacon_id;   /* loss% = (max_id - beacons_recv)/max_id */
     int8_t   rssi;                                 /* dBm of the last REALTIME frame (0 = none yet) */
+    /* link loss over a sliding window: snapshot of (max_beacon_id, beacons_recv) ≥ 60 s ago */
+    uint32_t w_max0, w_recv0; int64_t w_t0;
+    float    loss_win;                             /* % lost beacons in the last window; < 0 = no window yet */
 } enh_node_t;
 /** @var enh_node_t::used
  *  Slot in use.  @var enh_node_t::online
@@ -141,7 +144,7 @@ static enh_node_t *enh_node_slot(const uint8_t *mac)
     for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
         if (s_nodes[i].used && memcmp(s_nodes[i].mac, mac, 6) == 0) return &s_nodes[i];
     for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
-        if (!s_nodes[i].used) { memset(&s_nodes[i], 0, sizeof(s_nodes[i])); s_nodes[i].used = true;
+        if (!s_nodes[i].used) { memset(&s_nodes[i], 0, sizeof(s_nodes[i])); s_nodes[i].used = true; s_nodes[i].loss_win = -1.0f;
                                 memcpy(s_nodes[i].mac, mac, 6); return &s_nodes[i]; }
     return NULL;
 }
@@ -638,7 +641,20 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         enh_node_t *nd = enh_node_slot(mac);
         if (nd) { nd->last_stats_us = esp_timer_get_time(); nd->resid_sd = s->resid_sd_us;
                   nd->resid_maxabs = s->resid_maxabs_us; nd->skew_ppm = s->skew_ppm; nd->fits = s->fits;
-                  nd->beacons_recv = s->beacons_recv; nd->max_beacon_id = s->max_beacon_id; }
+                  nd->beacons_recv = s->beacons_recv; nd->max_beacon_id = s->max_beacon_id;
+                  /* Loss over the last ≥60 s from the increments. The raw counters are since different starts (the
+                   * hub's beacon id since the HUB booted, the node's count since the NODE booted or relocked), so
+                   * their ratio read ~99 % right after a node restart and took hours to decay. Restart of either
+                   * side (a counter going backwards) restarts the window. */
+                  int64_t tn = nd->last_stats_us;
+                  if (nd->w_t0 == 0 || s->max_beacon_id < nd->w_max0 || s->beacons_recv < nd->w_recv0) {
+                      nd->w_t0 = tn; nd->w_max0 = s->max_beacon_id; nd->w_recv0 = s->beacons_recv; nd->loss_win = -1.0f;
+                  } else if (tn - nd->w_t0 >= 60LL * 1000000LL) {
+                      uint32_t dm = s->max_beacon_id - nd->w_max0, dr = s->beacons_recv - nd->w_recv0;
+                      if (dr > dm) dr = dm;
+                      nd->loss_win = dm ? 100.0f * (float)(dm - dr) / (float)dm : 0.0f;
+                      nd->w_t0 = tn; nd->w_max0 = s->max_beacon_id; nd->w_recv0 = s->beacons_recv;
+                  } }
         portEXIT_CRITICAL(&s_units_mux);
         ESP_LOGI(TAG, "RBN_NODESTATS from %02X:%02X:%02X:%02X:%02X:%02X fits=%u resid_sd=%.1fus maxabs=%.1fus skew_ppm=%.2f",
                  mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],
@@ -678,6 +694,9 @@ static void beacon_task(void *arg)
                 hub_add_enc_peer(s_pending_pair_mac);   /* encrypt this node's link immediately */
                 espnow_publish_ha_node(s_pending_pair_mac, false);   /* HA "Online" sensor for the new node */
                 espnow_publish_event("paired", s_pending_pair_mac);
+                {   enh_nodecfg_slot_t *sl = ncfg_get(s_pending_pair_mac, false);
+                    if (sl && sl->c.state != 1) { sl->c.state = 1; sl->dirty = false; }   /* re-send on the next ~3 s tick */
+                }
                 /* Its points now, with history slots: no restart (pairing used to say "reboot to register"). */
                 enh_register_live(s_pending_pair_mac, s_pending_pair_ch, s_pending_pair_n);
             }
@@ -755,7 +774,7 @@ static void espnow_publish_status(const uint8_t mac[6], bool online)
     for (int k = 0; k < ESPNOW_REG_MAX_NODES; k++)
         if (s_nodes[k].used && memcmp(s_nodes[k].mac, mac, 6) == 0) {
             rssi = s_nodes[k].rssi; lr = s_nodes[k].last_rt_us;
-            if (s_nodes[k].max_beacon_id) loss = 100.0f * (float)(s_nodes[k].max_beacon_id - s_nodes[k].beacons_recv) / (float)s_nodes[k].max_beacon_id;
+            loss = s_nodes[k].loss_win;   /* last ≥60 s window; < 0 = none yet (omitted) */
             break;
         }
     portEXIT_CRITICAL(&s_units_mux);
@@ -1285,6 +1304,12 @@ uint32_t esp_now_hub_delnode_cascade(const uint8_t mac[6])
     if (esp_now_is_peer_exist(mac)) esp_now_del_peer(mac);   /* drop the encrypted peer */
     espnow_publish_ha_node(mac, true);                       /* remove the node's HA "Online" sensor */
     espnow_publish_event("removed", mac);
+    {   /* forget its settings: a node paired again starts from all channels on (the node resets too) */
+        nvs_handle_t h; char key[12]; ncfg_key(mac, key);
+        if (nvs_open("espnow_nc", NVS_READWRITE, &h) == ESP_OK) { nvs_erase_key(h, key); nvs_commit(h); nvs_close(h); }
+        for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
+            if (s_ncfg[i].used && memcmp(s_ncfg[i].mac, mac, 6) == 0) memset(&s_ncfg[i], 0, sizeof(s_ncfg[i]));
+    }
     ESP_LOGW(TAG, "delnode cascade %02X:%02X:%02X:%02X:%02X:%02X → %u unit(s) removed",
              mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], (unsigned)removed);
     return removed;
@@ -1380,9 +1405,8 @@ char *esp_now_hub_status_json(void)
                 cJSON_AddNumberToObject(sync, "resid_sd_us", hs.resid_sd);
                 cJSON_AddNumberToObject(sync, "skew_ppm", hs.skew_ppm);
                 cJSON_AddNumberToObject(sync, "fits", hs.fits);
-                uint32_t rcv = hs.beacons_recv > hs.max_beacon_id ? hs.max_beacon_id : hs.beacons_recv;
-                float loss = hs.max_beacon_id ? 100.0f * (float)(hs.max_beacon_id - rcv) / (float)hs.max_beacon_id : 0.0f;
-                cJSON_AddNumberToObject(sync, "loss_pct", loss);
+                /* lost beacons over the last ≥60 s window (absent until the first window completes) */
+                if (hs.loss_win >= 0.0f) cJSON_AddNumberToObject(sync, "loss_pct", hs.loss_win);
             }
             cJSON *chs = cJSON_AddArrayToObject(jn, "channels");
             for (int c = 0; c < rn->ch_count; c++) {
