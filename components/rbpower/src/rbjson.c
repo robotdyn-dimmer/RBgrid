@@ -27,6 +27,7 @@
 #include <sys/time.h>
 #include "esp_timer.h"
 #include "rbhome_types.h"
+#include "littlefs_raw.h"   /* HA discovery tombstones (/ha_tomb) */
 #include "rbpower_constants.h"
 #include "rbpower_enums.h"
 #include "rbgrid.h"   /* RBGRID_IS_I2C_UNIT / RBGRID_I2C_GET_* — telemetry source tag */
@@ -2603,9 +2604,24 @@ uint32_t __attribute__((weak)) rbpower_i2c_bus_line_low_s(void) { return 0; }
  * this a deleted unit would stay in HA as a ghost going `unavailable` after expire_after. Key rule
  * mirrors the discovery snapshot: main / alt / %04X. 8 publishes QoS0 — fine from the HTTP task
  * (the dedicated-task rule below is about the MQTT event task). */
+/* Unit deletions that happened while MQTT was offline: their retained discovery configs stay on the broker and
+ * HA keeps a ghost device. The keys are kept in /ha_tomb (space-separated, littlefs) and cleared on the next
+ * discovery run after a (re)connect. */
+#define HA_TOMB_FILE "/ha_tomb"
+static void ha_unpublish_key(const char *m, const char *key)
+{
+    const int NM = (int)(sizeof(MET) / sizeof(MET[0]));
+    for (int k = 0; k < NM; k++) {
+        char topic[120];
+        int tlen = snprintf(topic, sizeof(topic), "homeassistant/sensor/rbgrid_%s_%s/%s/config", m, key, MET[k].metric);
+        if (tlen < 0 || tlen >= (int)sizeof(topic)) continue;
+        rbmqtt_publish(topic, "", 0, true);   /* empty retained → HA removes the entity */
+    }
+    ESP_LOGW(TAG, "HA discovery: unpublished %d entities of unit %s", NM, key);
+}
+
 void rbgrid_json_ha_unpublish_unit(uint16_t unit_id, int role)
 {
-    if (!rbmqtt_is_connected()) return;
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     char m[13];
@@ -2616,14 +2632,30 @@ void rbgrid_json_ha_unpublish_unit(uint16_t unit_id, int role)
     else if (role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY && unit_id == g_home_network.system.alternative_supply_unit_id)
         snprintf(key, sizeof(key), "alt");   /* a further supply point (per phase) is keyed by its id */
     else                                              snprintf(key, sizeof(key), "%04X", (unsigned)unit_id);
-    const int NM = (int)(sizeof(MET) / sizeof(MET[0]));
-    for (int k = 0; k < NM; k++) {
-        char topic[120];
-        int tlen = snprintf(topic, sizeof(topic), "homeassistant/sensor/rbgrid_%s_%s/%s/config", m, key, MET[k].metric);
-        if (tlen < 0 || tlen >= (int)sizeof(topic)) continue;
-        rbmqtt_publish(topic, "", 0, true);   /* empty retained → HA removes the entity */
-    }
-    ESP_LOGW(TAG, "HA discovery: unpublished %d entities of unit %s", NM, key);
+    if (rbmqtt_is_connected()) { ha_unpublish_key(m, key); return; }
+    /* offline: remember it for the next connect (bounded; a duplicate key is not added twice) */
+    char buf[160] = {0}; size_t n = 0;
+    if (littlefs_raw_read(HA_TOMB_FILE, buf, sizeof(buf) - 1, &n) != ESP_OK) n = 0;
+    buf[n < sizeof(buf) ? n : sizeof(buf) - 1] = 0;
+    char probe[10]; snprintf(probe, sizeof(probe), " %s ", key);
+    char padded[164]; snprintf(padded, sizeof(padded), " %s ", buf);
+    if (strstr(padded, probe)) return;
+    if (n + strlen(key) + 2 >= sizeof(buf)) { ESP_LOGW(TAG, "HA tombstones full — %s not recorded", key); return; }
+    if (n) strcat(buf, " ");
+    strcat(buf, key);
+    if (littlefs_raw_write(HA_TOMB_FILE, buf, strlen(buf)) == ESP_OK)
+        ESP_LOGW(TAG, "HA discovery: unit %s deleted while MQTT is offline — removal queued for the next connect", key);
+}
+
+/* Clear the HA entities of units deleted while offline (called at the start of a discovery run). */
+static void ha_flush_tombstones(const char *m)
+{
+    char buf[160] = {0}; size_t n = 0;
+    if (!littlefs_raw_exists(HA_TOMB_FILE) || littlefs_raw_read(HA_TOMB_FILE, buf, sizeof(buf) - 1, &n) != ESP_OK || n == 0) return;
+    buf[n < sizeof(buf) ? n : sizeof(buf) - 1] = 0;
+    char *save = NULL;
+    for (char *k = strtok_r(buf, " ", &save); k; k = strtok_r(NULL, " ", &save)) ha_unpublish_key(m, k);
+    littlefs_raw_remove(HA_TOMB_FILE);
 }
 
 /* MUST be called from a DEDICATED task (not the MQTT event handler): ~44 retained publishes +
@@ -2639,6 +2671,7 @@ void rbgrid_json_publish_ha_discovery(void)
     char state_t[48], avty_t[48];
     snprintf(state_t, sizeof(state_t), "rbgrid/%s/telemetry", m);
     snprintf(avty_t, sizeof(avty_t), "rbgrid/%s/status", m);
+    ha_flush_tombstones(m);   /* units deleted while MQTT was offline: remove their HA entities first */
     // HA device sw_version — read the running app descriptor so it always matches the version
     // reported by /api/system/version (a hardcoded string drifts).
     const esp_app_desc_t* app_desc = esp_app_get_description();

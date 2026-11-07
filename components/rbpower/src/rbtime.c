@@ -274,9 +274,12 @@ uint32_t rbtime_last_clock_step_epoch(void) { return s_last_clock_step_epoch; }
 /* SNTP notification callback (runs in the lwIP/SNTP context on every successful sync) */
 static void rbtime_sntp_notification_cb(struct timeval *tv)
 {
-    if (!rbtime_lock(100)) {
-        return;
-    }
+    /* The background sync task holds the time lock for the whole SNTP wait (rbtime_force_sntp_sync, up to
+     * sntp_timeout_ms), and this callback fires inside that wait. It used to return when the lock wasn't free in
+     * 100 ms, skipping the clock-step detection, the pending-record flush and the stats-timer resync below.
+     * Now only the bookkeeping that needs the lock is skipped (force_sntp_sync does it itself); the post-sync
+     * actions always run. (code review M13) */
+    bool locked = rbtime_lock(100);
 
     {
         int64_t up_s = (int64_t)(esp_timer_get_time() / 1000000ULL);
@@ -297,18 +300,22 @@ static void rbtime_sntp_notification_cb(struct timeval *tv)
              "  IMPORTANT: Starting statistics timer resynchronization\n"
              "  Tariff system will now work with accurate time");
 
-    // Update statistics
-    g_time_ctx.stats.successful_syncs++;
-    g_time_ctx.stats.last_sync_timestamp_us = esp_timer_get_time();
-    g_time_ctx.stats.active_source = RBTIME_SOURCE_SNTP;
-    g_time_ctx.stats.sntp_responses_received++;
-    s_clock_setter = RBTIME_SOURCE_SNTP;
+    if (locked) {
+        // Update statistics
+        g_time_ctx.stats.successful_syncs++;
+        g_time_ctx.stats.last_sync_timestamp_us = esp_timer_get_time();
+        g_time_ctx.stats.active_source = RBTIME_SOURCE_SNTP;
+        g_time_ctx.stats.sntp_responses_received++;
+        s_clock_setter = RBTIME_SOURCE_SNTP;
 
-    // Update status
-    rbtime_set_status(RBTIME_STATUS_SYNCED);
-    g_time_ctx.active_source = RBTIME_SOURCE_SNTP;
+        // Update status
+        rbtime_set_status(RBTIME_STATUS_SYNCED);
+        g_time_ctx.active_source = RBTIME_SOURCE_SNTP;
 
-    rbtime_unlock();
+        rbtime_unlock();
+    } else {
+        g_time_ctx.stats.sntp_responses_received++;   /* the waiting sync task records the success itself */
+    }
 
     // Re-stamp the pending finalize-result queue (records accumulated before
     // this sync carry uptime timestamps; the delta is now known exactly) and flush it to flash.

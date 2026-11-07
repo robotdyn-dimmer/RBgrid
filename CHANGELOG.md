@@ -1,5 +1,59 @@
 # Changelog
 
+## v1.1.7 — unreleased
+
+### Stored data survives faults
+An independent code review of v1.1.6/1.1.7-dev looked for ways a fault could lose or double energy, or reset the hub's
+settings. These are the fixes; each one was reproduced on the bench with injected faults before and after.
+- **A failed flash write no longer loses the hour.** The hourly record is kept for a retry (every quarter) instead
+  of being dropped, together with the hour's recovery copy in NVS. A set that failed half-way is completed without
+  writing its first part twice.
+- **A storage read error at boot no longer erases the settings.** The configuration store was formatted on any
+  mount error, which also removed the API tokens and left the hub open. It is now formatted only when it is
+  really damaged (or blank); on any other error the hub keeps the data and stays locked until the next restart.
+- **Saving settings reports a failed write** instead of OK, and the old value stays in place.
+- **Restore point is all-or-nothing.** A restore point is sealed when saved. Restore refuses an incomplete one
+  (`409 BACKUP_INCOMPLETE`, nothing changed), puts the previous settings back if a file fails part-way
+  (`500 RESTORE_FAILED`), and `GET /api/system/backup` reports `sealed`. Saving the hub's settings no longer
+  changes the restore point (it overwrote the point's system settings file).
+- **Energy measured while the hub was off for more than a day is kept.** It used to be dropped. It is now added to
+  the totals and to the current hour, which is flagged `outage` (new history quality bit 12), and priced at the
+  plan's default zone.
+- **A quarter that wasn't recorded keeps its energy for the next restart** (the module's counter reference used
+  to move on before the quarter was in).
+- **Quarter prices use the quarter's own time**, also when it is processed late, and a new tariff plan is applied
+  in one step: the costing never sees a half-loaded plan. A plan with more zones than the hub holds is refused
+  (it read past the zone table over MQTT).
+
+### Tariffs and net metering
+- **Clock not set yet** (power-up without internet): quarters are priced at the plan's default zone instead of
+  whatever zone the unset clock fell into.
+- **Net metering switched off** no longer collects the month's import and export, so the first month-end after
+  switching it back on settles only that month.
+- A zone condition that is switched off no longer stops the whole zone from applying.
+
+### Security
+- **MQTT reads need the read token** when the hub has read and admin tokens, like HTTP reads (`cmd get` / `history`
+  with `"token"` in the message).
+- **`mqtts://` works with brokers whose certificate comes from a public authority** (Let's Encrypt, DigiCert, …).
+  A broker with a self-signed certificate still can't be used. A failed broker connection is written to the event
+  log with the reason.
+- **Live data without the token in the URL:** `POST /api/v1/ws-ticket` returns a single-use ticket (30 s) for
+  `/ws-telemetry?ticket=`; `capabilities.wsTicket`. `?token=` still works.
+
+### Remote nodes (ESP-NOW, not enabled in release images)
+- Node periods are acknowledged only after they are recorded, and a period the node sends again (lost
+  acknowledgement, hub restart) is recognized and not counted twice. `GET /api/v1/espnow` reports
+  `periods_recv`, `periods_injected`, `periods_dropped`, `periods_dup`.
+- An update over the air while nodes are connected no longer restarts the hub by its watchdog.
+
+### Smaller fixes
+- The SNTP sync callback no longer skips the clock-step check and the flush of records kept before the first sync
+  when the sync task was busy.
+- A point deleted while MQTT is offline is removed from Home Assistant at the next connection.
+- An interrupted web-app update brings back the previous app at the next boot.
+- The tariff zone cache refreshed on every call (wrong time units).
+
 ## v1.1.6 — 2026-11-06
 
 ### Three-phase input metered per phase
