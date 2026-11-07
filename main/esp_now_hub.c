@@ -43,6 +43,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <sys/time.h>
 
 static const char *TAG = "ESPNOW_HUB";
 
@@ -631,7 +632,11 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         rbn_time_resp_t r;
         rbn_hdr_init(&r.h, RBN_MSG_TIME_RESP, s_beacon_seq++, 0);
         r.req_token = q->req_token;
-        r.hub_unix_ms = RBTIME_IS_SYNCED() ? (uint64_t)rbtime_get_unix_timestamp() * 1000ULL : 0;
+        r.hub_unix_ms = 0;
+        if (RBTIME_IS_SYNCED()) {   /* ms, not whole seconds: the node anchors its period boundaries on this */
+            struct timeval tv; gettimeofday(&tv, NULL);
+            r.hub_unix_ms = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000);
+        }
         esp_now_send(mac, (uint8_t *)&r, sizeof(r));   /* unicast, encrypted to the registered node */
     } else if (h->msg_type == RBN_MSG_NODE_STATS && len >= (int)sizeof(rbn_node_stats_t)) {
         const rbn_node_stats_t *s = (const rbn_node_stats_t *)data;
@@ -947,6 +952,12 @@ static void inject_task(void *arg)
              * an OTA, seen on the bench) re-counted the resend: one quarter twice. Remaining window: a crash
              * between this commit and the RAM inject that follows loses that frame (ms, no flash I/O). */
             enh_dedup_persist(f.mac, f.seq, f.ts);
+            /* A boundary in the future is a node clock fault (it once ran ahead by the hub's uptime for a minute
+             * after its start): file the period by its arrival instead, or it would close the open hour early. */
+            const bool ts_future = RBTIME_IS_SYNCED() && f.ts > (uint32_t)rbtime_get_unix_timestamp() + 120u;
+            if (ts_future)
+                rbpower_diag_printf("FAIL node %02X:%02X:%02X:%02X:%02X:%02X period boundary %lu is ahead of the hub clock — filed by arrival",
+                                    f.mac[0], f.mac[1], f.mac[2], f.mac[3], f.mac[4], f.mac[5], (unsigned long)f.ts);
             for (uint8_t r = 0; r < f.n; r++) {
                 const rbn_period_rec_t *rec = &f.recs[r];
                 if (disabled) { bad++; continue; }
@@ -959,7 +970,7 @@ static void inject_task(void *arg)
                  * → finalize_1hour → flash + tariff/economics. The unit MUST be a fully-registered config unit. */
                 /* the period's own boundary (node_ts, wall clock) picks its tariff zone and hour, not the time the
                  * frame arrived — a frame held through a hub restart or a radio gap used to be priced at delivery */
-                if (f.ts > 1600000000u) rbpower_home_set_next_period_end(uid, f.ts);
+                if (f.ts > 1600000000u && !ts_future) rbpower_home_set_next_period_end(uid, f.ts);
                 rbpower_err_t ie = rbpower_home_inject_period_result(uid, (rbpower_stat_period_type_t)rec->period_type,
                     rec->avg_power_w, rec->max_power_w, rec->energy_wh, rec->period_ms,
                     rec->voltage_v, rec->current_avg_a, rec->current_min_a, rec->current_max_a);
@@ -1088,7 +1099,11 @@ esp_err_t esp_now_hub_start(uint8_t channel)
     s_running = true;
     s_beacons_sent = s_rt_recv = s_stats_recv = 0;
     memset(s_units, 0, sizeof(s_units)); s_units_created = 0;
-    memset(s_frames, 0, sizeof(s_frames)); s_periods_recv = s_periods_injected = s_periods_dropped = s_periods_dup = 0;
+    memset(s_frames, 0, sizeof(s_frames));
+    {   /* period counters cover the whole boot: a radio off/on (hub_off/hub_on) doesn't zero them */
+        static bool s_counted = false;
+        if (!s_counted) { s_periods_recv = s_periods_injected = s_periods_dropped = s_periods_dup = 0; s_counted = true; }
+    }
     {   /* last injected frame per registered node (NVS) → a resend after this restart is recognized */
         espnow_registry_t reg;
         if (esp_now_registry_load(&reg))
@@ -1109,6 +1124,24 @@ void esp_now_hub_stop(void)
     esp_now_unregister_recv_cb();
     esp_now_unregister_send_cb();
     esp_now_deinit();
+    /* radio off: nobody can be heard, so every node reads offline and its points "no data" right away (the
+     * presence sweep runs in the beacon task, which has just exited, so nothing else would clear them) */
+    for (int i = 0; i < ENH_MAX_UNITS; i++) {
+        portENTER_CRITICAL(&s_units_mux);
+        bool used = s_units[i].used; uint8_t mac[6]; uint8_t ch = s_units[i].ch;
+        if (used) memcpy(mac, s_units[i].mac, 6);
+        s_units[i].last_us = 0;
+        portEXIT_CRITICAL(&s_units_mux);
+        if (used) rbpower_set_unit_hardware_present(rbgrid_create_espnow_unit_id(mac, ch), false);
+    }
+    for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++) {
+        portENTER_CRITICAL(&s_units_mux);
+        bool was = s_nodes[i].used && s_nodes[i].online; uint8_t mac[6];
+        if (was) memcpy(mac, s_nodes[i].mac, 6);
+        s_nodes[i].online = false;
+        portEXIT_CRITICAL(&s_units_mux);
+        if (was) espnow_emit_presence(mac, false);
+    }
     ESP_LOGW(TAG, "ESP-NOW hub stopped");
 }
 
