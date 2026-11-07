@@ -957,6 +957,9 @@ static void inject_task(void *arg)
                 /* Feed the node's finished 15MIN period into the native rollup (unit_id-based, shared with the
                  * rbAmp inject path): inject_period_result(15MIN) → rbpower_rollup_after_15min → 1HOUR accumulator
                  * → finalize_1hour → flash + tariff/economics. The unit MUST be a fully-registered config unit. */
+                /* the period's own boundary (node_ts, wall clock) picks its tariff zone and hour, not the time the
+                 * frame arrived — a frame held through a hub restart or a radio gap used to be priced at delivery */
+                if (f.ts > 1600000000u) rbpower_home_set_next_period_end(uid, f.ts);
                 rbpower_err_t ie = rbpower_home_inject_period_result(uid, (rbpower_stat_period_type_t)rec->period_type,
                     rec->avg_power_w, rec->max_power_w, rec->energy_wh, rec->period_ms,
                     rec->voltage_v, rec->current_avg_a, rec->current_min_a, rec->current_max_a);
