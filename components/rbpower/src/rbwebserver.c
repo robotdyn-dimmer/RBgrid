@@ -1015,6 +1015,8 @@ static esp_err_t register_uri_handlers(wifi_mode_t wifi_mode)
     httpd_register_uri_handler(g_server_handle, &api_backup_opt);
     httpd_register_uri_handler(g_server_handle, &api_restore_post);
     httpd_register_uri_handler(g_server_handle, &api_restore_opt);
+    httpd_uri_t api_ws_ticket = { .uri = "/api/v1/ws-ticket", .method = HTTP_POST, .handler = rbwebserver_api_ws_ticket_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(g_server_handle, &api_ws_ticket);
 
     // Unit deletion — REST DELETE /api/v1/units/{hexid} (wildcard path param).
     httpd_uri_t api_unit_delete_uri = {

@@ -344,6 +344,8 @@ esp_err_t rbwebserver_api_backup_handler(httpd_req_t *req);
  *         (4xx/5xx, including 401/403/429 from the token guard).
  */
 esp_err_t rbwebserver_api_restore_handler(httpd_req_t *req);
+/** POST /api/v1/ws-ticket: one-time 30 s ticket for the /ws-telemetry handshake (?ticket=). */
+esp_err_t rbwebserver_api_ws_ticket_handler(httpd_req_t *req);
 
 /* Unified command dispatcher (MQTT command channel) — documented in rbwebserver.h. */
 char *rbgrid_command_dispatch(const char* in_json, int in_len);

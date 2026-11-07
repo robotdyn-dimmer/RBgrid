@@ -1770,8 +1770,13 @@ static bool is_tariff_zone_active(const rbpower_tariff_zone_t* zone,
     // Evaluate the conditions with the zone's logic (AND/OR)
     bool any_condition_met = false;
     bool all_conditions_met = true;
+    uint8_t evaluated = 0;
     
     for (uint8_t i = 0; i < zone->conditions_count; i++) {
+        /* An inactive (switched-off) condition takes no part — as the app shows it. Counting it as
+         * "not met" made an AND zone with one inactive condition never apply. */
+        if (!zone->conditions[i].is_active) continue;
+        evaluated++;
         bool condition_result = check_tariff_condition(&zone->conditions[i], timeinfo);
         
         if (condition_result) {
@@ -1789,6 +1794,7 @@ static bool is_tariff_zone_active(const rbpower_tariff_zone_t* zone,
         }
     }
     
+    if (evaluated == 0) return true;   /* only inactive conditions = no conditions: always active */
     return zone->conditions_and_logic ? all_conditions_met : any_condition_met;
 }
 

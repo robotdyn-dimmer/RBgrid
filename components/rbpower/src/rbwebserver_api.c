@@ -27,6 +27,8 @@
 #include "esp_app_desc.h"            /* esp_app_get_description — fw version in /api/v1/schema */
 #include "rbtelemetry.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_random.h"
 #include "cJSON.h"
 #include <string.h>
 #include <stdbool.h>
@@ -95,6 +97,33 @@ static void rbapi_presented_token(httpd_req_t* req, char out[96])
     }
 }
 
+/* One-time WebSocket tickets: a browser can't put an Authorization header on a WebSocket, and a long-lived
+ * token in the URL ends up in logs. POST /api/v1/ws-ticket (Bearer) issues a random ticket that is valid
+ * once, for 30 s, with the role of the token that asked; the WS handshake presents it as ?ticket=.
+ * httpd runs every handler on one task, so the table needs no lock. */
+#define RBAPI_WS_TICKETS     4
+#define RBAPI_WS_TICKET_US   (30LL * 1000000LL)
+typedef struct { char t[33]; int64_t exp_us; uint8_t role; } rbapi_ws_ticket_t;
+static rbapi_ws_ticket_t s_ws_tickets[RBAPI_WS_TICKETS];
+
+/* Consume a presented ?ticket=: returns its role, or RBAPI_ROLE_NONE (unknown / used / expired). */
+static int rbapi_ws_ticket_consume(httpd_req_t* req)
+{
+    char q[160], v[40];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) != ESP_OK) return 0;
+    if (httpd_query_key_value(q, "ticket", v, sizeof(v)) != ESP_OK || strlen(v) != 32) return 0;
+    int64_t now = esp_timer_get_time();
+    for (int i = 0; i < RBAPI_WS_TICKETS; i++) {
+        rbapi_ws_ticket_t* k = &s_ws_tickets[i];
+        if (k->t[0] && now < k->exp_us && strcmp(k->t, v) == 0) {
+            int role = k->role;
+            memset(k, 0, sizeof(*k));   /* one-time */
+            return role;
+        }
+    }
+    return 0;
+}
+
 /* Role of this request. No admin token on flash = auth not armed → ADMIN (open/onboarding). */
 static rbapi_role_t rbapi_request_role(httpd_req_t* req, bool* out_armed_read)
 {
@@ -107,6 +136,11 @@ static rbapi_role_t rbapi_request_role(httpd_req_t* req, bool* out_armed_read)
     rbapi_presented_token(req, got);
     if (got[0] && strcmp(got, admin) == 0) return RBAPI_ROLE_ADMIN;
     if (got[0] && have_read && strcmp(got, rd) == 0) return RBAPI_ROLE_READ;
+    /* only a WebSocket handshake may present a ticket */
+    if (strncmp(req->uri, "/ws-telemetry", 13) == 0) {
+        int tr = rbapi_ws_ticket_consume(req);
+        if (tr) return (rbapi_role_t)tr;
+    }
     return RBAPI_ROLE_NONE;
 }
 
@@ -178,6 +212,35 @@ bool rbwebserver_api_check_auth(httpd_req_t* req) { return rbapi_require_auth(re
  */
 bool rbwebserver_api_token_armed(void) { char t[48]; return rbapi_load_token(RBAPI_TOKEN_FILE, t); }
 bool rbwebserver_api_check_read(httpd_req_t* req) { return rbapi_require_read(req); }
+
+/* POST /api/v1/ws-ticket → {"ticket":"<32 hex>","expires_s":30}. Needs a READ or ADMIN token when reads are
+ * gated (open otherwise, like every read). The ticket opens one /ws-telemetry handshake with the caller's role. */
+esp_err_t rbwebserver_api_ws_ticket_handler(httpd_req_t* req)
+{
+    add_cors_headers(req);
+    if (req->method == HTTP_OPTIONS) { httpd_resp_send(req, NULL, 0); return ESP_OK; }
+    if (!rbapi_require_read(req)) return ESP_FAIL;
+    rbapi_role_t role = rbapi_request_role(req, NULL);
+    if (role == RBAPI_ROLE_NONE) role = RBAPI_ROLE_READ;   /* reads not gated: the ticket carries read access */
+    int64_t now = esp_timer_get_time();
+    int slot = 0;   /* a free or expired slot, else the one expiring soonest */
+    for (int i = 0; i < RBAPI_WS_TICKETS; i++) {
+        if (!s_ws_tickets[i].t[0] || now >= s_ws_tickets[i].exp_us) { slot = i; break; }
+        if (s_ws_tickets[i].exp_us < s_ws_tickets[slot].exp_us) slot = i;
+    }
+    uint8_t rnd[16];
+    esp_fill_random(rnd, sizeof(rnd));
+    rbapi_ws_ticket_t* k = &s_ws_tickets[slot];
+    for (int i = 0; i < 16; i++) snprintf(&k->t[i * 2], 3, "%02x", rnd[i]);
+    k->exp_us = now + RBAPI_WS_TICKET_US;
+    k->role = (uint8_t)role;
+    char out[96];
+    snprintf(out, sizeof(out), "{\"ticket\":\"%s\",\"expires_s\":30}", k->t);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_sendstr(req, out);
+    return ESP_OK;
+}
 
 /* Reusable JSON builders (defined later; shared by the HTTP handlers + the MQTT cmd-get path). */
 char *rbgrid_build_schema_json(void);
@@ -3473,6 +3536,7 @@ char *rbgrid_build_schema_json(void)
     cJSON_AddBoolToObject(cap, "provisioning", true);
     cJSON_AddBoolToObject(cap, "configBackup", true);
     cJSON_AddBoolToObject(cap, "inputAggregate", true);   /* history/economics ?unit=input: the grid input summed over its points (1.1.6) */
+    cJSON_AddBoolToObject(cap, "wsTicket", true);         /* POST /api/v1/ws-ticket → /ws-telemetry?ticket= (1.1.7); ?token= still accepted */
 
     /* Configurable-surface descriptor: units of measure, key format,
      * canonical enums and money formatting — so the UI renders from data instead of hardcoding.
@@ -3594,6 +3658,7 @@ char *rbgrid_build_schema_json(void)
         { "/api/system/provisioning",   "GET",      "composite", false, false, "" },
         { "/api/system/token",          "GET,POST", "n/a",       true,  false, "token,role(admin|read)" },
         { "/api/system/security",       "GET,POST", "n/a",       true,  false, "dev_cors,origins" },
+        { "/api/v1/ws-ticket",          "POST",     "n/a",       false, false, "→ {ticket,expires_s}; open /ws-telemetry?ticket=<ticket> once within expires_s" },
         { "/api/system/backup",         "GET,POST", "n/a",       true,  false, "" },
         { "/api/system/restore",        "POST",     "n/a",       true,  true,  "" },
         { "/api/system/system-config",  "GET,POST", "composite", true,  false, "" },   /* all fields live */
