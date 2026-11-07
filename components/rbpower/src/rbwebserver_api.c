@@ -282,6 +282,11 @@ static int rbapi_period_str_to_stat(const char *s);
  * status-JSON builder here at boot; the MQTT `cmd get espnow` path calls through it. NULL until registered. */
 static char *(*s_espnow_status_provider)(void) = NULL;
 void rbgrid_register_espnow_status_provider(char *(*fn)(void)) { s_espnow_status_provider = fn; }
+/* Called after a point was deleted (DELETE /api/v1/units/{id}). The ESP-NOW hub drops the node channel behind it
+ * from its registry: the node's points are registered from that registry at every boot, so a deleted point came
+ * back after a restart (an unused node input could not be switched off). */
+static void (*s_unit_deleted_hook)(uint16_t unit_id) = NULL;
+void rbgrid_register_unit_deleted_hook(void (*fn)(uint16_t)) { s_unit_deleted_hook = fn; }
 
 /* ==== moved verbatim from rbwebserver.c (command dispatch + api config/units/sensors/history) ==== */
 static char* cmd_ack_json(const char* cmd, const char* section,
@@ -1775,6 +1780,7 @@ esp_err_t rbwebserver_api_unit_delete_handler(httpd_req_t *req)
     if (dead_point[0]) rbgrid_point_tombstone_add(dead_point);   /* before save → persisted */
     rbgrid_json_ha_unpublish_unit(unit_id, dead_role);           /* HA: drop the ghost entities */
     esp_err_t su = rbgrid_storage_save_units(NULL);
+    if (s_unit_deleted_hook) s_unit_deleted_hook(unit_id);
     snprintf(body, sizeof(body),
              "{\"status\":\"ok\",\"removed\":\"%04X\",\"persist\":\"%s\"}",
              unit_id, esp_err_to_name(su));

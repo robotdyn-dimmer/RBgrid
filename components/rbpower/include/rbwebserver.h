@@ -184,6 +184,8 @@ extern "C"
      * @param[in] fn  Builder returning a malloc'd JSON string (caller frees), or NULL to unregister.
      */
     void rbgrid_register_espnow_status_provider(char *(*fn)(void));
+    /** @brief Register a callback run after a point is deleted over the API (ESP-NOW: drop the node channel). */
+    void rbgrid_register_unit_deleted_hook(void (*fn)(uint16_t unit_id));
 
     /**
      * @brief Read the persisted HTTPS flag (/https_enabled in littlefs) into RAM. Call at boot before

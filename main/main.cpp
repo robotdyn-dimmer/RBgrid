@@ -2257,6 +2257,7 @@ static void register_espnow_http(void)
                  esp_err_to_name(eo), esp_err_to_name(ev));
     }
     rbgrid_register_espnow_status_provider(esp_now_hub_status_json);   // MQTT `cmd get espnow` → status JSON
+    rbgrid_register_unit_deleted_hook(esp_now_on_unit_deleted);        // a deleted node point stays deleted
     ESP_LOGI(TAG, "main-side API registered: GET/POST /api/v1/espnow + GET /api/system/provisioning");
 }
 

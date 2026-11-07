@@ -99,6 +99,9 @@ esp_err_t esp_now_registry_add_node(const uint8_t mac[6], const espnow_reg_chan_
  */
 esp_err_t esp_now_registry_remove_node(const uint8_t mac[6]);
 
+/** @brief A point was deleted: drop its node channel from the registry (no-op for other points). */
+void esp_now_on_unit_deleted(uint16_t unit_id);
+
 
 /**
  * @brief Start the ESP-NOW hub on the running Wi-Fi: optionally pin the channel, add the registered nodes as

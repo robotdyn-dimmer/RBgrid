@@ -316,6 +316,26 @@ esp_err_t esp_now_registry_remove_node(const uint8_t mac[6])
     return esp_now_registry_save(&reg);
 }
 
+/* A point deleted over the API: if it is a node channel, drop that channel from the registry so it is not
+ * registered again at the next boot. The node keeps its pairing (and its other channels). */
+void esp_now_on_unit_deleted(uint16_t unit_id)
+{
+    espnow_registry_t reg;
+    if (!esp_now_registry_load(&reg)) return;
+    for (int i = 0; i < reg.node_count; i++) {
+        espnow_reg_node_t *n = &reg.nodes[i];
+        for (int c = 0; c < n->ch_count; c++) {
+            if ((uint16_t)rbgrid_create_espnow_unit_id(n->mac, n->channels[c].ch) != unit_id) continue;
+            for (int k = c; k < n->ch_count - 1; k++) n->channels[k] = n->channels[k + 1];
+            n->ch_count--;
+            esp_err_t e = esp_now_registry_save(&reg);
+            rbpower_diag_printf("espnow: point %04X deleted — node %02X:..:%02X channel removed from the registry (%s)",
+                                (unsigned)unit_id, n->mac[0], n->mac[5], esp_err_to_name(e));
+            return;
+        }
+    }
+}
+
 /* persist a node's disabled flag (survives reboot). */
 static esp_err_t esp_now_registry_set_disabled(const uint8_t mac[6], bool disabled)
 {
@@ -689,6 +709,9 @@ static void inject_task(void *arg)
                 const rbn_period_rec_t *rec = &f.recs[r];
                 if (disabled) { bad++; continue; }
                 rbpower_unit_id_t uid = rbgrid_create_espnow_unit_id(f.mac, rec->channel_id);
+                /* A channel without a point (the user deleted it: an unused input) is ignored quietly, not
+                 * reported as a dropped record every period. */
+                if (!rbpower_home_get_unit_definition(uid)) continue;
                 /* Feed the node's finished 15MIN period into the native rollup (unit_id-based, shared with the
                  * rbAmp inject path): inject_period_result(15MIN) → rbpower_rollup_after_15min → 1HOUR accumulator
                  * → finalize_1hour → flash + tariff/economics. The unit MUST be a fully-registered config unit. */
