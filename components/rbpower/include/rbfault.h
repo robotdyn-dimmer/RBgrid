@@ -19,6 +19,7 @@ typedef enum {
     RBFAULT_LFS_SYNC,                 ///< littlefs file sync → error (config/token writes)
     RBFAULT_LFS_MOUNT_IO,             ///< littlefs mount → LFS_ERR_IO (armed in NVS, consumed at the next boot)
     RBFAULT_ESPNOW_ACK_DROP,          ///< ESP-NOW hub: the PERIOD_ACK after an inject is not sent (a lost ACK)
+    RBFAULT_GAP_PLUS_DAY,             ///< rbAmp reboot gap: +25 h added to the measured gap (armed in NVS for the next boot)
     RBFAULT_COUNT
 } rbfault_point_t;
 

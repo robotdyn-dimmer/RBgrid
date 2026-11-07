@@ -3622,6 +3622,16 @@ void rbpower_home_set_next_power_min(rbpower_unit_id_t unit_id, float p_min_w)
     if (ix != 0xFF && ix < RBPOWER_MAX_HOME_UNITS) s_next_pmin[ix] = p_min_w;
 }
 
+/* One-shot: the part of the NEXT period result's energy that the module counted during a hub outage longer than
+ * the creditable reboot gap (> 24 h). It stays in the totals and the history, but its time inside the outage is
+ * unknown, so it is priced at the plan's default zone instead of the quarter's zone. */
+static float s_next_outage_wh[RBPOWER_MAX_HOME_UNITS];
+void rbpower_home_set_next_outage_energy(rbpower_unit_id_t unit_id, float wh)
+{
+    uint8_t ix = find_unit_index_by_id(unit_id);
+    if (ix != 0xFF && ix < RBPOWER_MAX_HOME_UNITS) s_next_outage_wh[ix] = wh;
+}
+
 /* One-shot window end (quarter boundary) for the NEXT period result of a unit (see rbhome_types.h). */
 static uint32_t s_next_qend[RBPOWER_MAX_HOME_UNITS];
 void rbpower_home_set_next_period_end(rbpower_unit_id_t unit_id, uint32_t end_ts)
@@ -3854,7 +3864,14 @@ rbpower_err_t rbpower_home_inject_period_result(rbpower_unit_id_t unit_id,
          * Zone-aware buying/selling rate applied at the inject instant. */
         uint32_t q_end = s_next_qend[unit_index];   /* the boundary this quarter was collected for (0 = unknown) */
         s_next_qend[unit_index] = 0;
-        rbpower_tariff_cost_injected_period(unit_index, energy_wh, &ps->result_base, q_end);
+        float outage_wh = s_next_outage_wh[unit_index];
+        s_next_outage_wh[unit_index] = 0.0f;
+        if (outage_wh != 0.0f) {
+            rbpower_tariff_cost_injected_period(unit_index, energy_wh - outage_wh, &ps->result_base, q_end);
+            rbpower_tariff_cost_at_default_zone(unit_index, outage_wh, &ps->result_base);
+        } else {
+            rbpower_tariff_cost_injected_period(unit_index, energy_wh, &ps->result_base, q_end);
+        }
 
         /* The unit's period accumulators are enabled per its configured depth (stat_class) at creation
          * time in rbpower_home_create_unit — no force-enable needed here. should_aggregate_to_period()

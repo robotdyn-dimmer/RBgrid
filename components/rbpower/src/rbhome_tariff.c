@@ -2510,6 +2510,21 @@ void rbpower_tariff_cost_injected_period(rbpower_unit_id_t unit_id, float energy
     s_cost_zone_override = -1;
 }
 
+/* Cost energy whose time is unknown (counted by a module while the hub was off for more than a day) at the plan's
+ * default zone. Adds to result_base like rbpower_tariff_cost_injected_period(). */
+void rbpower_tariff_cost_at_default_zone(rbpower_unit_id_t unit_id, float energy_wh, rbgrid_snapshot_base_t* result_base)
+{
+    if (!result_base || energy_wh == 0.0f) return;
+    rbpower_tariff_zone_t* z = (g_tariff_system_initialized && g_current_tariff_plan.is_active) ? find_default_tariff_zone() : NULL;
+    float buying  = z ? z->rate_buying_per_kwh  : rbpower_get_current_tariff_rate_simple();
+    float selling = z ? z->rate_selling_per_kwh : g_active_zone_cache.current_selling_rate;
+    if (buying  < 0.0f) buying  = 0.0f;
+    if (selling < 0.0f) selling = 0.0f;
+    if (z) s_cost_zone_override = (int)z->zone_id;
+    rbpower_update_economics_direct(unit_id, energy_wh / 1000.0f, buying, selling, result_base);
+    s_cost_zone_override = -1;
+}
+
 /* Diagnostic snapshot of the tariff state for the `tariffdiag` verb (rbbench_reply, since ESP_LOG
  * is invisible on the rbbench console). Reports the CURRENT (virtual in accel) calendar time + the
  * resolved active zone & rates — lets a tester watch zone transitions / weekend / holiday switching as

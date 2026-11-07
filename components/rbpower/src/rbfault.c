@@ -31,9 +31,11 @@ void rbfault_arm(rbfault_point_t p, uint32_t count)
 void rbfault_arm_skip(rbfault_point_t p, uint32_t count, uint32_t skip)
 {
     if (p >= RBFAULT_COUNT) return;
-    if (p == RBFAULT_LFS_MOUNT_IO) {
+    if (p == RBFAULT_LFS_MOUNT_IO || p == RBFAULT_GAP_PLUS_DAY) {
         nvs_handle_t h;
-        if (nvs_open("rbfault", NVS_READWRITE, &h) == ESP_OK) { nvs_set_u32(h, "mount_io", count); nvs_commit(h); nvs_close(h); }
+        if (nvs_open("rbfault", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_set_u32(h, p == RBFAULT_LFS_MOUNT_IO ? "mount_io" : "gap_day", count); nvs_commit(h); nvs_close(h);
+        }
         return;
     }
     portENTER_CRITICAL(&s_mux);
@@ -52,6 +54,12 @@ void rbfault_load_boot(void)
         nvs_erase_key(h, "mount_io");    /* one boot only */
         nvs_commit(h);
     }
+    n = 0;
+    if (nvs_get_u32(h, "gap_day", &n) == ESP_OK && n) {
+        s_left[RBFAULT_GAP_PLUS_DAY] = n;
+        nvs_erase_key(h, "gap_day");
+        nvs_commit(h);
+    }
     nvs_close(h);
 }
 
@@ -62,6 +70,7 @@ int rbfault_from_name(const char *name)
     if (!strcmp(name, "lfs_sync"))     return RBFAULT_LFS_SYNC;
     if (!strcmp(name, "lfs_mount_io")) return RBFAULT_LFS_MOUNT_IO;
     if (!strcmp(name, "espnow_ack_drop")) return RBFAULT_ESPNOW_ACK_DROP;
+    if (!strcmp(name, "gap_plus_day")) return RBFAULT_GAP_PLUS_DAY;
     return -1;
 }
 #endif

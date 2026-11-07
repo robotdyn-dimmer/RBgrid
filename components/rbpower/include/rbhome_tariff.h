@@ -2427,4 +2427,10 @@ extern "C"
 #endif
 void rbpower_tariff_invalidate_zone_cache(void);
 
+/** @brief Cost energy of unknown time (a > 24 h hub outage) at the plan's default zone, adding to @p result_base. */
+#ifdef __cplusplus
+extern "C"
+#endif
+void rbpower_tariff_cost_at_default_zone(rbpower_unit_id_t unit_id, float energy_wh, rbgrid_snapshot_base_t* result_base);
+
 #endif // RBHOME_TARIFF_H
