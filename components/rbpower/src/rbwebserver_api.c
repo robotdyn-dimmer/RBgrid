@@ -378,6 +378,20 @@ char* rbgrid_command_dispatch(const char* in_json, int in_len)
     const char* id_s  = cJSON_IsString(idj) ? idj->valuestring : NULL;
 
     char* out = NULL;
+    /* Reads over MQTT follow the HTTP data-read rule (rbapi_require_read): with an ADMIN and a READ token
+     * provisioned, `get` and `history` must carry one of them in the envelope ({"cmd":"get",…,"token":"…"}).
+     * Otherwise they stay open, as HTTP reads do (onboarding / write-protection-only mode). */
+    if (strcmp(cmd_s, "get") == 0 || strcmp(cmd_s, "history") == 0) {
+        char rd[48], admin[48];
+        if (rbapi_load_token(RBAPI_TOKEN_READ_FILE, rd) && rbapi_load_token(RBAPI_TOKEN_FILE, admin)) {
+            const char* tok = cJSON_GetStringValue(cJSON_GetObjectItem(root, "token"));
+            bool ok = tok && (strcmp(tok, rd) == 0 || strcmp(tok, admin) == 0);
+            if (!ok) {
+                out = cmd_ack_json(cmd_s, sec_s, "error", "unauthorized: read token required", id_s);
+                goto envelope;
+            }
+        }
+    }
     if (strcmp(cmd_s, "get") == 0) {
         out = cmd_get_section(root, sec_s);
         if (!out) out = cmd_ack_json("get", sec_s, "error", "unknown section or context unavailable", id_s);
@@ -389,6 +403,7 @@ char* rbgrid_command_dispatch(const char* in_json, int in_len)
         out = cmd_ack_json(cmd_s, sec_s, "error", "unknown cmd (use 'get' / 'set' / 'history')", id_s);
     }
 
+envelope:
     // Echo the request id as a TOP-LEVEL envelope field on EVERY response (get + set). MQTT
     // cmd/resp is a shared pub-sub topic (unlike HTTP's 1:1 socket), so correlation by `type`
     // breaks with concurrent in-flight requests or multiple listeners — the client matches on

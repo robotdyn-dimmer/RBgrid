@@ -115,6 +115,25 @@ static void nm_restore(uint8_t i);
 /* Settle the net-metering balance for one unit at its billing-period boundary (monthly). Nets the
  * period import vs export; a net producer banks the surplus as credit (×ratio, capped); a net consumer
  * draws the credit bank down, reducing the billable net import. Resets the period accumulators. */
+/* Add one quarter's import/export to the billing-period counters — only while net metering is ON. While it
+ * is off the month is never settled, so counting would carry every off-month into the first settle after it is
+ * switched back on; instead the counters are held at zero, and the first month after enabling starts clean.
+ * The credit bank itself is left as it was (it resumes when net metering is switched on again). */
+static void nm_accumulate(uint8_t i, double consumed_kwh, double supplied_kwh)
+{
+    nm_restore(i);
+    if (g_current_tariff_plan.net_metering_enabled) {
+        g_net_metering[i].period_consumed_kwh += consumed_kwh;
+        g_net_metering[i].period_supplied_kwh += supplied_kwh;
+    } else if (g_net_metering[i].period_consumed_kwh != 0.0 || g_net_metering[i].period_supplied_kwh != 0.0) {
+        g_net_metering[i].period_consumed_kwh = 0.0;
+        g_net_metering[i].period_supplied_kwh = 0.0;
+    } else {
+        return;   /* nothing changed: no flash write */
+    }
+    nm_persist(i);
+}
+
 void rbpower_tariff_net_metering_settle(rbpower_unit_id_t unit_id)
 {
     uint8_t i = find_unit_index_by_id(unit_id);
@@ -2005,6 +2024,22 @@ static void get_current_local_time(struct tm* timeinfo, uint64_t* unix_timestamp
 /**
  * @brief Determine the active tariff zone and its effective buying/selling rates (currency/kWh).
  */
+/* The zone used while the hub's clock is not real time (no NTP/browser set since power-up: rbtime_is_time_valid()
+ * false). Choosing a zone by that clock priced quarters at whatever zone the bogus time fell into; the plan's
+ * default zone is at least the same every time (exact for a single-zone plan). The `tarifftime` override is a
+ * test clock and keeps the normal path. */
+static bool tariff_clock_unset(void)
+{
+    return g_tariff_test_time_override_s < 0 && !rbtime_is_time_valid();
+}
+static rbpower_tariff_zone_t* find_default_tariff_zone(void)
+{
+    for (uint8_t i = 0; i < g_current_tariff_plan.active_zones_count && i < RBPOWER_TARIFF_ZONE_COUNT; i++)
+        if (g_current_tariff_plan.zones[i].zone_id == g_current_tariff_plan.default_zone_id)
+            return &g_current_tariff_plan.zones[i];
+    return g_current_tariff_plan.active_zones_count ? &g_current_tariff_plan.zones[0] : NULL;
+}
+
 static rbpower_tariff_status_t determine_active_tariff_zone(rbpower_tariff_zone_type_t* zone_id,
                                                            float* buying_rate,
                                                            float* selling_rate)
@@ -2031,8 +2066,9 @@ static rbpower_tariff_status_t determine_active_tariff_zone(rbpower_tariff_zone_
         // Don't return error - use available time
     }
 
-    // Use new unified function to determine active zone
-    rbpower_tariff_zone_t* best_zone = find_active_tariff_zone(&current_time);
+    // Use new unified function to determine active zone (clock unset → the plan's default zone)
+    rbpower_tariff_zone_t* best_zone = tariff_clock_unset() ? find_default_tariff_zone()
+                                                            : find_active_tariff_zone(&current_time);
 
     if (!best_zone) {
         ESP_LOGE("RBHOME_TARIFF", "No suitable tariff zone found");
@@ -2212,8 +2248,9 @@ esp_err_t rbpower_tariff_update_zone_cache(void)
     get_current_local_time(&timeinfo_struct, &unix_timestamp);
     struct tm* timeinfo = &timeinfo_struct;
 
-    // Use function to determine active zone
-    rbpower_tariff_zone_t* active_zone = find_active_tariff_zone(timeinfo);
+    // Use function to determine active zone (clock unset → the plan's default zone)
+    rbpower_tariff_zone_t* active_zone = tariff_clock_unset() ? find_default_tariff_zone()
+                                                              : find_active_tariff_zone(timeinfo);
 
     if (active_zone) {
         // Save previous value for logging
@@ -2353,7 +2390,7 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
             g_unit_direct_costs[unit_id].device_analytics.cost_distribution_by_zone[z] += (float)cost;
         }
         // Net-metering: accumulate this billing period's IMPORT (settled at the month boundary).
-        if (unit_id < RBPOWER_MAX_HOME_UNITS) { nm_restore(unit_id); g_net_metering[unit_id].period_consumed_kwh += (double)energy_kwh; nm_persist(unit_id); }
+        if (unit_id < RBPOWER_MAX_HOME_UNITS) nm_accumulate(unit_id, (double)energy_kwh, 0.0);
     } else if (energy_kwh < 0.0f) {
         double revenue = (double)(-energy_kwh) * selling_rate;
         result_base->revenue_supplied += revenue;
@@ -2365,7 +2402,7 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
             g_unit_direct_costs[unit_id].device_analytics.revenue_distribution_by_zone[z] += (float)revenue;
         }
         // Net-metering: accumulate this billing period's EXPORT (settled at the month boundary).
-        if (unit_id < RBPOWER_MAX_HOME_UNITS) { nm_restore(unit_id); g_net_metering[unit_id].period_supplied_kwh += (double)(-energy_kwh); nm_persist(unit_id); }
+        if (unit_id < RBPOWER_MAX_HOME_UNITS) nm_accumulate(unit_id, 0.0, (double)(-energy_kwh));
         ESP_LOGD("RBHOME_TARIFF", "      Supply: +%.4f revenue @%.4f sell (total: %.4f)",
                  revenue, selling_rate, result_base->revenue_supplied);
     } else {
@@ -2431,6 +2468,7 @@ void rbpower_tariff_cost_injected_period(rbpower_unit_id_t unit_id, float energy
             struct tm tm_mid;
             if (localtime_r(&mid, &tm_mid)) mid_zone = find_active_tariff_zone(&tm_mid);
         }
+        if (tariff_clock_unset()) mid_zone = find_default_tariff_zone();   /* no real time → default zone */
     }
     rbpower_tariff_update_zone_cache();                          // resolve the active zone for "now"
     rbpower_tariff_zone_type_t saved_id = g_active_zone_cache.current_zone_id;

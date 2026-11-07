@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include "esp_log.h"
 #include "mqtt_client.h"
+#include "esp_crt_bundle.h"
 
 static const char *TAG = "RBMQTT";
 
@@ -140,6 +141,13 @@ esp_err_t rbmqtt_init(const char *broker_uri, const char *client_id, const char 
         cfg.session.last_will.retain = true;
     }
 
+    /* mqtts:// / wss://: verify the broker against the ESP-IDF CA bundle (public CAs). Without it esp-mqtt
+     * had no CA at all and every TLS connect failed. A broker with a self-signed / private-CA certificate
+     * still fails verification — that needs a user-supplied CA (not in this release). */
+    if (strncmp(broker_uri, "mqtts://", 8) == 0 || strncmp(broker_uri, "wss://", 6) == 0) {
+        cfg.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+        ESP_LOGI(TAG, "TLS broker: verifying against the CA bundle");
+    }
     s_client = esp_mqtt_client_init(&cfg);
     if (!s_client) {
         ESP_LOGE(TAG, "esp_mqtt_client_init failed");
