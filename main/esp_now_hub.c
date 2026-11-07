@@ -35,6 +35,8 @@
 #include "rbmqtt.h"         /* publish a node online/offline event */
 #include "cJSON.h"          /* /api/v1/espnow status JSON */
 #include "esp_mac.h"        /* esp_read_mac — hub MAC for the HA node sensor device id */
+#include "nvs.h"            /* last injected PERIOD frame per node (dedup across a restart) */
+#include "rbfault.h"        /* test builds: lost-ACK simulation */
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -151,15 +153,87 @@ static bool enh_node_is_disabled(const uint8_t *mac)
 static void espnow_publish_ha_node(const uint8_t mac[6], bool remove);
 static void espnow_publish_status(const uint8_t mac[6], bool online);
 
-/* Pending node PERIOD records (queued in the recv cb, injected by the inject task). */
-/** @brief One queued node PERIOD record. */
-typedef struct { bool used; uint8_t mac[6]; rbn_period_rec_t rec; } enh_period_t;
-/** @var enh_period_t::used
- *  Slot in use.  @var enh_period_t::mac
- *  Sender node MAC.  @var enh_period_t::rec
- *  The period record as received. */
-static enh_period_t s_periods[ENH_MAX_UNITS];
-static uint32_t s_periods_recv = 0, s_periods_injected = 0;
+/* Pending node PERIOD frames (queued whole in the recv cb, injected by the inject task, ACKed only AFTER the
+ * inject). The node holds a frame until its PERIOD_ACK and resends the SAME frame (same h.seq + h.node_ts)
+ * meanwhile, so:
+ *  - the ACK must not go out before the records are in the accounting (a power cut in between lost them:
+ *    the node had already deleted its copy) — review H5;
+ *  - a resend of a frame already injected (its ACK was lost) must be ACKed again but NOT injected again —
+ *    review H6. Key = (node MAC, seq, node_ts): a node reboot restarts seq but carries a new boundary ts. */
+#define ENH_MAX_FRAMES  4
+#define ENH_FRAME_RECS  8
+/** @brief One queued node PERIOD frame. */
+typedef struct {
+    bool     used;                          ///< slot in use
+    uint8_t  mac[6];                        ///< sender node MAC
+    uint32_t seq;                           ///< frame h.seq (what the ACK acknowledges)
+    uint32_t ts;                            ///< frame h.node_ts (the period boundary, wall-clock s)
+    uint8_t  n;                             ///< records in @c recs
+    rbn_period_rec_t recs[ENH_FRAME_RECS];  ///< the frame's period records
+} enh_frame_t;
+static enh_frame_t s_frames[ENH_MAX_FRAMES];
+static uint32_t s_periods_recv = 0, s_periods_injected = 0, s_periods_dropped = 0, s_periods_dup = 0;
+
+#define ENH_DEDUP_N 8   /* frames remembered per node (a node retries one frame at a time) */
+/** @brief Recently injected frames of one node. */
+typedef struct {
+    bool     used;
+    uint8_t  mac[6];
+    uint8_t  head;
+    uint32_t seq[ENH_DEDUP_N], ts[ENH_DEDUP_N];
+} enh_dedup_t;
+static enh_dedup_t s_dedup[ESPNOW_REG_MAX_NODES];
+
+/* Caller holds s_units_mux. */
+static enh_dedup_t *enh_dedup_of(const uint8_t *mac, bool create)
+{
+    for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
+        if (s_dedup[i].used && memcmp(s_dedup[i].mac, mac, 6) == 0) return &s_dedup[i];
+    if (!create) return NULL;
+    for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
+        if (!s_dedup[i].used) { memset(&s_dedup[i], 0, sizeof(s_dedup[i])); s_dedup[i].used = true;
+                                memcpy(s_dedup[i].mac, mac, 6); return &s_dedup[i]; }
+    return NULL;
+}
+static bool enh_dedup_seen(const uint8_t *mac, uint32_t seq, uint32_t ts)
+{
+    enh_dedup_t *d = enh_dedup_of(mac, false);
+    if (!d) return false;
+    for (int k = 0; k < ENH_DEDUP_N; k++) if (d->seq[k] == seq && d->ts[k] == ts && (seq || ts)) return true;
+    return false;
+}
+static void enh_dedup_add(const uint8_t *mac, uint32_t seq, uint32_t ts)
+{
+    enh_dedup_t *d = enh_dedup_of(mac, true);
+    if (!d) return;
+    d->seq[d->head] = seq; d->ts[d->head] = ts;
+    d->head = (uint8_t)((d->head + 1) % ENH_DEDUP_N);
+}
+/* The last injected frame per node also lives in NVS, so a resend that arrives after a hub restart (its ACK was
+ * lost in the restart) is still recognized. Key "d" + MAC[3..5] hex. */
+static void enh_dedup_nvs_key(const uint8_t *mac, char key[12])
+{
+    snprintf(key, 12, "d%02x%02x%02x", mac[3], mac[4], mac[5]);
+}
+static void enh_dedup_persist(const uint8_t *mac, uint32_t seq, uint32_t ts)
+{
+    nvs_handle_t h; char key[12]; uint32_t v[2] = { seq, ts };
+    enh_dedup_nvs_key(mac, key);
+    if (nvs_open("espnow_dd", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_blob(h, key, v, sizeof(v)); nvs_commit(h); nvs_close(h);
+}
+static void enh_dedup_restore(const uint8_t *mac)
+{
+    nvs_handle_t h; char key[12]; uint32_t v[2]; size_t l = sizeof(v);
+    enh_dedup_nvs_key(mac, key);
+    if (nvs_open("espnow_dd", NVS_READONLY, &h) != ESP_OK) return;
+    if (nvs_get_blob(h, key, v, &l) == ESP_OK && l == sizeof(v)) {
+        portENTER_CRITICAL(&s_units_mux);
+        if (!enh_dedup_seen(mac, v[0], v[1])) enh_dedup_add(mac, v[0], v[1]);
+        portEXIT_CRITICAL(&s_units_mux);
+    }
+    nvs_close(h);
+}
 
 /* Over-the-air pairing. A pairing window accepts PAIR_REQ from new nodes → writes the registry. The recv cb
  * just stashes the request; the beacon task does the flash write + PAIR_ACK (off the WiFi callback). */
@@ -328,29 +402,37 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         }
     } else if (h->msg_type == RBN_MSG_PERIOD && len >= (int)sizeof(rbn_period_t)) {
         const rbn_period_t *m = (const rbn_period_t *)data;
-        int n = m->rec_count; if (n > ENH_MAX_UNITS) n = ENH_MAX_UNITS;
+        int n = m->rec_count; if (n > ENH_FRAME_RECS) n = ENH_FRAME_RECS;
         if (n >= 1 && len >= (int)(sizeof(rbn_period_t) + (size_t)n * sizeof(rbn_period_rec_t))) {
-            /* All or nothing, and ACK only what is queued: the node deletes a held record on ACK, so an ACK for a
-             * record dropped on a full queue would lose that energy. Not stored → no ACK → the node resends. */
-            bool stored = false;
+            /* Already injected (its ACK was lost) → ACK again, inject nothing. Already queued → the ACK follows
+             * the inject. Otherwise queue the whole frame; no free slot → no ACK → the node resends. */
+            bool dup = false, queued = false, stored = false;
             portENTER_CRITICAL(&s_units_mux);
-            int free_slots = 0;
-            for (int k = 0; k < ENH_MAX_UNITS; k++) if (!s_periods[k].used) free_slots++;
-            if (free_slots >= n) {
-                for (int r = 0; r < n; r++)
-                    for (int k = 0; k < ENH_MAX_UNITS; k++)
-                        if (!s_periods[k].used) { s_periods[k].used = true; memcpy(s_periods[k].mac, mac, 6);
-                                                  s_periods[k].rec = m->recs[r]; break; }
-                s_periods_recv++;
-                stored = true;
-            }
+            dup = enh_dedup_seen(mac, h->seq, h->node_ts);
+            for (int k = 0; !dup && k < ENH_MAX_FRAMES; k++)
+                if (s_frames[k].used && s_frames[k].seq == h->seq && s_frames[k].ts == h->node_ts &&
+                    memcmp(s_frames[k].mac, mac, 6) == 0) queued = true;
+            for (int k = 0; !dup && !queued && k < ENH_MAX_FRAMES; k++)
+                if (!s_frames[k].used) {
+                    enh_frame_t *f = &s_frames[k];
+                    f->used = true; memcpy(f->mac, mac, 6); f->seq = h->seq; f->ts = h->node_ts; f->n = (uint8_t)n;
+                    memcpy(f->recs, m->recs, (size_t)n * sizeof(rbn_period_rec_t));
+                    s_periods_recv++;
+                    stored = true;
+                    break;
+                }
+            if (dup) s_periods_dup++;
             portEXIT_CRITICAL(&s_units_mux);
-            if (!stored) { ESP_LOGW(TAG, "PERIOD from %02X:..:%02X: queue full — not ACKed, node will resend", mac[0], mac[5]); return; }
-            /* held-until-ACK: acknowledge receipt immediately (the inject happens in the task). Reply
-             * UNICAST to the sender (a registered encrypted peer) → the ACK is CCMP-protected too. */
-            rbn_period_ack_t ack; rbn_hdr_init(&ack.h, RBN_MSG_PERIOD_ACK, s_beacon_seq++, 0);
-            ack.ack_seq = h->seq;
-            esp_now_send(mac, (uint8_t *)&ack, sizeof(ack));
+            if (dup) {
+                rbn_period_ack_t ack; rbn_hdr_init(&ack.h, RBN_MSG_PERIOD_ACK, s_beacon_seq++, 0);
+                ack.ack_seq = h->seq;
+                if (!rbfault_hit(RBFAULT_ESPNOW_ACK_DROP))          /* test builds: lost re-ACK too */
+                    esp_now_send(mac, (uint8_t *)&ack, sizeof(ack));   /* unicast → CCMP like the first ACK */
+                ESP_LOGW(TAG, "PERIOD seq=%u from %02X:..:%02X already injected — re-ACKed, not counted again",
+                         (unsigned)h->seq, mac[0], mac[5]);
+                return;
+            }
+            if (!queued && !stored) { ESP_LOGW(TAG, "PERIOD from %02X:..:%02X: queue full — not ACKed, node will resend", mac[0], mac[5]); return; }
         }
     } else if (h->msg_type == RBN_MSG_PAIR_REQ && len >= (int)sizeof(rbn_pair_req_t)) {
         /* Accept a new node only inside the pairing window; stash it for the beacon task (flash write). */
@@ -580,29 +662,47 @@ static void inject_task(void *arg)
             rt.instant_power_net_w = p;
             rbpower_home_inject_200ms(uid, &rt);
         }
-        /* --- PERIOD: node's finished W/Wh → history/billing --- */
-        for (int i = 0; i < ENH_MAX_UNITS; i++) {
+        /* --- PERIOD: node's finished W/Wh → history/billing, then the ACK --- */
+        for (int i = 0; i < ENH_MAX_FRAMES; i++) {
             portENTER_CRITICAL(&s_units_mux);
-            bool pgo = s_periods[i].used;
-            enh_period_t ps = s_periods[i];
-            if (pgo) s_periods[i].used = false;
+            bool pgo = s_frames[i].used;
+            enh_frame_t f = s_frames[i];
             portEXIT_CRITICAL(&s_units_mux);
             if (!pgo) continue;
-            /* A disabled node's finished periods must not flow into history/billing either:
-             * same gate as for REALTIME. */
-            if (enh_node_is_disabled(ps.mac)) continue;
-
-            rbpower_unit_id_t uid = rbgrid_create_espnow_unit_id(ps.mac, ps.rec.channel_id);
-            /* Feed the node's finished 15MIN period into the native rollup (unit_id-based, shared with the
-             * rbAmp inject path): inject_period_result(15MIN) → rbpower_rollup_after_15min → 1HOUR accumulator
-             * → finalize_1hour → flash + tariff/economics. Uniform with config-time rbAmp units (the unit
-             * MUST be a fully-registered config unit so it has a flash buffer — runtime auto-create gave none). */
-            rbpower_home_inject_period_result(uid, (rbpower_stat_period_type_t)ps.rec.period_type,
-                ps.rec.avg_power_w, ps.rec.max_power_w, ps.rec.energy_wh, ps.rec.period_ms,
-                ps.rec.voltage_v, ps.rec.current_avg_a, ps.rec.current_min_a, ps.rec.current_max_a);
-            s_periods_injected++;
-            ESP_LOGW(TAG, "PERIOD inject unit=0x%04X type=%u avg=%.2fW E=%.4fWh dt=%lums", (unsigned)uid,
-                     ps.rec.period_type, ps.rec.avg_power_w, ps.rec.energy_wh, (unsigned long)ps.rec.period_ms);
+            /* A disabled node's finished periods must not flow into history/billing either (same gate as
+             * REALTIME): ACKed and dropped on purpose, so the node doesn't keep resending them. */
+            bool disabled = enh_node_is_disabled(f.mac);
+            uint8_t ok = 0, bad = 0;
+            for (uint8_t r = 0; r < f.n; r++) {
+                const rbn_period_rec_t *rec = &f.recs[r];
+                if (disabled) { bad++; continue; }
+                rbpower_unit_id_t uid = rbgrid_create_espnow_unit_id(f.mac, rec->channel_id);
+                /* Feed the node's finished 15MIN period into the native rollup (unit_id-based, shared with the
+                 * rbAmp inject path): inject_period_result(15MIN) → rbpower_rollup_after_15min → 1HOUR accumulator
+                 * → finalize_1hour → flash + tariff/economics. The unit MUST be a fully-registered config unit. */
+                rbpower_err_t ie = rbpower_home_inject_period_result(uid, (rbpower_stat_period_type_t)rec->period_type,
+                    rec->avg_power_w, rec->max_power_w, rec->energy_wh, rec->period_ms,
+                    rec->voltage_v, rec->current_avg_a, rec->current_min_a, rec->current_max_a);
+                if (ie == RBPOWER_OK) ok++; else bad++;
+                ESP_LOGW(TAG, "PERIOD inject unit=0x%04X type=%u avg=%.2fW E=%.4fWh dt=%lums -> %s", (unsigned)uid,
+                         rec->period_type, rec->avg_power_w, rec->energy_wh, (unsigned long)rec->period_ms,
+                         ie == RBPOWER_OK ? "ok" : "REJECTED");
+            }
+            /* Remember it BEFORE the ACK (a resend after a lost ACK is then recognized), persist the latest, ACK. */
+            portENTER_CRITICAL(&s_units_mux);
+            enh_dedup_add(f.mac, f.seq, f.ts);
+            s_periods_injected += ok;
+            s_periods_dropped  += bad;
+            s_frames[i].used = false;
+            portEXIT_CRITICAL(&s_units_mux);
+            enh_dedup_persist(f.mac, f.seq, f.ts);
+            if (bad) rbpower_diag_printf("FAIL espnow: node %02X:..:%02X frame seq=%u — %u record(s) not counted (%s)",
+                                         f.mac[0], f.mac[5], (unsigned)f.seq, (unsigned)bad,
+                                         disabled ? "node disabled" : "unit rejected the period");
+            rbn_period_ack_t ack; rbn_hdr_init(&ack.h, RBN_MSG_PERIOD_ACK, s_beacon_seq++, 0);
+            ack.ack_seq = f.seq;
+            if (!rbfault_hit(RBFAULT_ESPNOW_ACK_DROP))          /* test builds: simulate a lost ACK */
+                esp_now_send(f.mac, (uint8_t *)&ack, sizeof(ack));
         }
 
         /* Presence-timeout sweep (~1s): a unit with no REALTIME for ESPNOW_PRESENCE_TIMEOUT_MS is flipped
@@ -698,7 +798,12 @@ esp_err_t esp_now_hub_start(uint8_t channel)
     s_running = true;
     s_beacons_sent = s_rt_recv = s_stats_recv = 0;
     memset(s_units, 0, sizeof(s_units)); s_units_created = 0;
-    memset(s_periods, 0, sizeof(s_periods)); s_periods_recv = s_periods_injected = 0;
+    memset(s_frames, 0, sizeof(s_frames)); s_periods_recv = s_periods_injected = s_periods_dropped = s_periods_dup = 0;
+    {   /* last injected frame per registered node (NVS) → a resend after this restart is recognized */
+        espnow_registry_t reg;
+        if (esp_now_registry_load(&reg))
+            for (int i = 0; i < reg.node_count && i < ESPNOW_REG_MAX_NODES; i++) enh_dedup_restore(reg.nodes[i].mac);
+    }
     xTaskCreate(beacon_task, "espnow_beacon", 4096, NULL, 5, &s_beacon_task);
     xTaskCreate(inject_task, "espnow_inject", 4096, NULL, 4, &s_inject_task);
     ESP_LOGW(TAG, "ESP-NOW hub UP: ch=%u epoch=0x%08X beacon=%dms (beacon + recv + INJECT into units)",
@@ -815,6 +920,10 @@ char *esp_now_hub_status_json(void)
     cJSON_AddBoolToObject(root, "pairing_open", esp_now_hub_pairing_open());
     cJSON_AddNumberToObject(root, "paired_count", s_paired_count);
     cJSON_AddNumberToObject(root, "beacons_sent", s_beacons_sent);
+    cJSON_AddNumberToObject(root, "periods_recv", s_periods_recv);          /* PERIOD frames queued */
+    cJSON_AddNumberToObject(root, "periods_injected", s_periods_injected);  /* records counted */
+    cJSON_AddNumberToObject(root, "periods_dropped", s_periods_dropped);    /* records ACKed but not counted (disabled/rejected) */
+    cJSON_AddNumberToObject(root, "periods_dup", s_periods_dup);            /* resends of an injected frame, re-ACKed only */
     cJSON_AddNumberToObject(root, "rt_recv", s_rt_recv);
     cJSON_AddNumberToObject(root, "stats_recv", s_stats_recv);
     cJSON *nodes = cJSON_AddArrayToObject(root, "nodes");

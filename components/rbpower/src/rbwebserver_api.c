@@ -231,7 +231,7 @@ esp_err_t rbwebserver_api_fault_handler(httpd_req_t* req)
         httpd_query_key_value(q, "skip", sk, sizeof(sk));
     }
     int p = rbfault_from_name(pt);
-    if (p < 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "point: flash_write|lfs_sync|lfs_mount_io"); return ESP_FAIL; }
+    if (p < 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "point: flash_write|lfs_sync|lfs_mount_io|espnow_ack_drop"); return ESP_FAIL; }
     uint32_t n = cn[0] ? (uint32_t)strtoul(cn, NULL, 10) : 1;
     rbfault_arm_skip((rbfault_point_t)p, n, sk[0] ? (uint32_t)strtoul(sk, NULL, 10) : 0);
     rbpower_diag_printf("fault: armed %s x%lu", pt, (unsigned long)n);

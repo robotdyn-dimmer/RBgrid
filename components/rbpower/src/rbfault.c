@@ -61,6 +61,7 @@ int rbfault_from_name(const char *name)
     if (!strcmp(name, "flash_write"))  return RBFAULT_FLASH_RECORD_WRITE;
     if (!strcmp(name, "lfs_sync"))     return RBFAULT_LFS_SYNC;
     if (!strcmp(name, "lfs_mount_io")) return RBFAULT_LFS_MOUNT_IO;
+    if (!strcmp(name, "espnow_ack_drop")) return RBFAULT_ESPNOW_ACK_DROP;
     return -1;
 }
 #endif
