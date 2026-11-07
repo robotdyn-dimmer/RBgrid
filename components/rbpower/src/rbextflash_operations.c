@@ -11,6 +11,7 @@
  * external W25Q NOR chip) is selected by rbstorage_media.
  */
 
+#include "rbfault.h"
 #include "rbextflash_operations.h"
 #include "rbextflash_sector_metadata.h"
 #include "rbextflash_config_runtime.h"
@@ -1458,6 +1459,7 @@ esp_err_t rbpower_flash_write_record(rbpower_unit_id_t unit_id,
                                       const void* data,
                                       size_t data_size)
 {
+    if (rbfault_hit(RBFAULT_FLASH_RECORD_WRITE)) return ESP_FAIL;   /* test builds only */
     // Flash availability gate — TWO distinct cases, do NOT collapse them:
     //  (1) Flash explicitly DISABLED (g_ext_flash_enabled==false): legitimate RAM-only build —
     //      silently skip + report success; the caller never expected persistence.

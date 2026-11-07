@@ -9,6 +9,7 @@
 #include "rbstats_migrate.h"
 #include "rbextflash_operations.h"      /* rbpower_flash_operations_init (resume after migrate) */
 #include "rbextflash_buffer_write.h"    /* rbpower_flash_buffer_write_basic_set (queue flush)   */
+#include "rbhome_types.h"              /* rbpower_diag_printf */
 
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -39,6 +40,7 @@ typedef struct {
     uint16_t unit_id;                         ///< Unit ID
     uint8_t  period;                          ///< rbpower_period_type_t
     uint8_t  has_meta;                        ///< 1 when @c meta is valid
+    uint8_t  done;                            ///< parts already on flash (bit 0 elec, 1 energy, 2 econ)
 } __attribute__((packed)) pending_rec_t;
 
 #define PENDING_CAP 2048   ///< Queue entries (x ~70 B = ~140 KB PSRAM; >= 48 h of hourly sets for 40+ units)
@@ -91,6 +93,16 @@ esp_err_t rbstats_pending_enqueue(rbpower_unit_id_t unit_id, rbpower_period_type
                                   const rbpower_economics_transfer_t* economics,
                                   const rbstats_v4_meta_t* meta)
 {
+    return rbstats_pending_enqueue_masked(unit_id, period, electrical, energy, economics, meta, 0);
+}
+
+esp_err_t rbstats_pending_enqueue_masked(rbpower_unit_id_t unit_id, rbpower_period_type_t period,
+                                         const rbpower_electrical_transfer_t* electrical,
+                                         const rbpower_energy_transfer_t* energy,
+                                         const rbpower_economics_transfer_t* economics,
+                                         const rbstats_v4_meta_t* meta, uint8_t done_mask)
+{
+    bool dropped_now = false;
     if (!electrical || !energy || !economics) return ESP_ERR_INVALID_ARG;
     if (!pending_ensure_alloc()) return ESP_ERR_NO_MEM;
     portENTER_CRITICAL(&s_pend_mux);
@@ -101,6 +113,7 @@ esp_err_t rbstats_pending_enqueue(rbpower_unit_id_t unit_id, rbpower_period_type
         s_pend_head = (s_pend_head + 1) % cap;
         s_pend_count--;
         s_pend_dropped++;
+        dropped_now = true;
     }
     idx = (s_pend_head + s_pend_count) % cap;
     s_pend[idx].electrical = *electrical;
@@ -115,9 +128,14 @@ esp_err_t rbstats_pending_enqueue(rbpower_unit_id_t unit_id, rbpower_period_type
     }
     s_pend[idx].unit_id    = (uint16_t)unit_id;
     s_pend[idx].period     = (uint8_t)period;
+    s_pend[idx].done       = done_mask;
     s_pend_count++;
     size_t n = s_pend_count, d = s_pend_dropped;
     portEXIT_CRITICAL(&s_pend_mux);
+    if (dropped_now)   /* history lost: say so loudly (once per 64 drops) */
+        if (d == 1 || (d % 64) == 0)
+            rbpower_diag_printf("FAIL stats: pending queue full (%u sets) — oldest record set dropped (%u so far)",
+                                (unsigned)n, (unsigned)d);
     ESP_LOGI(TAG, "finalize result queued (store %s): unit=0x%04X period=%d — pending=%u dropped=%u",
              rbstats_store_state_str(), (unsigned)unit_id, (int)period, (unsigned)n, (unsigned)d);
     return ESP_OK;
@@ -127,30 +145,53 @@ size_t rbstats_pending_count(void) { return s_pend_count; }
 
 size_t rbstats_pending_flush(void)
 {
+    static portMUX_TYPE s_flush_mux = portMUX_INITIALIZER_UNLOCKED;
+    static bool s_flushing = false;
+    portENTER_CRITICAL(&s_flush_mux);
+    if (s_flushing) { portEXIT_CRITICAL(&s_flush_mux); return 0; }   /* one flusher at a time */
+    s_flushing = true;
+    portEXIT_CRITICAL(&s_flush_mux);
+
     size_t flushed = 0;
+    bool stalled = false;
     for (;;) {
         pending_rec_t rec;
         portENTER_CRITICAL(&s_pend_mux);
         if (s_pend_count == 0 || !s_pend) { portEXIT_CRITICAL(&s_pend_mux); break; }
-        rec = s_pend[s_pend_head];
-        s_pend_head = (s_pend_head + 1) % s_pend_capacity;
-        s_pend_count--;
+        rec = s_pend[s_pend_head];          /* peek: removed only once it is on flash */
         portEXIT_CRITICAL(&s_pend_mux);
-        esp_err_t e = rbpower_flash_buffer_write_record_set((rbpower_unit_id_t)rec.unit_id,
-                                                            (rbpower_period_type_t)rec.period,
-                                                            &rec.electrical, &rec.energy, &rec.economics,
-                                                            rec.has_meta ? &rec.meta : NULL);
-        if (e != ESP_OK) {
-            ESP_LOGE(TAG, "pending flush write failed (%s) — record dropped", esp_err_to_name(e));
-        } else {
-            flushed++;
+        uint8_t done = rec.done;
+        esp_err_t e = rbpower_flash_buffer_write_record_set_ex((rbpower_unit_id_t)rec.unit_id,
+                                                               (rbpower_period_type_t)rec.period,
+                                                               &rec.electrical, &rec.energy, &rec.economics,
+                                                               rec.has_meta ? &rec.meta : NULL, &done);
+        portENTER_CRITICAL(&s_pend_mux);
+        if (e == ESP_OK) {
+            /* the head is still this record: enqueue appends at the tail; only an overflow moves the head */
+            if (s_pend_count && s_pend[s_pend_head].unit_id == rec.unit_id && s_pend[s_pend_head].period == rec.period) {
+                s_pend_head = (s_pend_head + 1) % s_pend_capacity;
+                s_pend_count--;
+            }
+        } else if (s_pend_count && s_pend[s_pend_head].unit_id == rec.unit_id) {
+            s_pend[s_pend_head].done = done;   /* keep what made it; retry the rest next time */
         }
+        portEXIT_CRITICAL(&s_pend_mux);
+        if (e != ESP_OK) {
+            ESP_LOGE(TAG, "pending flush write failed (%s) — kept for retry", esp_err_to_name(e));
+            stalled = true;
+            break;
+        }
+        flushed++;
         vTaskDelay(1);   /* yield between writes */
     }
-    if (flushed || s_pend_dropped) {
-        ESP_LOGW(TAG, "pending queue flushed: %u written, %u lost to overflow earlier",
-                 (unsigned)flushed, (unsigned)s_pend_dropped);
+    if (flushed || s_pend_dropped || stalled) {
+        ESP_LOGW(TAG, "pending queue: %u written, %u waiting%s, %u lost to overflow earlier",
+                 (unsigned)flushed, (unsigned)s_pend_count, stalled ? " (write failing, will retry)" : "",
+                 (unsigned)s_pend_dropped);
     }
+    portENTER_CRITICAL(&s_flush_mux);
+    s_flushing = false;
+    portEXIT_CRITICAL(&s_flush_mux);
     return flushed;
 }
 
@@ -187,9 +228,19 @@ static void migrate_task(void *arg)
         ie = rbpower_flash_init_buffers_from_network();
     }
     if (ie != ESP_OK) {
+        /* One retry, then stay GATED: READY would let finalize write into a half-initialized store (no
+         * unit→buffer bindings). Gated, finalized sets keep landing in the RAM pending queue (lost on a reboot);
+         * the marker IS current, so the next boot initializes normally. */
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        ie = rbpower_flash_operations_init();
+        if (ie == ESP_OK) ie = rbpower_flash_init_buffers_from_network();
+    }
+    if (ie != ESP_OK) {
         ESP_LOGE(TAG, "post-migration flash init failed: %s — store stays gated until reboot",
                  esp_err_to_name(ie));
-        s_state = RBSTATS_STORE_READY;   /* marker IS current; next boot initializes normally */
+        rbpower_diag_printf("FAIL stats: post-migration flash init failed (%s) — history held in RAM until reboot",
+                            esp_err_to_name(ie));
+        s_state = RBSTATS_STORE_INCOMPATIBLE;   /* offline, data preserved; not PENDING_VALID (that re-arms the migration) */
     } else {
         s_state = RBSTATS_STORE_READY;
         rbstats_pending_flush();

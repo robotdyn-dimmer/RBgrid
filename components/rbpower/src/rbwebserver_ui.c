@@ -158,9 +158,16 @@ esp_err_t rbwebserver_ui_mount(void)
     s_mount_err = ESP_OK;
     s_mounted = true;
     mkdir(UIFS_BASE, 0755);
+    {   /* crash mid-swap: cur was renamed to old but next never became cur → put old back. Only then
+         * create an empty cur; old is dropped only when cur is there. */
+        struct stat st_cur, st_old;
+        if (stat(UIFS_CUR, &st_cur) != 0 && stat(UIFS_OLD, &st_old) == 0) {
+            if (rename(UIFS_OLD, UIFS_CUR) == 0) ESP_LOGW(TAG, "UI swap was interrupted — previous UI restored");
+        }
+    }
     mkdir(UIFS_CUR, 0755);
     mkdir(UIFS_NEXT, 0755);
-    remove_tree(UIFS_OLD);                /* crash mid-swap leftover */
+    remove_tree(UIFS_OLD);                /* crash mid-swap leftover (cur is in place) */
     refresh_installed();
     size_t total = 0, used = 0;
     esp_littlefs_info("storage", &total, &used);

@@ -13,6 +13,7 @@
 #include "rbextflash_operations.h"
 #include "rbstorage_transfer_types.h"
 #include "rbstats_migrate.h"   /* store gate + pending queue during deferred migration */
+#include "rbhome_types.h"     /* rbpower_diag_printf */
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -267,15 +268,21 @@ esp_err_t rbpower_flash_buffer_write_basic_set(
     return rbpower_flash_buffer_write_record_set(unit_id, period, electrical, energy, economics, NULL);
 }
 
-esp_err_t rbpower_flash_buffer_write_record_set(
+/* Write the three records of a set now. *done_mask (bit 0 electrical, 1 energy, 2 economics) marks parts
+ * already on flash: they are skipped, and each part written here sets its bit. A set that fails half-way is
+ * therefore retried without duplicating the parts that made it (the pending-queue retry passes the mask back). */
+esp_err_t rbpower_flash_buffer_write_record_set_ex(
     rbpower_unit_id_t unit_id,
     rbpower_period_type_t period,
     const rbpower_electrical_transfer_t* electrical,
     const rbpower_energy_transfer_t* energy,
     const rbpower_economics_transfer_t* economics,
-    const rbstats_v4_meta_t* meta)
+    const rbstats_v4_meta_t* meta,
+    uint8_t* done_mask)
 {
     esp_err_t ret;
+    uint8_t done_local = 0;
+    if (!done_mask) done_mask = &done_local;
 
     // Check input data
     if (!electrical || !energy || !economics) {
@@ -289,9 +296,6 @@ esp_err_t rbpower_flash_buffer_write_record_set(
     //      migration completes;
     //  (b) while the wall clock has never synced (the records carry uptime timestamps) — on the
     //      first SNTP sync the uptime timestamps are re-stamped to epoch and the queue is flushed.
-    if (rbstats_migrate_state() != RBSTATS_STORE_READY || rbstats_time_unsynced_gate()) {
-        return rbstats_pending_enqueue(unit_id, period, electrical, energy, economics, meta);
-    }
 
 #if RBPOWER_RECORD_FORMAT_VERSION >= 4
     // On-flash format is v4: assemble v4 records from (transfer struct + meta) and write
@@ -329,12 +333,21 @@ esp_err_t rbpower_flash_buffer_write_record_set(
 
         ESP_LOGI(TAG, "Writing v4 set: unit=0x%04X, period=%d dur=%lu q=0x%X",
                  (unsigned)unit_id, (int)period, (unsigned long)h.dur, (unsigned)h.q);
-        ret = rbpower_flash_write_record(unit_id, period, RBPOWER_DATA_TYPE_ELECTRICAL, &ev4, sizeof(ev4));
-        if (ret != ESP_OK) { ESP_LOGE(TAG, "v4 ELECTRICAL write failed: %s", esp_err_to_name(ret)); return ret; }
-        ret = rbpower_flash_write_record(unit_id, period, RBPOWER_DATA_TYPE_ENERGY, &nv4, sizeof(nv4));
-        if (ret != ESP_OK) { ESP_LOGE(TAG, "v4 ENERGY write failed: %s", esp_err_to_name(ret)); return ret; }
-        ret = rbpower_flash_write_record(unit_id, period, RBPOWER_DATA_TYPE_ECONOMICS, &cv4, sizeof(cv4));
-        if (ret != ESP_OK) { ESP_LOGE(TAG, "v4 ECONOMICS write failed: %s", esp_err_to_name(ret)); return ret; }
+        if (!(*done_mask & 1)) {
+            ret = rbpower_flash_write_record(unit_id, period, RBPOWER_DATA_TYPE_ELECTRICAL, &ev4, sizeof(ev4));
+            if (ret != ESP_OK) { ESP_LOGE(TAG, "v4 ELECTRICAL write failed: %s", esp_err_to_name(ret)); return ret; }
+            *done_mask |= 1;
+        }
+        if (!(*done_mask & 2)) {
+            ret = rbpower_flash_write_record(unit_id, period, RBPOWER_DATA_TYPE_ENERGY, &nv4, sizeof(nv4));
+            if (ret != ESP_OK) { ESP_LOGE(TAG, "v4 ENERGY write failed: %s", esp_err_to_name(ret)); return ret; }
+            *done_mask |= 2;
+        }
+        if (!(*done_mask & 4)) {
+            ret = rbpower_flash_write_record(unit_id, period, RBPOWER_DATA_TYPE_ECONOMICS, &cv4, sizeof(cv4));
+            if (ret != ESP_OK) { ESP_LOGE(TAG, "v4 ECONOMICS write failed: %s", esp_err_to_name(ret)); return ret; }
+            *done_mask |= 4;
+        }
         return ESP_OK;
     }
 #else
@@ -420,4 +433,30 @@ esp_err_t rbpower_flash_buffer_write_extended_set(
 
     ESP_LOGI(TAG, "Extended set written successfully");
     return ESP_OK;
+}
+
+/* Public writer. Store gate: while a format migration owns the region, or while the wall clock has never
+ * synced, the set goes to the PSRAM pending queue (flushed later). A write that FAILS is not dropped either:
+ * the set (with the mask of parts already written) is queued for retry and ESP_ERR_NOT_FINISHED is returned,
+ * so a caller can keep its own recovery copy (the hour's NVS image) until the retry succeeds. */
+esp_err_t rbpower_flash_buffer_write_record_set(
+    rbpower_unit_id_t unit_id,
+    rbpower_period_type_t period,
+    const rbpower_electrical_transfer_t* electrical,
+    const rbpower_energy_transfer_t* energy,
+    const rbpower_economics_transfer_t* economics,
+    const rbstats_v4_meta_t* meta)
+{
+    if (!electrical || !energy || !economics) return ESP_ERR_INVALID_ARG;
+    if (rbstats_migrate_state() != RBSTATS_STORE_READY || rbstats_time_unsynced_gate()) {
+        return rbstats_pending_enqueue(unit_id, period, electrical, energy, economics, meta);
+    }
+    uint8_t done = 0;
+    esp_err_t ret = rbpower_flash_buffer_write_record_set_ex(unit_id, period, electrical, energy, economics, meta, &done);
+    if (ret == ESP_OK || ret == ESP_ERR_INVALID_ARG) return ret;
+    esp_err_t q = rbstats_pending_enqueue_masked(unit_id, period, electrical, energy, economics, meta, done);
+    rbpower_diag_printf("FAIL flash: unit 0x%04X period %d record set write failed (%s, parts done 0x%x) — %s",
+                        (unsigned)unit_id, (int)period, esp_err_to_name(ret), (unsigned)done,
+                        q == ESP_OK ? "queued for retry" : "NOT queued");
+    return q == ESP_OK ? ESP_ERR_NOT_FINISHED : ret;
 }

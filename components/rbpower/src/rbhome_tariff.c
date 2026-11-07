@@ -2283,7 +2283,7 @@ esp_err_t rbpower_tariff_update_zone_cache(void)
                RBPOWER_TARIFF_NAME_LENGTH - 1);
         g_active_zone_cache.current_buying_rate = active_zone->rate_buying_per_kwh;
         g_active_zone_cache.current_selling_rate = active_zone->rate_selling_per_kwh;
-        g_active_zone_cache.zone_cache_timestamp = esp_timer_get_time();
+        g_active_zone_cache.zone_cache_timestamp = rbtime_get_unix_timestamp();   /* epoch s, as the age check reads it (was uptime µs → the cache never aged correctly) */
         g_active_zone_cache.zone_cache_valid = true;
         
         if (!g_active_zone_cache.zone_cache_valid || prev_zone_id != active_zone->zone_id) {

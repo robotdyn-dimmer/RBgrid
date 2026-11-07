@@ -21,6 +21,8 @@
 #include "external_flash_config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "rbhome_types.h"   /* rbpower_diag_printf */
+#include "rbfault.h"
 
 static const char *TAG = "LITTLEFS_RAW";
 
@@ -33,6 +35,7 @@ static esp_flash_t *g_ext_flash = NULL;
  * addresses instead of esp_flash_* on the external chip. */
 static const esp_partition_t *s_int_part = NULL;
 static bool g_mounted = false;
+bool littlefs_raw_is_mounted(void) { return g_mounted; }
 static SemaphoreHandle_t g_mutex = NULL;
 
 // Buffer pools for LittleFS
@@ -177,10 +180,27 @@ esp_err_t littlefs_raw_mount(esp_flash_t *flash_handle)
              s_int_part ? "INTERNAL `config` partition" : "EXTERNAL flash config region",
              (unsigned long)g_cfg.block_count);
     
-    // Try to mount
-    int err = lfs_mount(&g_lfs, &g_cfg);
+    /* Mount. Only a filesystem littlefs itself reports as CORRUPT (which is also what a blank, never-formatted
+     * partition reads as) is formatted — and only after retries. Any other error (a flash read/IO failure)
+     * leaves the data untouched and fails the mount: formatting on a transient read error erased every config
+     * file and the API tokens, which reopened the API (onboarding mode). */
+    rbfault_load_boot();
+    int err = LFS_ERR_IO;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        err = lfs_mount(&g_lfs, &g_cfg);
+        if (err == LFS_ERR_OK && rbfault_hit(RBFAULT_LFS_MOUNT_IO)) { lfs_unmount(&g_lfs); err = LFS_ERR_IO; }
+        if (err == LFS_ERR_OK) break;
+        ESP_LOGW(TAG, "Mount attempt %d failed: %d", attempt + 1, err);
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    if (err && err != LFS_ERR_CORRUPT) {
+        ESP_LOGE(TAG, "Mount failed with %d (not CORRUPT) — NOT formatting; config store unavailable until reboot", err);
+        rbpower_diag_printf("FAIL littlefs: mount error %d — config store left untouched (not formatted)", err);
+        return ESP_FAIL;
+    }
     if (err) {
-        ESP_LOGW(TAG, "Mount failed, formatting...");
+        ESP_LOGW(TAG, "Mount failed (CORRUPT after 3 tries), formatting...");
+        rbpower_diag_printf("littlefs: config store unreadable (CORRUPT) — formatted; settings and tokens reset");
         
         // Format the filesystem
         err = lfs_format(&g_lfs, &g_cfg);
@@ -266,8 +286,12 @@ static esp_err_t lfs_write_synced_locked(const char *path, const void *data, siz
         return ESP_FAIL;
     }
     err = lfs_file_sync(&g_lfs, &file);
-    if (err) ESP_LOGW(TAG, "File sync failed: %d (continuing)", err);
-    lfs_file_close(&g_lfs, &file);
+    if (!err && rbfault_hit(RBFAULT_LFS_SYNC)) err = LFS_ERR_IO;
+    int cerr = lfs_file_close(&g_lfs, &file);   /* close also flushes: check it too */
+    if (err || cerr) {
+        ESP_LOGE(TAG, "%s sync/close failed: %d/%d", path, err, cerr);
+        return ESP_FAIL;                        /* not durable → the caller must not commit/rename */
+    }
     return ESP_OK;
 }
 

@@ -72,6 +72,10 @@ static bool rbapi_load_token(const char* file, char out[48])
 {
     size_t act = 0;
     out[0] = '\0';
+    /* Config store not mounted (a failed mount is no longer formatted): the token files can't be read, which
+     * must NOT read as "no token = onboarding, everything open". Report a token that nothing can match:
+     * writes and gated reads are refused until the store is back (reboot). */
+    if (!littlefs_raw_is_mounted()) { out[0] = '\x01'; out[1] = '\0'; return true; }
     return littlefs_raw_exists(file) &&
            littlefs_raw_read(file, out, 47, &act) == ESP_OK && out[0];
 }
@@ -212,6 +216,31 @@ bool rbwebserver_api_check_auth(httpd_req_t* req) { return rbapi_require_auth(re
  */
 bool rbwebserver_api_token_armed(void) { char t[48]; return rbapi_load_token(RBAPI_TOKEN_FILE, t); }
 bool rbwebserver_api_check_read(httpd_req_t* req) { return rbapi_require_read(req); }
+
+#ifdef RBGRID_FAULT_INJECT
+#include "rbfault.h"
+/* TEST BUILDS ONLY: POST /api/debug/fault?point=flash_write|lfs_sync|lfs_mount_io&count=N (admin). */
+esp_err_t rbwebserver_api_fault_handler(httpd_req_t* req)
+{
+    add_cors_headers(req);
+    if (!rbapi_require_auth(req)) return ESP_FAIL;
+    char q[96], pt[24] = {0}, cn[12] = {0}, sk[12] = {0};
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
+        httpd_query_key_value(q, "point", pt, sizeof(pt));
+        httpd_query_key_value(q, "count", cn, sizeof(cn));
+        httpd_query_key_value(q, "skip", sk, sizeof(sk));
+    }
+    int p = rbfault_from_name(pt);
+    if (p < 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "point: flash_write|lfs_sync|lfs_mount_io"); return ESP_FAIL; }
+    uint32_t n = cn[0] ? (uint32_t)strtoul(cn, NULL, 10) : 1;
+    rbfault_arm_skip((rbfault_point_t)p, n, sk[0] ? (uint32_t)strtoul(sk, NULL, 10) : 0);
+    rbpower_diag_printf("fault: armed %s x%lu", pt, (unsigned long)n);
+    char out[80]; snprintf(out, sizeof(out), "{\"status\":\"OK\",\"point\":\"%s\",\"count\":%lu}", pt, (unsigned long)n);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, out);
+    return ESP_OK;
+}
+#endif
 
 /* POST /api/v1/ws-ticket → {"ticket":"<32 hex>","expires_s":30}. Needs a READ or ADMIN token when reads are
  * gated (open otherwise, like every read). The ticket opens one /ws-telemetry handshake with the caller's role. */
