@@ -25,6 +25,8 @@
 #include "rbwebserver.h"
 #include "rbjson.h"
 #include "rbpower.h"
+#include "rbgrid_core.h"
+#include "rbgrid_core_priv.h"
 
 /**
  * @brief Read a request body COMPLETELY.
@@ -407,7 +409,7 @@ bool rbwebserver_security_cfg_get(bool *dev_cors, char origins[][64], int max, i
 esp_err_t rbwebserver_api_security_handler(httpd_req_t *req);
 
 /** @brief API contract version (reported by /api/v1/schema; checked by the ui-commit api_version guard). */
-#define RBGRID_API_VERSION 1
+/* RBGRID_API_VERSION: rbgrid_core.h */
 
 /* Embedded web-UI hosting (rbwebserver_ui.c) */
 

@@ -30,7 +30,7 @@
 #include "rbsensors.h"
 #include "rbgrid_config_storage.h"   /* rbgrid_storage_load_rbamp — bind/rebind recover the CT model */
 #include "rbpoint.h"                 /* point slugs + caps mapping */
-#include "rbmqtt.h"                  /* LWT-on-reboot: explicit offline before esp_restart */
+#include "rbgrid_core.h"             /* reboot notifiers (MQTT LWT offline before esp_restart) */
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -3432,7 +3432,7 @@ esp_err_t rbgrid_system_reboot(uint32_t delay_ms) {
      * notice on keepalive (minutes), by which time the restarted client has already set "online",
      * i.e. without this publish the offline phase is never observable. The QoS1 packet goes out during
      * deinit+delay_ms (the esp-mqtt client lives until esp_restart). */
-    (void)rbmqtt_publish_offline();
+    rbgrid_core_notify_reboot();   /* MQTT registers its retained "offline" publish here */
 
     /* Planned restart = don't lose the open hour: flush HOUR accumulators as PARTIAL records
      * (otherwise the RAM-only open hour is lost on every reboot/OTA). */

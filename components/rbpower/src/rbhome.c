@@ -10,6 +10,7 @@
  * through the inject API (rbAmp I2C bridge, ESP-NOW hub); the native ESP32-ADC engine has been
  * removed. Finished 15-minute results are rolled up by rbhome_statistics.c.
  */
+#include "rbgrid_core.h"   /* 3 s callbacks (telemetry publish point) */
 #include "rbpower_enums.h"
 #include "rbpower_constants.h"
 #include "rbhome_types.h"
@@ -2152,7 +2153,7 @@ void rbpower_home_end_3sec_period_callback(uint64_t period_end_time_us)
 
        // === NEW: TELEMETRY AFTER CYCLE ===
     // Send summary telemetry data in one packet for all units
-    rbpower_telemetry_on_3sec_period_end(period_end_time_us);
+    rbgrid_core_run_3s_cbs(period_end_time_us);   /* telemetry (WS/MQTT) and other hosts register here */
 
 }
 

@@ -12,6 +12,7 @@
 #include "rbhome_types.h"
 #include "rbhome_tariff.h"
 #include "rbtelemetry.h"
+#include "rbgrid_core.h"
 #include "rbwebsocket.h"
 #include "rbmqtt.h"
 #include "esp_log.h"
@@ -198,6 +199,7 @@ esp_err_t rbpower_telemetry_init(const rbpower_telemetry_config_t* config) {
     }
     
     g_telemetry_initialized = true;
+    (void)rbgrid_core_register_3s_cb(rbpower_telemetry_on_3sec_period_end);   /* the core calls back every 3 s */
     
     ESP_LOGI(TAG, "Telemetry initialized. Buffer size: %lu bytes", 
              g_telemetry_config.json_buffer_size);

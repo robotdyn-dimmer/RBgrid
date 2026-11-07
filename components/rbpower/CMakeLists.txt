@@ -14,6 +14,10 @@ set(RBPOWER_SRCS
     "src/rbhome_alt_supply.c"
     "src/rbgrid.c"
     "src/rbgrid_config_api.c"
+    "src/rbgrid_core.c"                      # core context, lifecycle hooks, factory reset
+    "src/rbgrid_core_cmd.c"                  # transport-neutral command dispatcher + API tokens
+    "src/rbgrid_core_reads.c"                # economics / summary / schema / base_w builders
+    "src/rbgrid_units.c"                     # point create / change / delete
     "src/rbgrid_config_storage.c"
     "src/rbjson.c"
     "src/rbtelemetry.c"

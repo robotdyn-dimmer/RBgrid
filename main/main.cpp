@@ -74,7 +74,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "rbpower.h"
-#include "rbstats_migrate.h"       // deferred stats-format migration: image-valid hook
+#include "rbgrid_core.h"           // core API: lifecycle hooks, factory reset, context
 #include "rbhome_tariff.h"   // rbpower_tariff_get_current_plan — provisioning-status tariff_set
 #include "rbpower_inject_test.h"   // external-source injection self-test (opt-in)
 #include "rbpower_logic_test.h"    // deterministic logic regression suite (selftest verb)
@@ -1975,7 +1975,7 @@ static void ota_confirm_task(void *arg)
     } else {
         rbpower_diag_printf("FAIL ota: confirm failed: %s", esp_err_to_name(mv));
     }
-    rbstats_migrate_notify_image_valid();
+    rbgrid_core_image_confirmed();   /* releases a deferred stats migration */
     vTaskDelete(NULL);
 }
 
@@ -2041,9 +2041,7 @@ void wifi_event_callback(rbwifi_status_t status, void* user_data)
             }
         } else {
             esp_ota_mark_app_valid_cancel_rollback();   /* no-op unless pending; kept for symmetry */
-            // A deferred stats-format migration waits for exactly this confirmation (never touch
-            // the old-format data while a rollback to the old fw is still possible).
-            rbstats_migrate_notify_image_valid();
+            rbgrid_core_image_confirmed();   /* image already valid: release a deferred stats migration */
         }
     }
 
@@ -2678,7 +2676,7 @@ static void rbgrid_cjson_free(void *p) { free(p); }
 extern "C" void app_main(void) {
     { cJSON_Hooks h = { rbgrid_cjson_malloc, rbgrid_cjson_free }; cJSON_InitHooks(&h); }   /* before any JSON */
     /* factory reset (POST /api/system/factory-reset) runs here, before NVS and the config file system open */
-    const bool factory_reset_done = rbwebserver_factory_reset_at_boot();
+    const bool factory_reset_done = rbgrid_core_factory_reset_at_boot();
     rbevlog_init();   /* event log ring + diag log sink: before the first diag line */
     if (factory_reset_done) rbpower_diag_printf("factory reset carried out at boot — starting as on first boot");
 
@@ -3218,6 +3216,7 @@ extern "C" void app_main(void) {
     
     // Set global pointer
     g_extended_config = extended_config;
+    rbgrid_core_set_context(extended_config, g_json_ctx);   /* the core's builders (dispatcher, units) use these */
     size_t extflash_total = 0, extflash_used = 0;
     if (rbgrid_storage_get_stats(&extflash_total, &extflash_used) == ESP_OK) {
             ESP_LOGI(TAG, "Storage: %zu KB used of %zu KB total", extflash_used/1024, extflash_total/1024);

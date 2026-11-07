@@ -197,19 +197,6 @@ extern "C"
     void rbwebserver_load_https_flag(void);
 
     /**
-     * @brief Carry out a factory reset requested by POST /api/system/factory-reset, if one is pending.
-     *
-     * The request only arms an RTC (no-init) marker and restarts the hub; the erase runs here, at the very
-     * start of the next boot, before NVS and the config file system are opened. Erases the "config"
-     * partition (settings, points, tariff, module layout, restore point) and the default NVS (Wi-Fi,
-     * tokens, AP password, counter anchors), and the internal "stats" partition when history erase was
-     * asked. The hub then starts as on first boot (setup access point + portal). Call first in app_main.
-     *
-     * @return true if a factory reset was carried out on this boot.
-     */
-    bool rbwebserver_factory_reset_at_boot(void);
-
-    /**
      * @brief GET/POST /api/system/system-config and /api/system/config — system configuration.
      *        GET: no auth; POST: admin token required (validated, saved, applied live).
      *

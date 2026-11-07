@@ -11,6 +11,7 @@
  * on connect we publish "online" (retained). No secrets here — Wi-Fi creds are provisioned
  * separately; the broker URI is passed in from config.
  */
+#include "rbgrid_core.h"
 #include "rbmqtt.h"
 
 #include <string.h>
@@ -145,6 +146,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
 
 static char s_broker_uri[160];
 const char *rbmqtt_broker_uri(void) { return s_broker_uri; }
+/* Planned reboot: publish the retained "offline" first (the core runs its reboot notifiers). */
+static void rbmqtt_reboot_notify(void) { (void)rbmqtt_publish_offline(); }
 esp_err_t rbmqtt_init(const char *broker_uri, const char *client_id, const char *lwt_topic)
 {
     strlcpy(s_broker_uri, broker_uri ? broker_uri : "", sizeof(s_broker_uri));
@@ -195,6 +198,7 @@ esp_err_t rbmqtt_init(const char *broker_uri, const char *client_id, const char 
         ESP_LOGE(TAG, "esp_mqtt_client_init failed");
         return ESP_FAIL;
     }
+    (void)rbgrid_core_register_reboot_notify(rbmqtt_reboot_notify);
     esp_err_t err = esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID,
                                                    mqtt_event_handler, NULL);
     if (err == ESP_OK) err = esp_mqtt_client_start(s_client);
