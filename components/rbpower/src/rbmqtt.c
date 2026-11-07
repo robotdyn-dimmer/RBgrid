@@ -16,8 +16,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "mqtt_client.h"
 #include "esp_crt_bundle.h"
+#include "rbhome_types.h"   /* rbpower_diag_printf */
 
 static const char *TAG = "RBMQTT";
 
@@ -95,6 +97,20 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             break;
         case MQTT_EVENT_ERROR:
             ESP_LOGW(TAG, "mqtt error event");
+            /* Release builds have no console: put the cause in the event log, at most once a minute
+             * (esp-mqtt retries every few seconds). TLS failures carry the mbedTLS code + X.509 flags. */
+            if (event && event->error_handle) {
+                static int64_t s_last_err_us = 0;
+                int64_t now = esp_timer_get_time();
+                if (s_last_err_us == 0 || now - s_last_err_us > 60000000LL) {
+                    s_last_err_us = now;
+                    const esp_mqtt_error_codes_t *e = event->error_handle;
+                    rbpower_diag_printf("mqtt: connect failed: type=%d tls_err=0x%x tls_stack=-0x%x cert_flags=0x%x sock_errno=%d refused=%d",
+                                        (int)e->error_type, (unsigned)e->esp_tls_last_esp_err,
+                                        (unsigned)(-e->esp_tls_stack_err), (unsigned)e->esp_tls_cert_verify_flags,
+                                        e->esp_transport_sock_errno, (int)e->connect_return_code);
+                }
+            }
             break;
         default:
             break;
