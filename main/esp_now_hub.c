@@ -367,6 +367,65 @@ static wifi_interface_t hub_ifidx(void)
 /** Add or refresh a node as an ENCRYPTED (CCMP) unicast peer, keyed by LMK = HMAC(PMK, node_mac). The node
  * derives the same LMK from its own MAC, so encrypted data frames flow both ways without a key on the air.
  * The broadcast beacon/followup stay on the separate unencrypted BCAST peer. */
+/* ===== Node settings (F5) =====
+ * The hub keeps each node's desired settings (NVS espnow_nc/n<MAC[3..5]>) and resends CONFIG until the node answers
+ * CONFIG_ACK with the same cfg_seq. Period is fixed at 900 s (the hub rolls node periods up as quarters). */
+typedef struct {
+    uint32_t       cfg_seq;
+    uint16_t       period_s;
+    uint8_t        n;
+    rbn_cfg_chan_t chans[ESPNOW_REG_MAX_CH];
+    uint8_t        state;        /* 0 none, 1 pending, 2 applied, 3 failed */
+    uint8_t        result;       /* node's CONFIG_ACK result */
+    uint16_t       node_period;  /* period the node reports */
+    uint16_t       fw;           /* node firmware version (0xMMmm) */
+} enh_nodecfg_t;
+typedef struct { bool used, loaded, dirty; uint8_t mac[6]; enh_nodecfg_t c; } enh_nodecfg_slot_t;
+static enh_nodecfg_slot_t s_ncfg[ESPNOW_REG_MAX_NODES];
+
+static void ncfg_key(const uint8_t mac[6], char key[12]) { snprintf(key, 12, "n%02x%02x%02x", mac[3], mac[4], mac[5]); }
+/* Caller doesn't hold s_units_mux (NVS read). */
+static enh_nodecfg_slot_t *ncfg_get(const uint8_t mac[6], bool create)
+{
+    for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
+        if (s_ncfg[i].used && memcmp(s_ncfg[i].mac, mac, 6) == 0) return &s_ncfg[i];
+    if (!create) {
+        /* not cached yet: load if stored */
+        nvs_handle_t h; char key[12]; enh_nodecfg_t c; size_t l = sizeof(c);
+        ncfg_key(mac, key);
+        if (nvs_open("espnow_nc", NVS_READONLY, &h) != ESP_OK) return NULL;
+        esp_err_t e = nvs_get_blob(h, key, &c, &l);
+        nvs_close(h);
+        if (e != ESP_OK || l != sizeof(c)) return NULL;
+        for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
+            if (!s_ncfg[i].used) { s_ncfg[i].used = true; s_ncfg[i].loaded = true; memcpy(s_ncfg[i].mac, mac, 6); s_ncfg[i].c = c; return &s_ncfg[i]; }
+        return NULL;
+    }
+    enh_nodecfg_slot_t *f = ncfg_get(mac, false);
+    if (f) return f;
+    for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
+        if (!s_ncfg[i].used) { memset(&s_ncfg[i], 0, sizeof(s_ncfg[i])); s_ncfg[i].used = true; s_ncfg[i].loaded = true;
+                               memcpy(s_ncfg[i].mac, mac, 6); return &s_ncfg[i]; }
+    return NULL;
+}
+static void ncfg_save(enh_nodecfg_slot_t *sl)
+{
+    nvs_handle_t h; char key[12];
+    ncfg_key(sl->mac, key);
+    if (nvs_open("espnow_nc", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_blob(h, key, &sl->c, sizeof(sl->c)); nvs_commit(h); nvs_close(h);
+    sl->dirty = false;
+}
+static void ncfg_send(const enh_nodecfg_slot_t *sl)
+{
+    uint8_t buf[sizeof(rbn_config_t) + ESPNOW_REG_MAX_CH * sizeof(rbn_cfg_chan_t)];
+    rbn_config_t *m = (rbn_config_t *)buf;
+    rbn_hdr_init(&m->h, RBN_MSG_CONFIG, s_beacon_seq++, 0);
+    m->cfg_seq = sl->c.cfg_seq; m->period_s = sl->c.period_s; m->chan_count = sl->c.n;
+    memcpy(m->chans, sl->c.chans, (size_t)sl->c.n * sizeof(rbn_cfg_chan_t));
+    esp_now_send(sl->mac, buf, sizeof(rbn_config_t) + (size_t)sl->c.n * sizeof(rbn_cfg_chan_t));   /* encrypted peer */
+}
+
 /* ===== Installation key (PMK) =====
  * One random 16-byte PMK per hub, created at the first ESP-NOW start and kept in NVS (espnow_cfg/pmk). Nodes get it
  * at pairing (PAIR_REQ2/PAIR_ACK2: X25519 + AES-CCM), so no key is built into any firmware image. A dev build that
@@ -515,6 +574,15 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
             }
             if (!queued && !stored) { ESP_LOGW(TAG, "PERIOD from %02X:..:%02X: queue full — not ACKed, node will resend", mac[0], mac[5]); return; }
         }
+    } else if (h->msg_type == RBN_MSG_CONFIG_ACK && len >= (int)sizeof(rbn_config_ack_t)) {
+        const rbn_config_ack_t *a = (const rbn_config_ack_t *)data;
+        for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++) {
+            enh_nodecfg_slot_t *sl = &s_ncfg[i];
+            if (!sl->used || memcmp(sl->mac, mac, 6) != 0) continue;
+            sl->c.node_period = a->period_s; sl->c.fw = a->fw_ver; sl->c.result = a->result;
+            if (sl->c.state == 1 && a->cfg_seq == sl->c.cfg_seq) { sl->c.state = a->result == 0 ? 2 : 3; sl->dirty = true; }
+            break;
+        }
     } else if (h->msg_type == RBN_MSG_PAIR_REQ2 && len >= (int)sizeof(rbn_pair_req2_t)) {
         /* Key-exchange pairing: accepted only inside the window the user opened; stashed for the beacon task. */
         const rbn_pair_req2_t *p = (const rbn_pair_req2_t *)data;
@@ -617,6 +685,24 @@ static void beacon_task(void *arg)
         }
         /* Watch the active tariff zone; on a transition, command all nodes to latch so their period boundary
          * coincides with the zone boundary (the node can't know zones). Throttled to ~every 3s. */
+        {   /* node settings: resend pending CONFIGs, persist results (every ~3 s) */
+            static uint32_t cfg_div = 0;
+            if (++cfg_div >= s_zone_poll_period) {
+                cfg_div = 0;
+                for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++) {
+                    enh_nodecfg_slot_t *sl = &s_ncfg[i];
+                    if (!sl->used) continue;
+                    if (sl->dirty) {
+                        ncfg_save(sl);
+                        rbpower_diag_printf("espnow: node %02X:..:%02X settings %s (cfg %u, period %u s, fw %u.%u)",
+                                            sl->mac[0], sl->mac[5], sl->c.state == 2 ? "applied" : "FAILED",
+                                            (unsigned)sl->c.cfg_seq, (unsigned)sl->c.node_period,
+                                            (unsigned)(sl->c.fw >> 8), (unsigned)(sl->c.fw & 0xFF));
+                    }
+                    if (sl->c.state == 1) ncfg_send(sl);
+                }
+            }
+        }
         if (++s_zone_poll_div >= s_zone_poll_period) {
             s_zone_poll_div = 0;
             if (RBTIME_IS_SYNCED()) {
@@ -1082,6 +1168,47 @@ char *esp_now_hub_action(const cJSON *req, int *status)
     } else if ((!strcmp(action, "disable") || !strcmp(action, "enable")) && have_mac) {
         esp_now_hub_set_node_disabled(mac, !strcmp(action, "disable"));
         snprintf(out, sizeof(out), "{\"ok\":true,\"disabled\":%s}", !strcmp(action, "disable") ? "true" : "false");
+    } else if (!strcmp(action, "configure") && have_mac) {
+        const cJSON *cfg = cJSON_GetObjectItem(req, "config");
+        const cJSON *jp = cfg ? cJSON_GetObjectItem(cfg, "period_s") : NULL;
+        const cJSON *jch = cfg ? cJSON_GetObjectItem(cfg, "channels") : NULL;
+        espnow_registry_t reg; int ni = -1;
+        if (esp_now_registry_load(&reg))
+            for (int i = 0; i < reg.node_count; i++) if (memcmp(reg.nodes[i].mac, mac, 6) == 0) { ni = i; break; }
+        if (ni < 0) ENH_ERR(404, "{\"ok\":false,\"error\":\"NOT_FOUND\",\"message\":\"no such node\"}");
+        else if (!cfg || (jp && (!cJSON_IsNumber(jp) || (int)jp->valuedouble != 900)))
+            ENH_ERR(400, "{\"ok\":false,\"error\":\"PERIOD_UNSUPPORTED\",\"message\":\"period_s must be 900 (15 min)\"}");
+        else {
+            enh_nodecfg_slot_t *sl = ncfg_get(mac, true);
+            enh_nodecfg_t nc; memset(&nc, 0, sizeof(nc));
+            if (sl) nc = sl->c;
+            /* start from the registry's channels (all on, registry clamp), then apply the request */
+            nc.n = reg.nodes[ni].ch_count;
+            for (int c = 0; c < nc.n; c++) {
+                bool known = false;
+                for (int k = 0; sl && k < sl->c.n; k++) if (sl->c.chans[k].channel_id == reg.nodes[ni].channels[c].ch) { nc.chans[c] = sl->c.chans[k]; known = true; }
+                if (!known) { nc.chans[c].channel_id = reg.nodes[ni].channels[c].ch; nc.chans[c].enabled = 1; nc.chans[c].ct_code = reg.nodes[ni].channels[c].ct_code; }
+            }
+            bool bad = false; int on = 0; const cJSON *e = NULL;
+            if (cJSON_IsArray(jch)) cJSON_ArrayForEach(e, jch) {
+                const cJSON *cc = cJSON_GetObjectItem(e, "ch"), *en = cJSON_GetObjectItem(e, "enabled"), *ct = cJSON_GetObjectItem(e, "ct_code");
+                int idx = -1;
+                for (int c = 0; cJSON_IsNumber(cc) && c < nc.n; c++) if (nc.chans[c].channel_id == (uint8_t)cc->valuedouble) idx = c;
+                if (idx < 0) { bad = true; break; }
+                if (cJSON_IsBool(en)) nc.chans[idx].enabled = cJSON_IsTrue(en) ? 1 : 0;
+                if (cJSON_IsNumber(ct)) { int v = (int)ct->valuedouble; if (v < 1 || v > 7) { bad = true; break; } nc.chans[idx].ct_code = (uint8_t)v; }
+            }
+            for (int c = 0; c < nc.n; c++) on += nc.chans[c].enabled;
+            if (bad) ENH_ERR(400, "{\"ok\":false,\"error\":\"BAD_REQUEST\",\"message\":\"unknown channel or ct_code (1..7)\"}");
+            else if (on == 0) ENH_ERR(400, "{\"ok\":false,\"error\":\"BAD_REQUEST\",\"message\":\"at least one channel must stay on\"}");
+            else if (!sl) ENH_ERR(500, "{\"ok\":false,\"error\":\"REGISTRY\",\"message\":\"no slot\"}");
+            else {
+                nc.period_s = 900; nc.cfg_seq++; nc.state = 1; nc.result = 0;
+                sl->c = nc; ncfg_save(sl);
+                if (esp_now_hub_running()) ncfg_send(sl);
+                snprintf(out, sizeof(out), "{\"ok\":true,\"config_state\":\"pending\",\"cfg_seq\":%u}", (unsigned)nc.cfg_seq);
+            }
+        }
     } else if (!strcmp(action, "add") && have_mac) {
         espnow_reg_chan_t ch[ESPNOW_REG_MAX_CH]; uint8_t n = 0;
         const cJSON *jch = cJSON_GetObjectItem(req, "channels"), *e = NULL;
@@ -1101,7 +1228,7 @@ char *esp_now_hub_action(const cJSON *req, int *status)
             }
         }
     } else {
-        ENH_ERR(400, "{\"ok\":false,\"error\":\"BAD_REQUEST\",\"message\":\"action = hub_on|hub_off|pair|pair_cancel|latch|remove|disable|enable|add (+ mac)\"}");
+        ENH_ERR(400, "{\"ok\":false,\"error\":\"BAD_REQUEST\",\"message\":\"action = hub_on|hub_off|pair|pair_cancel|latch|remove|disable|enable|add|configure (+ mac)\"}");
     }
 #undef ENH_ERR
     if (status) *status = st;
@@ -1230,6 +1357,24 @@ char *esp_now_hub_status_json(void)
             cJSON_AddNumberToObject(jn, "last_seen_s",
                                     (have && hs.last_rt_us) ? (double)((now - hs.last_rt_us) / 1000000) : -1);
             if (have && hs.rssi) cJSON_AddNumberToObject(jn, "rssi_dbm", hs.rssi);
+            {
+                enh_nodecfg_slot_t *sl = ncfg_get(rn->mac, false);
+                if (sl) {
+                    static const char *const ST[] = { "none", "pending", "applied", "failed" };
+                    cJSON_AddStringToObject(jn, "config_state", ST[sl->c.state & 3]);
+                    if (sl->c.node_period) cJSON_AddNumberToObject(jn, "period_s", sl->c.node_period);
+                    if (sl->c.fw) { char fv[12]; snprintf(fv, sizeof(fv), "%u.%u", (unsigned)(sl->c.fw >> 8), (unsigned)(sl->c.fw & 0xFF));
+                                    cJSON_AddStringToObject(jn, "fw", fv); }
+                    cJSON *cc = cJSON_AddArrayToObject(jn, "config");
+                    for (int k = 0; k < sl->c.n; k++) {
+                        cJSON *o = cJSON_CreateObject();
+                        cJSON_AddNumberToObject(o, "ch", sl->c.chans[k].channel_id);
+                        cJSON_AddBoolToObject(o, "enabled", sl->c.chans[k].enabled);
+                        cJSON_AddNumberToObject(o, "ct_code", sl->c.chans[k].ct_code);
+                        cJSON_AddItemToArray(cc, o);
+                    }
+                }
+            }
             if (have) {
                 cJSON *sync = cJSON_AddObjectToObject(jn, "sync");
                 cJSON_AddNumberToObject(sync, "resid_sd_us", hs.resid_sd);

@@ -39,8 +39,8 @@ enum {
     RBN_MSG_TIME_RESP     = 0x21,  ///< hub->node: wall-clock response (rbn_time_resp_t)
     RBN_MSG_SYNC_BEACON   = 0x22,  ///< hub->broadcast: sync beacon (rbn_sync_beacon_t)
     RBN_MSG_SYNC_FOLLOWUP = 0x23,  ///< hub->broadcast: beacon TX timestamp (rbn_sync_followup_t)
-    RBN_MSG_CONFIG        = 0x30,  ///< reserved: node configuration
-    RBN_MSG_CONFIG_ACK    = 0x31,  ///< reserved: node configuration acknowledgement
+    RBN_MSG_CONFIG        = 0x30,  ///< hub->node: node configuration (rbn_config_t, encrypted unicast)
+    RBN_MSG_CONFIG_ACK    = 0x31,  ///< node->hub: configuration result (rbn_config_ack_t)
     RBN_MSG_LATCH_NOW     = 0x32,  ///< hub->node: close the current period now (rbn_latch_now_t)
     RBN_MSG_SET_OUTPUT    = 0x40,  ///< hub->node: command a dimmer/relay output (encrypted unicast)
     RBN_MSG_OUTPUT_STATE  = 0x41,  ///< node->hub: output ACK + applied state (held-until-ACK)
@@ -146,6 +146,32 @@ typedef struct __attribute__((packed)) {
     uint8_t   enc_pmk[16];    ///< PMK, AES-CCM ciphertext
     uint8_t   tag[16];        ///< AES-CCM tag
 } rbn_pair_ack2_t;
+
+/** @brief One channel of a node configuration. */
+typedef struct __attribute__((packed)) {
+    uint8_t channel_id;   ///< node flat channel_id (module*4 + channel)
+    uint8_t enabled;      ///< 1 = report this channel, 0 = don't (an input with no clamp)
+    uint8_t ct_code;      ///< clamp model (schema enums.ct_model: 1=5 A, 2=10 A, 3=30 A, 4=50 A, 5=100 A, 6=20 A, 7=60 A); 0 = keep
+} rbn_cfg_chan_t;
+
+/** @brief 0x30 CONFIG (hub->node, encrypted unicast): the node's settings, resent until CONFIG_ACK(cfg_seq). */
+typedef struct __attribute__((packed)) {
+    rbn_hdr_t      h;            ///< common header
+    uint32_t       cfg_seq;      ///< settings version (echoed in the ACK)
+    uint16_t       period_s;     ///< period length the hub expects (900)
+    uint8_t        chan_count;   ///< entries in chans[]
+    rbn_cfg_chan_t chans[];      ///< channels to set
+} rbn_config_t;
+
+/** @brief 0x31 CONFIG_ACK (node->hub, encrypted unicast). result: 0 applied, 1 period not supported by this
+ * node build, 2 a clamp model could not be written to the module, 3 unknown channel. */
+typedef struct __attribute__((packed)) {
+    rbn_hdr_t h;           ///< common header
+    uint32_t  cfg_seq;     ///< the CONFIG this answers
+    uint8_t   result;      ///< 0 = applied
+    uint16_t  period_s;    ///< the period the node actually uses
+    uint16_t  fw_ver;      ///< node firmware version
+} rbn_config_ack_t;
 
 /** @brief 0x20 TIME_REQ (node->hub): request the hub's wall-clock. body = req_token (echoed back for RTT). */
 typedef struct __attribute__((packed)) {

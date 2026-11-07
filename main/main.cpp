@@ -2136,7 +2136,7 @@ static esp_err_t espnow_http_post(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     if (st != 200) {
         char sl[40];
-        snprintf(sl, sizeof(sl), "%d %s", st, st == 400 ? "Bad Request" : st == 409 ? "Conflict" : st == 503 ? "Service Unavailable" : "Internal Server Error");
+        snprintf(sl, sizeof(sl), "%d %s", st, st == 400 ? "Bad Request" : st == 404 ? "Not Found" : st == 409 ? "Conflict" : st == 503 ? "Service Unavailable" : "Internal Server Error");
         httpd_resp_set_status(req, sl);
     }
     httpd_resp_send(req, out ? out : "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
