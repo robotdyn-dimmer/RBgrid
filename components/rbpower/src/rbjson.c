@@ -3973,15 +3973,27 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
     // switch off net-metering credit carry-over. The plan-level fields start from the
     // CURRENT plan and the POST overrides what it carries; zones/payments are rebuilt from the POST,
     // each zone pre-filled from the current zone with the same zone_id.
+    /* Build the new plan in a PRIVATE copy and publish it at the end in one step, under the home lock (which
+     * the quarter inject → costing holds): the costing never sees a half-rebuilt plan, and a rejected plan
+     * leaves the running one untouched. */
     rbpower_tariff_plan_t* prev_plan = (rbpower_tariff_plan_t*)malloc(sizeof(rbpower_tariff_plan_t));
+    rbpower_tariff_plan_t* np = (rbpower_tariff_plan_t*)malloc(sizeof(rbpower_tariff_plan_t));
+    if (!np) {
+        free(prev_plan);
+        cJSON_Delete(root);
+        return RBGRID_JSON_ERR_NO_MEMORY;
+    }
+    rbpower_home_lock();
     if (prev_plan) *prev_plan = g_current_tariff_plan;
-    memset(&g_current_tariff_plan, 0, sizeof(rbpower_tariff_plan_t));
+    *np = g_current_tariff_plan;
+    rbpower_home_unlock();
+    memset(np, 0, sizeof(rbpower_tariff_plan_t));
     if (prev_plan) {
-        g_current_tariff_plan = *prev_plan;
-        memset(g_current_tariff_plan.zones, 0, sizeof(g_current_tariff_plan.zones));
-        memset(g_current_tariff_plan.fixed_payments, 0, sizeof(g_current_tariff_plan.fixed_payments));
-        g_current_tariff_plan.active_zones_count = 0;
-        g_current_tariff_plan.fixed_payments_count = 0;
+        *np = *prev_plan;
+        memset((*np).zones, 0, sizeof((*np).zones));
+        memset((*np).fixed_payments, 0, sizeof((*np).fixed_payments));
+        (*np).active_zones_count = 0;
+        (*np).fixed_payments_count = 0;
     }
 
     // === Parse basic plan information ===
@@ -3990,28 +4002,28 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
     // Plan name
     item = cJSON_GetObjectItem(plan, "plan_name");
     if (item && cJSON_IsString(item)) {
-        strncpy(g_current_tariff_plan.plan_name, item->valuestring,
+        strncpy((*np).plan_name, item->valuestring,
                 RBPOWER_TARIFF_NAME_LENGTH - 1);
     }
 
     // Provider name
     item = cJSON_GetObjectItem(plan, "provider_name");
     if (item && cJSON_IsString(item)) {
-        strncpy(g_current_tariff_plan.provider_name, item->valuestring,
+        strncpy((*np).provider_name, item->valuestring,
                 RBPOWER_TARIFF_NAME_LENGTH - 1);
     }
 
     // Description
     item = cJSON_GetObjectItem(plan, "description");
     if (item && cJSON_IsString(item)) {
-        strncpy(g_current_tariff_plan.description, item->valuestring,
+        strncpy((*np).description, item->valuestring,
                 RBPOWER_TARIFF_DESCRIPTION_LENGTH - 1);
     }
 
     // Active zones count
     item = cJSON_GetObjectItem(plan, "active_zones_count");
     if (item && cJSON_IsNumber(item)) {
-        g_current_tariff_plan.active_zones_count = (uint8_t)item->valueint;
+        (*np).active_zones_count = (uint8_t)item->valueint;
     }
 
     // Default zone ID
@@ -4020,7 +4032,7 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
         // Convert string to enum
         for (int i = 0; i < RBPOWER_TARIFF_ZONE_COUNT; i++) {
             if (strcmp(item->valuestring, rbpower_tariff_zone_type_text[i]) == 0) {
-                g_current_tariff_plan.default_zone_id = (rbpower_tariff_zone_type_t)i;
+                (*np).default_zone_id = (rbpower_tariff_zone_type_t)i;
                 break;
             }
         }
@@ -4029,38 +4041,38 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
     // Currency code
     item = cJSON_GetObjectItem(plan, "currency_code");
     if (item && cJSON_IsString(item)) {
-        strncpy(g_current_tariff_plan.currency_code, item->valuestring,
+        strncpy((*np).currency_code, item->valuestring,
                 RBPOWER_TARIFF_CURRENCY_LENGTH - 1);
     }
 
     // VAT percent
     item = cJSON_GetObjectItem(plan, "vat_percent");
     if (item && cJSON_IsNumber(item)) {
-        g_current_tariff_plan.vat_percent = (float)item->valuedouble;
+        (*np).vat_percent = (float)item->valuedouble;
     }
 
     // Energy tax per kWh
     item = cJSON_GetObjectItem(plan, "energy_tax_per_kwh");
     if (item && cJSON_IsNumber(item)) {
-        g_current_tariff_plan.energy_tax_per_kwh = (float)item->valuedouble;
+        (*np).energy_tax_per_kwh = (float)item->valuedouble;
     }
 
     // Grid usage fee per kWh
     item = cJSON_GetObjectItem(plan, "grid_usage_fee_per_kwh");
     if (item && cJSON_IsNumber(item)) {
-        g_current_tariff_plan.grid_usage_fee_per_kwh = (float)item->valuedouble;
+        (*np).grid_usage_fee_per_kwh = (float)item->valuedouble;
     }
 
     // Renewable levy per kWh
     item = cJSON_GetObjectItem(plan, "renewable_levy_per_kwh");
     if (item && cJSON_IsNumber(item)) {
-        g_current_tariff_plan.renewable_levy_per_kwh = (float)item->valuedouble;
+        (*np).renewable_levy_per_kwh = (float)item->valuedouble;
     }
 
     // === Parse net metering settings ===
     item = cJSON_GetObjectItem(plan, "net_metering_enabled");
     if (item && cJSON_IsBool(item)) {
-        g_current_tariff_plan.net_metering_enabled = cJSON_IsTrue(item);
+        (*np).net_metering_enabled = cJSON_IsTrue(item);
     }
 
     float default_selling_rate = 0;
@@ -4071,29 +4083,29 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
 
     item = cJSON_GetObjectItem(plan, "net_metering_default_ratio");
     if (item && cJSON_IsNumber(item)) {
-        g_current_tariff_plan.net_metering_default_ratio = (float)item->valuedouble;
+        (*np).net_metering_default_ratio = (float)item->valuedouble;
     }
 
     item = cJSON_GetObjectItem(plan, "net_metering_period");
     if (item && cJSON_IsString(item)) {
         if (strcmp(item->valuestring, "DAILY") == 0) {
-            g_current_tariff_plan.net_metering_period = RBPOWER_STAT_PERIOD_DAILY;
+            (*np).net_metering_period = RBPOWER_STAT_PERIOD_DAILY;
         } else if (strcmp(item->valuestring, "MONTHLY") == 0) {
-            g_current_tariff_plan.net_metering_period = RBPOWER_STAT_PERIOD_MONTHLY;
+            (*np).net_metering_period = RBPOWER_STAT_PERIOD_MONTHLY;
         } else if (strcmp(item->valuestring, "YEARLY") == 0) {
-            g_current_tariff_plan.net_metering_period = RBPOWER_STAT_PERIOD_YEARLY;
+            (*np).net_metering_period = RBPOWER_STAT_PERIOD_YEARLY;
         }
     }
 
     // Active/default flags
     item = cJSON_GetObjectItem(plan, "is_active");
     if (item && cJSON_IsBool(item)) {
-        g_current_tariff_plan.is_active = cJSON_IsTrue(item);
+        (*np).is_active = cJSON_IsTrue(item);
     }
 
     item = cJSON_GetObjectItem(plan, "is_default");
     if (item && cJSON_IsBool(item)) {
-        g_current_tariff_plan.is_default = cJSON_IsTrue(item);
+        (*np).is_default = cJSON_IsTrue(item);
     }
 
     // Plan-level fields the UI round-trips (present → override; absent →
@@ -4102,37 +4114,37 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
     if (item && cJSON_IsString(item)) {
         for (int i = 0; i <= (int)RBPOWER_TARIFF_PLAN_CUSTOM; i++) {
             if (strcmp(item->valuestring, rbpower_tariff_plan_type_text[i]) == 0) {
-                g_current_tariff_plan.plan_type = (rbpower_tariff_plan_type_t)i; break;
+                (*np).plan_type = (rbpower_tariff_plan_type_t)i; break;
             }
         }
     }
     item = cJSON_GetObjectItem(plan, "region_code");
     if (item && cJSON_IsString(item)) {
-        strncpy(g_current_tariff_plan.region_code, item->valuestring, sizeof(g_current_tariff_plan.region_code) - 1);
-        g_current_tariff_plan.region_code[sizeof(g_current_tariff_plan.region_code) - 1] = '\0';
+        strncpy((*np).region_code, item->valuestring, sizeof((*np).region_code) - 1);
+        (*np).region_code[sizeof((*np).region_code) - 1] = '\0';
     }
     item = cJSON_GetObjectItem(plan, "carry_over_credits");
-    if (item && cJSON_IsBool(item)) g_current_tariff_plan.carry_over_credits = cJSON_IsTrue(item);
+    if (item && cJSON_IsBool(item)) (*np).carry_over_credits = cJSON_IsTrue(item);
     item = cJSON_GetObjectItem(plan, "max_credit_carry_over_kwh");
-    if (item && cJSON_IsNumber(item)) g_current_tariff_plan.max_credit_carry_over_kwh = (float)item->valuedouble;
+    if (item && cJSON_IsNumber(item)) (*np).max_credit_carry_over_kwh = (float)item->valuedouble;
     item = cJSON_GetObjectItem(plan, "supported_features");
-    if (item && cJSON_IsNumber(item)) g_current_tariff_plan.supported_features = (uint32_t)item->valuedouble;
+    if (item && cJSON_IsNumber(item)) (*np).supported_features = (uint32_t)item->valuedouble;
     item = cJSON_GetObjectItem(plan, "enable_load_shifting_recommendations");
-    if (item && cJSON_IsBool(item)) g_current_tariff_plan.enable_load_shifting_recommendations = cJSON_IsTrue(item);
+    if (item && cJSON_IsBool(item)) (*np).enable_load_shifting_recommendations = cJSON_IsTrue(item);
     item = cJSON_GetObjectItem(plan, "load_shifting_threshold_percent");
-    if (item && cJSON_IsNumber(item)) g_current_tariff_plan.load_shifting_threshold_percent = (float)item->valuedouble;
+    if (item && cJSON_IsNumber(item)) (*np).load_shifting_threshold_percent = (float)item->valuedouble;
     item = cJSON_GetObjectItem(plan, "valid_from_timestamp");
-    if (item && cJSON_IsNumber(item)) g_current_tariff_plan.valid_from_timestamp = (uint64_t)item->valuedouble;
+    if (item && cJSON_IsNumber(item)) (*np).valid_from_timestamp = (uint64_t)item->valuedouble;
     item = cJSON_GetObjectItem(plan, "valid_until_timestamp");
-    if (item && cJSON_IsNumber(item)) g_current_tariff_plan.valid_until_timestamp = (uint64_t)item->valuedouble;
+    if (item && cJSON_IsNumber(item)) (*np).valid_until_timestamp = (uint64_t)item->valuedouble;
     item = cJSON_GetObjectItem(plan, "plan_version");
-    if (item && cJSON_IsNumber(item)) g_current_tariff_plan.plan_version = (uint32_t)item->valuedouble;
+    if (item && cJSON_IsNumber(item)) (*np).plan_version = (uint32_t)item->valuedouble;
     {   /* audit trail: modified = now (if the clock is valid), created kept (seeded on first save) */
         time_t now = time(NULL);
         uint64_t ts = (now > 1600000000) ? (uint64_t)now : 0;
         if (ts) {
-            g_current_tariff_plan.last_modified_timestamp = ts;
-            if (g_current_tariff_plan.created_timestamp == 0) g_current_tariff_plan.created_timestamp = ts;
+            (*np).last_modified_timestamp = ts;
+            if ((*np).created_timestamp == 0) (*np).created_timestamp = ts;
         }
     }
 
@@ -4148,7 +4160,7 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
                 break;
             }
 
-            rbpower_tariff_zone_t* tariff_zone = &g_current_tariff_plan.zones[zone_index];
+            rbpower_tariff_zone_t* tariff_zone = &(*np).zones[zone_index];
 
             // Pre-fill from the current plan's zone with the same zone_id, so the fields this
             // parser doesn't read (description, limits, condition priorities) survive a partial POST.
@@ -4216,18 +4228,18 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
             if (sell_explicit)  tariff_zone->rate_selling_per_kwh = (float)sell_j->valuedouble;
             if (ratio_explicit) tariff_zone->net_metering_ratio   = (float)ratio_j->valuedouble;
             // Calculate selling rate based on net metering settings
-            if (g_current_tariff_plan.net_metering_enabled) {
+            if ((*np).net_metering_enabled) {
                 if (!sell_explicit) {
-                    if (g_current_tariff_plan.net_metering_default_ratio > 0) {
+                    if ((*np).net_metering_default_ratio > 0) {
                         // Use ratio to calculate selling rate
                         tariff_zone->rate_selling_per_kwh =
-                            tariff_zone->rate_buying_per_kwh * g_current_tariff_plan.net_metering_default_ratio;
+                            tariff_zone->rate_buying_per_kwh * (*np).net_metering_default_ratio;
                     } else if (default_selling_rate > 0) {
                         // Use fixed selling rate
                         tariff_zone->rate_selling_per_kwh = default_selling_rate;
                     }
                 }
-                if (!ratio_explicit) tariff_zone->net_metering_ratio = g_current_tariff_plan.net_metering_default_ratio;
+                if (!ratio_explicit) tariff_zone->net_metering_ratio = (*np).net_metering_default_ratio;
             }
 
             // Set default multipliers
@@ -4341,7 +4353,7 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
         }
 
         // Update actual zones count
-        g_current_tariff_plan.active_zones_count = zone_index;
+        (*np).active_zones_count = zone_index;
     }
 
     // === Parse fixed payments ===
@@ -4357,7 +4369,7 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
             }
 
             rbpower_tariff_fixed_payment_t* fixed_payment =
-                &g_current_tariff_plan.fixed_payments[payment_index];
+                &(*np).fixed_payments[payment_index];
 
             // Payment type
             item = cJSON_GetObjectItem(payment, "payment_type");
@@ -4401,11 +4413,28 @@ rbgrid_json_err_t rbgrid_json_parse_tariff_plan_config(const char* json_str)
             payment_index++;
         }
 
-        g_current_tariff_plan.fixed_payments_count = payment_index;
+        (*np).fixed_payments_count = payment_index;
     }
 
     cJSON_Delete(root);
     if (prev_plan) free(prev_plan);
+
+    /* Validate the counts the zone/condition/payment walkers trust: a POST or MQTT SET carrying
+     * active_zones_count without (enough) zones used to read past zones[]. */
+    bool bad = np->active_zones_count > RBPOWER_TARIFF_ZONE_COUNT || np->fixed_payments_count > 8;
+    for (uint8_t z = 0; !bad && z < np->active_zones_count; z++)
+        if (np->zones[z].conditions_count > 4) bad = true;
+    if (bad) {
+        ESP_LOGE(TAG, "tariff plan rejected: zones=%u payments=%u out of range",
+                 (unsigned)np->active_zones_count, (unsigned)np->fixed_payments_count);
+        free(np);
+        return RBGRID_JSON_ERR_INVALID_CONFIG;
+    }
+    rbpower_home_lock();
+    g_current_tariff_plan = *np;
+    rbpower_tariff_invalidate_zone_cache();   /* next lookup resolves the zone from the new plan */
+    rbpower_home_unlock();
+    free(np);
 
     ESP_LOGI(TAG, "Tariff plan parsed successfully:");
     ESP_LOGI(TAG, "  - Plan: %s", g_current_tariff_plan.plan_name);

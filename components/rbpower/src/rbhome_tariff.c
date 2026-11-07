@@ -2196,6 +2196,12 @@ static esp_err_t update_active_zone_cache(void)
     return ESP_OK;
 }
 
+/* A new plan was published: the next lookup resolves the zone again (caller holds the home lock). */
+void rbpower_tariff_invalidate_zone_cache(void)
+{
+    g_active_zone_cache.zone_cache_valid = false;
+}
+
 /* Current active tariff zone from the cache (refreshed when older than 60 s). */
 rbpower_err_t rbpower_tariff_get_current_zone(rbpower_tariff_zone_type_t* zone_id,
                                              char* zone_name,
@@ -2323,6 +2329,15 @@ bool rbpower_tariff_zone_recently_changed(uint32_t seconds_threshold)
 //=============================================================================
 
 /* Current buying rate (currency/kWh) from the zone cache; 0.15 when the tariff system is not ready. */
+/* Zone the per-zone attribution in rbpower_update_economics_direct() uses for the call in progress (the injected
+ * quarter's own zone); -1 = the cache's current zone. Set and cleared inside one call, under the home lock. */
+static int s_cost_zone_override = -1;
+static inline rbpower_tariff_zone_type_t cost_zone(void)
+{
+    return s_cost_zone_override >= 0 ? (rbpower_tariff_zone_type_t)s_cost_zone_override
+                                     : g_active_zone_cache.current_zone_id;
+}
+
 float rbpower_get_current_tariff_rate_simple(void) {
     if (!g_tariff_system_initialized || !g_tariff_system_enabled || !g_current_tariff_plan.is_active) {
         // Log only on first call to avoid spam
@@ -2391,7 +2406,7 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
         lifetime_cost_add(unit_id, cost, 0.0);          /* system/unit cost_day / cost_total */
         // Real per-zone cost distribution (replaces the faked single-zone split in reports):
         // attribute this all-in consumption cost to whichever zone is active right now.
-        rbpower_tariff_zone_type_t z = g_active_zone_cache.current_zone_id;
+        rbpower_tariff_zone_type_t z = cost_zone();
         if (z < RBPOWER_TARIFF_ZONE_COUNT && unit_id < RBPOWER_MAX_HOME_UNITS) {
             g_unit_direct_costs[unit_id].device_analytics.cost_distribution_by_zone[z] += (float)cost;
         }
@@ -2403,7 +2418,7 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
         lifetime_cost_add(unit_id, 0.0, revenue);        /* system/unit rev_day / rev_total */
         // Per-zone feed-in REVENUE distribution (symmetric to cost_distribution_by_zone) — the "energy
         // return statistics": how much was earned exporting in each tariff zone.
-        rbpower_tariff_zone_type_t z = g_active_zone_cache.current_zone_id;
+        rbpower_tariff_zone_type_t z = cost_zone();
         if (z < RBPOWER_TARIFF_ZONE_COUNT && unit_id < RBPOWER_MAX_HOME_UNITS) {
             g_unit_direct_costs[unit_id].device_analytics.revenue_distribution_by_zone[z] += (float)revenue;
         }
@@ -2455,43 +2470,44 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
  * passes unit_index, and the g_unit_direct_costs/g_net_metering tables downstream are index-keyed
  * (the read side, get_zone_stats, resolves via find_unit_index_by_id to the same space). */
 void rbpower_tariff_cost_injected_period(rbpower_unit_id_t unit_id, float energy_wh,
-                                         rbgrid_snapshot_base_t* result_base) {
+                                         rbgrid_snapshot_base_t* result_base, uint32_t q_end_ts) {
     if (!result_base) {
         return;
     }
-    /* The quarter is injected just AFTER it ends: resolving the zone for "now" priced the quarter that ends at a
-     * zone boundary (06:45–07:00, injected 07:00:0x) at the NEXT zone's rate, and attributed it to that zone
-     * (cost, per-zone split, net metering) — 2–4 of 96 quarters a day under TOU.
-     * Price at the quarter's midpoint. The `tarifftime` test override freezes the instant — no shift then. */
+    /* Price the quarter at the zone of ITS OWN midpoint: q_end_ts is the boundary the quarter was collected for.
+     * "now − 450 s" priced a late collect (a slow bus, a boot just after a zone boundary) at the zone in force
+     * when it was processed. q_end_ts 0 (unknown) keeps the old estimate. The `tarifftime` test override
+     * freezes the instant — no shift then. Energy folded in from a reboot gap rides with this quarter. */
     rbpower_tariff_zone_t* mid_zone = NULL;
     if (g_tariff_test_time_override_s < 0 && g_tariff_system_initialized && g_tariff_system_enabled &&
         g_current_tariff_plan.is_active) {
         struct tm tm_now; uint64_t ts_now = 0;
         memset(&tm_now, 0, sizeof(tm_now));
         get_current_local_time(&tm_now, &ts_now);
-        if (ts_now > 450) {
-            time_t mid = (time_t)(ts_now - 450);
+        uint64_t end = (q_end_ts > 450) ? (uint64_t)q_end_ts : ts_now;
+        if (end > 450) {
+            time_t mid = (time_t)(end - 450);
             struct tm tm_mid;
             if (localtime_r(&mid, &tm_mid)) mid_zone = find_active_tariff_zone(&tm_mid);
         }
         if (tariff_clock_unset()) mid_zone = find_default_tariff_zone();   /* no real time → default zone */
     }
     rbpower_tariff_update_zone_cache();                          // resolve the active zone for "now"
-    rbpower_tariff_zone_type_t saved_id = g_active_zone_cache.current_zone_id;
-    float saved_buy = g_active_zone_cache.current_buying_rate, saved_sell = g_active_zone_cache.current_selling_rate;
-    if (mid_zone && g_active_zone_cache.zone_cache_valid) {      /* costing + per-zone attribution read the cache */
-        g_active_zone_cache.current_zone_id = mid_zone->zone_id;
-        g_active_zone_cache.current_buying_rate = mid_zone->rate_buying_per_kwh;
-        g_active_zone_cache.current_selling_rate = mid_zone->rate_selling_per_kwh;
+    float buying, selling;
+    if (mid_zone && g_active_zone_cache.zone_cache_valid) {
+        /* The quarter's zone is passed down instead of being written into the shared cache for the duration
+         * of the call (other tasks read that cache: telemetry, the zone getters). */
+        buying  = mid_zone->rate_buying_per_kwh;
+        selling = mid_zone->rate_selling_per_kwh;
+        s_cost_zone_override = (int)mid_zone->zone_id;
+    } else {
+        buying  = rbpower_get_current_tariff_rate_simple();      // zone-aware cached buying rate
+        selling = g_active_zone_cache.current_selling_rate;      // zone-aware selling / feed-in rate
     }
-    float buying  = rbpower_get_current_tariff_rate_simple();    // zone-aware cached buying rate
-    float selling = g_active_zone_cache.current_selling_rate;    // zone-aware selling / feed-in rate
     if (buying  < 0.0f) buying  = 0.0f;
     if (selling < 0.0f) selling = 0.0f;
     rbpower_update_economics_direct(unit_id, energy_wh / 1000.0f, buying, selling, result_base);
-    g_active_zone_cache.current_zone_id = saved_id;              /* the cache keeps describing "now" */
-    g_active_zone_cache.current_buying_rate = saved_buy;
-    g_active_zone_cache.current_selling_rate = saved_sell;
+    s_cost_zone_override = -1;
 }
 
 /* Diagnostic snapshot of the tariff state for the `tariffdiag` verb (rbbench_reply, since ESP_LOG

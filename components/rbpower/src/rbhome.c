@@ -3852,13 +3852,13 @@ rbpower_err_t rbpower_home_inject_period_result(rbpower_unit_id_t unit_id,
          * economics (cost_consumed/revenue_supplied) propagate up the hierarchy. The 3-sec finalize
          * path does its own costing; the inject path bypasses it, so without this the economics are 0.
          * Zone-aware buying/selling rate applied at the inject instant. */
-        rbpower_tariff_cost_injected_period(unit_index, energy_wh, &ps->result_base);
+        uint32_t q_end = s_next_qend[unit_index];   /* the boundary this quarter was collected for (0 = unknown) */
+        s_next_qend[unit_index] = 0;
+        rbpower_tariff_cost_injected_period(unit_index, energy_wh, &ps->result_base, q_end);
 
         /* The unit's period accumulators are enabled per its configured depth (stat_class) at creation
          * time in rbpower_home_create_unit — no force-enable needed here. should_aggregate_to_period()
          * inside the rollup now correctly reflects the configured depth. */
-        uint32_t q_end = s_next_qend[unit_index];   /* the boundary this quarter was collected for (0 = unknown) */
-        s_next_qend[unit_index] = 0;
         rbpower_rollup_after_15min_at(unit_index, ps, q_end);
     }
 

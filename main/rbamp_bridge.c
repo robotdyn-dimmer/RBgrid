@@ -3277,16 +3277,15 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
             }
         }
     }
-    /* Persist the counter reading that corresponds to this consumed period read (the next anchor). */
+    /* Read the counter that corresponds to this consumed period read — the next anchor. It is persisted only
+     * AFTER the quarter was injected (below): moving the anchor first lost the quarter whenever the inject
+     * didn't happen (no usable entry / NaN window), because the next reboot gap then started past it. */
+    rbamp_std_energy_t enow;
+    esp_err_t ee;
     {
-        rbamp_std_energy_t enow;
         bus_take();
-        esp_err_t ee = br_read_energy(module, &enow);
+        ee = br_read_energy(module, &enow);
         bus_give();
-        /* force: this quarter WAS injected, so the anchor must move even without a wall clock (ts 0 = the next
-         * reboot gap is not creditable). Keeping the older anchor while quarters were injected would make the
-         * next tail re-count all of them (no-NTP boot running for hours, then a reboot). */
-        if (ee == ESP_OK) anchor_write(module, &enow, true);
         hourq_restore(module);
         srcid_check(module, "at quarter");
         if (rbpower_diag_enabled()) {                      /* quarter line: counters vs integral vs tail */
@@ -3305,7 +3304,7 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
             else snprintf(dv, sizeof(dv), "%+.2f%%", dev);
             rbpower_diag_printf("%sQTR m%u dt=%lums cnt=%+.3fWh int=%+.3fWh dev=%s tail=%.3fWh gap=%lus anchor=%s",
                                 bad ? "FAIL " : "", module, (unsigned long)snap.master_dt_ms, qcnt, integ, dv,
-                                tail, (unsigned long)tail_gap_s, ee == ESP_OK ? "saved" : esp_err_to_name(ee));
+                                tail, (unsigned long)tail_gap_s, ee == ESP_OK ? "read" : esp_err_to_name(ee));
             if (ee == ESP_OK) diag_ref_reset(module, &enow);
             else if (s_line[module] == 0) { s_diag_int_wh[module] = 0.0; s_diag_ref_us[module] = esp_timer_get_time(); s_diag_holes[module] = 0; }   /* BASIC: no counters → restart the integral per quarter (it ran on forever) */
         }
@@ -3400,6 +3399,18 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
                  module, ch, (unsigned)en->unit_id, (double)avg_p, (double)max_p,
                  (double)wh, (unsigned long)dt_ms,
                  ierr == RBPOWER_OK ? "ok" : "inject-fail");
+    }
+    /* Move the anchor now that the quarter is in. force: even without a wall clock (ts 0 = the next reboot gap is
+     * not creditable) — keeping an older anchor while quarters were injected would make the next tail re-count
+     * all of them. A quarter that injected nothing although the module has energy points keeps the old anchor,
+     * so the next reboot gap still covers it. */
+    if (ee == ESP_OK) {
+        uint8_t candidates = 0;
+        for (uint8_t e = 0; e < mc->entry_count; ++e)
+            if (mc->entries[e].source != RBAMP_ENTRY_VOLTAGE && mc->entries[e].unit_id != 0) candidates++;
+        if (injected > 0 || candidates == 0) anchor_write(module, &enow, true);
+        else rbpower_diag_printf("FAIL m%u quarter not injected (%u energy point(s)) — anchor kept for the next gap",
+                                 module, (unsigned)candidates);
     }
     ESP_LOGI(TAG, "module %u period collect: %u unit(s) injected (valid=%d)",
              module, injected, (int)snap.valid);

@@ -3448,7 +3448,8 @@ esp_err_t rbwebserver_api_backup_handler(httpd_req_t *req)
         if (!rbapi_require_auth(req)) return ESP_FAIL;
         int n = rbgrid_storage_backup_all();
         httpd_resp_set_type(req, "application/json");
-        char out[80]; snprintf(out, sizeof(out), "{\"status\":\"%s\",\"files_backed_up\":%d}", n > 0 ? "OK" : "ERROR", n);
+        if (n <= 0) httpd_resp_set_status(req, "500 Internal Server Error");   /* any failed copy = no restore point */
+        char out[96]; snprintf(out, sizeof(out), "{\"status\":\"%s\",\"files_backed_up\":%d}", n > 0 ? "OK" : "ERROR", n > 0 ? n : 0);
         httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
         return ESP_OK;
     }
@@ -3470,8 +3471,18 @@ esp_err_t rbwebserver_api_restore_handler(httpd_req_t *req)
         return ESP_OK;
     }
     int n = rbgrid_storage_restore_all();
+    if (n == -2) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_send(req, "{\"status\":\"ERROR\",\"error_code\":\"BACKUP_INCOMPLETE\",\"message\":\"The restore point is incomplete (a save failed part-way). Nothing was changed; save a new restore point.\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+    if (n <= 0) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_send(req, "{\"status\":\"ERROR\",\"error_code\":\"RESTORE_FAILED\",\"message\":\"Restoring failed; the settings in use before were put back. No restart needed.\"}", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
     char out[96];
-    snprintf(out, sizeof(out), "{\"status\":\"%s\",\"files_restored\":%d,\"requires_reboot\":true}", n > 0 ? "OK" : "ERROR", n);
+    snprintf(out, sizeof(out), "{\"status\":\"OK\",\"files_restored\":%d,\"requires_reboot\":true}", n);
     httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
