@@ -33,6 +33,8 @@ enum {
     RBN_MSG_NODE_STATS    = 0x05,  ///< node->hub: link/sync health (so a no-COM node can be read via the hub)
     RBN_MSG_PAIR_REQ      = 0x10,  ///< node->hub: pairing request (rbn_pair_req_t)
     RBN_MSG_PAIR_ACK      = 0x11,  ///< hub->node: pairing result (rbn_pair_ack_t)
+    RBN_MSG_PAIR_REQ2     = 0x12,  ///< node->hub: key-exchange pairing request (rbn_pair_req2_t)
+    RBN_MSG_PAIR_ACK2     = 0x13,  ///< hub->node: pairing result + the installation PMK, wrapped (rbn_pair_ack2_t)
     RBN_MSG_TIME_REQ      = 0x20,  ///< node->hub: wall-clock request (rbn_time_req_t)
     RBN_MSG_TIME_RESP     = 0x21,  ///< hub->node: wall-clock response (rbn_time_resp_t)
     RBN_MSG_SYNC_BEACON   = 0x22,  ///< hub->broadcast: sync beacon (rbn_sync_beacon_t)
@@ -119,6 +121,31 @@ typedef struct __attribute__((packed)) {
     rbn_hdr_t h;             ///< common header
     uint8_t   accepted;      ///< 1 = registered, 0 = rejected (registry full or write error)
 } rbn_pair_ack_t;
+
+/** @brief 0x12 PAIR_REQ2 (node->hub, broadcast while it holds no PMK): per-installation keys.
+ * The node sends a fresh X25519 public key with its identity and channels. Inside its pairing window the hub
+ * answers PAIR_ACK2 with its own public key and the installation PMK, encrypted (AES-CCM) under a key derived
+ * from the X25519 shared secret. Nothing secret is on the air, and no key is built into either firmware.
+ * Wire layout: [hdr][fw_ver][node_pub(32)][chan_count][chans × chan_count]. */
+typedef struct __attribute__((packed)) {
+    rbn_hdr_t       h;            ///< common header
+    uint16_t        fw_ver;       ///< node firmware version
+    uint8_t         node_pub[32]; ///< node X25519 public key (fresh per pairing attempt)
+    uint8_t         chan_count;   ///< number of entries in chans[]
+    rbn_pair_chan_t chans[];      ///< chan_count × {node flat channel_id, ct_code}
+} rbn_pair_req2_t;
+
+/** @brief 0x13 PAIR_ACK2 (hub->broadcast, for node_mac): accepted + hub X25519 public key + the 16-byte PMK
+ * encrypted with AES-128-CCM (key = HMAC-SHA256(shared, "rbgrid-pmk-v1")[0..15], nonce = node_mac ‖ hdr.seq ‖ 0…,
+ * AAD = node_mac, 16-byte tag). */
+typedef struct __attribute__((packed)) {
+    rbn_hdr_t h;              ///< common header
+    uint8_t   node_mac[6];    ///< the node this answers
+    uint8_t   accepted;       ///< 1 = registered (enc_pmk valid), 0 = rejected
+    uint8_t   hub_pub[32];    ///< hub X25519 public key
+    uint8_t   enc_pmk[16];    ///< PMK, AES-CCM ciphertext
+    uint8_t   tag[16];        ///< AES-CCM tag
+} rbn_pair_ack2_t;
 
 /** @brief 0x20 TIME_REQ (node->hub): request the hub's wall-clock. body = req_token (echoed back for RTT). */
 typedef struct __attribute__((packed)) {

@@ -64,12 +64,18 @@ static inline void rbn_hmac_sha256(const uint8_t *key, size_t key_len,
  * @param[in]  mac      Node MAC address (6 bytes).
  * @param[out] out_lmk  16-byte LMK.
  */
-static inline void rbn_derive_lmk(const uint8_t mac[6], uint8_t out_lmk[RBN_KEY_LEN])
+/** @brief Per-node link key LMK = HMAC-SHA256(PMK, node MAC)[0..15], from the installation PMK in use. */
+static inline void rbn_derive_lmk_from(const uint8_t pmk[RBN_KEY_LEN], const uint8_t mac[6], uint8_t out_lmk[RBN_KEY_LEN])
 {
-    static const uint8_t pmk[RBN_KEY_LEN] = RBN_PMK16;
     uint8_t full[32];
     rbn_hmac_sha256(pmk, RBN_KEY_LEN, mac, 6, full);
     memcpy(out_lmk, full, RBN_KEY_LEN);
+}
+/** @brief LMK from the compile-time dev PMK (dev builds only; kept for the legacy pairing path). */
+static inline void rbn_derive_lmk(const uint8_t mac[6], uint8_t out_lmk[RBN_KEY_LEN])
+{
+    static const uint8_t pmk[RBN_KEY_LEN] = RBN_PMK16;
+    rbn_derive_lmk_from(pmk, mac, out_lmk);
 }
 
 /**
@@ -99,6 +105,82 @@ static inline int rbn_tag_equal(const uint8_t *a, const uint8_t *b)
     uint8_t diff = 0;
     for (int i = 0; i < RBN_TAG_LEN; i++) diff |= (uint8_t)(a[i] ^ b[i]);
     return diff == 0;
+}
+
+/* ===== Per-installation keys (PAIR_REQ2 / PAIR_ACK2) ===== */
+#include "mbedtls/ecdh.h"
+#include "mbedtls/ccm.h"
+#include "esp_random.h"
+
+static inline int rbn_rng(void *ctx, unsigned char *buf, size_t len) { (void)ctx; esp_fill_random(buf, len); return 0; }
+
+/** @brief Fresh X25519 key pair: priv (32, little-endian scalar) and pub (32). Returns 0 on success. */
+static inline int rbn_x25519_keypair(uint8_t priv[32], uint8_t pub[32])
+{
+    mbedtls_ecp_group grp; mbedtls_mpi d; mbedtls_ecp_point Q; size_t ol = 0; int r;
+    mbedtls_ecp_group_init(&grp); mbedtls_mpi_init(&d); mbedtls_ecp_point_init(&Q);
+    r = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
+    if (!r) r = mbedtls_ecdh_gen_public(&grp, &d, &Q, rbn_rng, NULL);
+    if (!r) r = mbedtls_mpi_write_binary_le(&d, priv, 32);
+    if (!r) r = mbedtls_ecp_point_write_binary(&grp, &Q, MBEDTLS_ECP_PF_UNCOMPRESSED, &ol, pub, 32);
+    mbedtls_ecp_group_free(&grp); mbedtls_mpi_free(&d); mbedtls_ecp_point_free(&Q);
+    return (r || ol != 32) ? -1 : 0;
+}
+
+/** @brief X25519 shared secret (32) from our priv and the peer's pub. Returns 0 on success. */
+static inline int rbn_x25519_shared(const uint8_t priv[32], const uint8_t peer_pub[32], uint8_t shared[32])
+{
+    mbedtls_ecp_group grp; mbedtls_mpi d, z; mbedtls_ecp_point Qp; int r;
+    mbedtls_ecp_group_init(&grp); mbedtls_mpi_init(&d); mbedtls_mpi_init(&z); mbedtls_ecp_point_init(&Qp);
+    r = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
+    if (!r) r = mbedtls_mpi_read_binary_le(&d, priv, 32);
+    if (!r) r = mbedtls_ecp_point_read_binary(&grp, &Qp, peer_pub, 32);
+    if (!r) r = mbedtls_ecdh_compute_shared(&grp, &z, &Qp, &d, rbn_rng, NULL);
+    if (!r) r = mbedtls_mpi_write_binary_le(&z, shared, 32);
+    mbedtls_ecp_group_free(&grp); mbedtls_mpi_free(&d); mbedtls_mpi_free(&z); mbedtls_ecp_point_free(&Qp);
+    return r ? -1 : 0;
+}
+
+static inline void rbn_wrap_key(const uint8_t shared[32], uint8_t key[16])
+{
+    static const char info[] = "rbgrid-pmk-v1";
+    uint8_t full[32];
+    rbn_hmac_sha256(shared, 32, (const uint8_t *)info, sizeof(info) - 1, full);
+    memcpy(key, full, 16);
+}
+static inline void rbn_wrap_nonce(const uint8_t node_mac[6], uint32_t seq, uint8_t nonce[13])
+{
+    memset(nonce, 0, 13);
+    memcpy(nonce, node_mac, 6);
+    memcpy(nonce + 6, &seq, 4);
+}
+
+/** @brief Hub: encrypt the PMK for one node. Returns 0 on success. */
+static inline int rbn_pmk_wrap(const uint8_t shared[32], const uint8_t node_mac[6], uint32_t seq,
+                               const uint8_t pmk[16], uint8_t enc[16], uint8_t tag[16])
+{
+    uint8_t k[16], n[13]; mbedtls_ccm_context c; int r;
+    rbn_wrap_key(shared, k); rbn_wrap_nonce(node_mac, seq, n);
+    mbedtls_ccm_init(&c);
+    r = mbedtls_ccm_setkey(&c, MBEDTLS_CIPHER_ID_AES, k, 128);
+    if (!r) r = mbedtls_ccm_encrypt_and_tag(&c, 16, n, 13, node_mac, 6, pmk, enc, tag, 16);
+    mbedtls_ccm_free(&c);
+    memset(k, 0, sizeof(k));
+    return r ? -1 : 0;
+}
+
+/** @brief Node: decrypt + authenticate the PMK. Returns 0 when the tag verifies. */
+static inline int rbn_pmk_unwrap(const uint8_t shared[32], const uint8_t node_mac[6], uint32_t seq,
+                                 const uint8_t enc[16], const uint8_t tag[16], uint8_t pmk[16])
+{
+    uint8_t k[16], n[13]; mbedtls_ccm_context c; int r;
+    rbn_wrap_key(shared, k); rbn_wrap_nonce(node_mac, seq, n);
+    mbedtls_ccm_init(&c);
+    r = mbedtls_ccm_setkey(&c, MBEDTLS_CIPHER_ID_AES, k, 128);
+    if (!r) r = mbedtls_ccm_auth_decrypt(&c, 16, n, 13, node_mac, 6, enc, pmk, tag, 16);
+    mbedtls_ccm_free(&c);
+    memset(k, 0, sizeof(k));
+    return r ? -1 : 0;
 }
 
 #endif /* RBGRID_ESPNOW_CRYPTO_H */

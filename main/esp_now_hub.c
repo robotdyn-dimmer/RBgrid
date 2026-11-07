@@ -119,6 +119,7 @@ typedef struct {
     int64_t  last_rt_us, last_stats_us;
     float    resid_sd, resid_maxabs, skew_ppm;
     uint32_t fits, beacons_recv, max_beacon_id;   /* loss% = (max_id - beacons_recv)/max_id */
+    int8_t   rssi;                                 /* dBm of the last REALTIME frame (0 = none yet) */
 } enh_node_t;
 /** @var enh_node_t::used
  *  Slot in use.  @var enh_node_t::online
@@ -155,6 +156,7 @@ static bool enh_node_is_disabled(const uint8_t *mac)
 /* forward decls (used in beacon_task, defined later near the other MQTT/HA helpers) */
 static void espnow_publish_ha_node(const uint8_t mac[6], bool remove);
 static void espnow_publish_status(const uint8_t mac[6], bool online);
+static void espnow_publish_event(const char *ev, const uint8_t mac[6]);
 
 /* Pending node PERIOD frames (queued whole in the recv cb, injected by the inject task, ACKed only AFTER the
  * inject). The node holds a frame until its PERIOD_ACK and resends the SAME frame (same h.seq + h.node_ts)
@@ -246,6 +248,8 @@ static volatile bool s_pending_pair = false;
 static uint8_t  s_pending_pair_mac[6];
 static espnow_reg_chan_t s_pending_pair_ch[ESPNOW_REG_MAX_CH];
 static uint8_t  s_pending_pair_n = 0;
+static bool     s_pending_pair_v2 = false;       /* PAIR_REQ2 (key exchange) */
+static uint8_t  s_pending_node_pub[32];
 /* Tariff-zone watch for auto LATCH_NOW (poll in beacon_task; throttled to ~every 3s). */
 static rbpower_tariff_zone_type_t s_last_zone_id = 0;
 static bool     s_zone_valid = false;
@@ -363,6 +367,33 @@ static wifi_interface_t hub_ifidx(void)
 /** Add or refresh a node as an ENCRYPTED (CCMP) unicast peer, keyed by LMK = HMAC(PMK, node_mac). The node
  * derives the same LMK from its own MAC, so encrypted data frames flow both ways without a key on the air.
  * The broadcast beacon/followup stay on the separate unencrypted BCAST peer. */
+/* ===== Installation key (PMK) =====
+ * One random 16-byte PMK per hub, created at the first ESP-NOW start and kept in NVS (espnow_cfg/pmk). Nodes get it
+ * at pairing (PAIR_REQ2/PAIR_ACK2: X25519 + AES-CCM), so no key is built into any firmware image. A dev build that
+ * still carries espnow_keys.h seeds the PMK with that key once, so nodes paired the old way keep working. */
+static uint8_t s_pmk[16];
+static const char *s_pmk_source = "none";
+static void hub_pmk_load(void)
+{
+    nvs_handle_t h; size_t sz = sizeof(s_pmk);
+    if (nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) { esp_fill_random(s_pmk, sizeof(s_pmk)); s_pmk_source = "ram"; return; }
+    if (nvs_get_blob(h, "pmk", s_pmk, &sz) == ESP_OK && sz == sizeof(s_pmk)) {
+        s_pmk_source = "stored";
+    } else {
+#if RBN_HAVE_KEYS
+        static const uint8_t dev[16] = RBN_PMK16;
+        memcpy(s_pmk, dev, sizeof(s_pmk));
+        s_pmk_source = "dev";
+#else
+        esp_fill_random(s_pmk, sizeof(s_pmk));
+        s_pmk_source = "generated";
+#endif
+        nvs_set_blob(h, "pmk", s_pmk, sizeof(s_pmk)); nvs_commit(h);
+        rbpower_diag_printf("espnow: installation key created (%s)", s_pmk_source);
+    }
+    nvs_close(h);
+}
+
 /* Live registration of a node's points runs in its own short-lived task: creating a point, saving units.json and
  * describing its history buffers need far more stack than the beacon task (4 KB) — it overflowed there on the bench —
  * and the HTTP / MQTT tasks calling the `add` action. */
@@ -394,7 +425,7 @@ static void hub_add_enc_peer(const uint8_t mac[6])
 {
     esp_now_peer_info_t p = { .channel = s_channel, .ifidx = hub_ifidx(), .encrypt = true };
     memcpy(p.peer_addr, mac, 6);
-    rbn_derive_lmk(mac, p.lmk);
+    rbn_derive_lmk_from(s_pmk, mac, p.lmk);
     esp_err_t e = esp_now_is_peer_exist(mac) ? esp_now_mod_peer(&p) : esp_now_add_peer(&p);
     if (e != ESP_OK)
         ESP_LOGW(TAG, "enc-peer %02X:%02X:%02X:%02X:%02X:%02X: %s", mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],
@@ -444,7 +475,7 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
                          u->last_us = now; u->fresh = true; }
             }
             enh_node_t *nd = enh_node_slot(mac);    /* node liveness heartbeat */
-            if (nd) nd->last_rt_us = now;
+            if (nd) { nd->last_rt_us = now; if (info->rx_ctrl) nd->rssi = (int8_t)info->rx_ctrl->rssi; }
             portEXIT_CRITICAL(&s_units_mux);
             ESP_LOGI(TAG, "RBN_RT from %02X:%02X:%02X:%02X:%02X:%02X ch=%d i0=%.3fA i1=%.3fA i2=%.3fA v0=%.1f p0=%.1f",
                      mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], m->rec_count,
@@ -484,7 +515,24 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
             }
             if (!queued && !stored) { ESP_LOGW(TAG, "PERIOD from %02X:..:%02X: queue full — not ACKed, node will resend", mac[0], mac[5]); return; }
         }
+    } else if (h->msg_type == RBN_MSG_PAIR_REQ2 && len >= (int)sizeof(rbn_pair_req2_t)) {
+        /* Key-exchange pairing: accepted only inside the window the user opened; stashed for the beacon task. */
+        const rbn_pair_req2_t *p = (const rbn_pair_req2_t *)data;
+        int n = p->chan_count;
+        if (esp_timer_get_time() < s_pair_window_until && !s_pending_pair &&
+            n >= 1 && n <= ESPNOW_REG_MAX_CH && len >= (int)(sizeof(rbn_pair_req2_t) + (size_t)n * sizeof(rbn_pair_chan_t))) {
+            memcpy(s_pending_pair_mac, mac, 6);
+            for (int i = 0; i < n; i++) { s_pending_pair_ch[i].ch = p->chans[i].channel_id;
+                                          s_pending_pair_ch[i].ct_code = p->chans[i].ct_code; }
+            s_pending_pair_n = (uint8_t)n;
+            memcpy(s_pending_node_pub, p->node_pub, 32);
+            s_pending_pair_v2 = true;
+            s_pending_pair = true;
+        }
     } else if (h->msg_type == RBN_MSG_PAIR_REQ && len >= (int)sizeof(rbn_pair_req_t)) {
+#if !RBN_HAVE_KEYS
+        return;   /* legacy pre-shared-key pairing: dev builds only */
+#endif
         /* Accept a new node only inside the pairing window; stash it for the beacon task (flash write). */
         if (esp_timer_get_time() < s_pair_window_until && !s_pending_pair) {
             const rbn_pair_req_t *p = (const rbn_pair_req_t *)data;
@@ -537,13 +585,31 @@ static void beacon_task(void *arg)
         /* Finalize a pending pairing off the recv callback (flash write + ACK). */
         if (s_pending_pair) {
             esp_err_t e = esp_now_registry_add_node(s_pending_pair_mac, s_pending_pair_ch, s_pending_pair_n);
-            rbn_pair_ack_t ack; rbn_hdr_init(&ack.h, RBN_MSG_PAIR_ACK, s_beacon_seq++, 0);
-            ack.accepted = (e == ESP_OK) ? 1 : 0;
-            esp_now_send(BCAST, (uint8_t *)&ack, sizeof(ack));
+            if (s_pending_pair_v2) {
+                /* hand the installation key over: fresh hub X25519 pair, shared secret, PMK wrapped for this node */
+                rbn_pair_ack2_t a2; memset(&a2, 0, sizeof(a2));
+                rbn_hdr_init(&a2.h, RBN_MSG_PAIR_ACK2, s_beacon_seq++, 0);
+                memcpy(a2.node_mac, s_pending_pair_mac, 6);
+                uint8_t priv[32], shared[32];
+                bool kx = (e == ESP_OK) && rbn_x25519_keypair(priv, a2.hub_pub) == 0 &&
+                          rbn_x25519_shared(priv, s_pending_node_pub, shared) == 0 &&
+                          rbn_pmk_wrap(shared, s_pending_pair_mac, a2.h.seq, s_pmk, a2.enc_pmk, a2.tag) == 0;
+                memset(priv, 0, sizeof(priv)); memset(shared, 0, sizeof(shared));
+                a2.accepted = kx ? 1 : 0;
+                if (!kx && e == ESP_OK) { esp_now_registry_remove_node(s_pending_pair_mac); e = ESP_FAIL;
+                                          rbpower_diag_printf("FAIL espnow: key exchange failed — node not paired"); }
+                esp_now_send(BCAST, (uint8_t *)&a2, sizeof(a2));
+            } else {
+                rbn_pair_ack_t ack; rbn_hdr_init(&ack.h, RBN_MSG_PAIR_ACK, s_beacon_seq++, 0);
+                ack.accepted = (e == ESP_OK) ? 1 : 0;
+                esp_now_send(BCAST, (uint8_t *)&ack, sizeof(ack));
+            }
+            s_pending_pair_v2 = false;
             if (e == ESP_OK) {
                 s_paired_count++;
                 hub_add_enc_peer(s_pending_pair_mac);   /* encrypt this node's link immediately */
                 espnow_publish_ha_node(s_pending_pair_mac, false);   /* HA "Online" sensor for the new node */
+                espnow_publish_event("paired", s_pending_pair_mac);
                 /* Its points now, with history slots: no restart (pairing used to say "reboot to register"). */
                 enh_register_live(s_pending_pair_mac, s_pending_pair_ch, s_pending_pair_n);
             }
@@ -595,10 +661,36 @@ static void espnow_node_status_topic(const uint8_t mac[6], char* out, size_t cap
 static void espnow_publish_status(const uint8_t mac[6], bool online)
 {
     if (!rbmqtt_is_connected()) return;
-    char topic[64], payload[24];
+    char topic[64], payload[128];
     espnow_node_status_topic(mac, topic, sizeof(topic));
-    snprintf(payload, sizeof(payload), "{\"online\":%s}", online ? "true" : "false");
+    /* online + link health (rssi, loss, last heard) for HA sensors and MQTT clients */
+    int8_t rssi = 0; float loss = -1; int64_t lr = 0;
+    portENTER_CRITICAL(&s_units_mux);
+    for (int k = 0; k < ESPNOW_REG_MAX_NODES; k++)
+        if (s_nodes[k].used && memcmp(s_nodes[k].mac, mac, 6) == 0) {
+            rssi = s_nodes[k].rssi; lr = s_nodes[k].last_rt_us;
+            if (s_nodes[k].max_beacon_id) loss = 100.0f * (float)(s_nodes[k].max_beacon_id - s_nodes[k].beacons_recv) / (float)s_nodes[k].max_beacon_id;
+            break;
+        }
+    portEXIT_CRITICAL(&s_units_mux);
+    int n = snprintf(payload, sizeof(payload), "{\"online\":%s", online ? "true" : "false");
+    if (rssi) n += snprintf(payload + n, sizeof(payload) - n, ",\"rssi_dbm\":%d", (int)rssi);
+    if (loss >= 0) n += snprintf(payload + n, sizeof(payload) - n, ",\"loss_pct\":%.1f", (double)loss);
+    if (lr) n += snprintf(payload + n, sizeof(payload) - n, ",\"last_seen_s\":%lld", (long long)((esp_timer_get_time() - lr) / 1000000));
+    snprintf(payload + n, sizeof(payload) - n, "}");
     rbmqtt_publish(topic, payload, 1, true);   /* retained → last-known state for new subscribers */
+}
+
+/* Node events for MQTT clients (not retained): rbgrid/<hub>/event {"type":"espnow","event":…,"mac":…}. */
+static void espnow_publish_event(const char *ev, const uint8_t mac[6])
+{
+    if (!rbmqtt_is_connected()) return;
+    uint8_t hub[6]; esp_read_mac(hub, ESP_MAC_WIFI_STA);
+    char topic[48], payload[112];
+    snprintf(topic, sizeof(topic), "rbgrid/%02x%02x%02x%02x%02x%02x/event", hub[0],hub[1],hub[2],hub[3],hub[4],hub[5]);
+    snprintf(payload, sizeof(payload), "{\"type\":\"espnow\",\"event\":\"%s\",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"}",
+             ev, mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+    rbmqtt_publish(topic, payload, 1, false);
 }
 /** Signal an online/offline transition: log + the retained status event. */
 static void espnow_emit_presence(const uint8_t mac[6], bool online)
@@ -606,6 +698,7 @@ static void espnow_emit_presence(const uint8_t mac[6], bool online)
     ESP_LOGW(TAG, "node %02X:%02X:%02X:%02X:%02X:%02X is %s",
              mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], online ? "ONLINE" : "OFFLINE");
     espnow_publish_status(mac, online);
+    espnow_publish_event(online ? "node_online" : "node_offline", mac);
 }
 
 /** Publish a HA Discovery config for a node's "Online" connectivity binary_sensor (sub-device under
@@ -621,7 +714,9 @@ static void espnow_publish_ha_node(const uint8_t mac[6], bool remove)
     snprintf(nlo, sizeof(nlo), "%02x%02x%02x%02x%02x%02x", mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
     char topic[120];
     snprintf(topic, sizeof(topic), "homeassistant/binary_sensor/rbgrid_%s_espnow_%s/config", hubhex, nlo);
-    if (remove) { rbmqtt_publish(topic, "", 0, true); return; }   /* empty retained → delete the entity */
+    char topic_rssi[128];
+    snprintf(topic_rssi, sizeof(topic_rssi), "homeassistant/sensor/rbgrid_%s_espnow_%s_rssi/config", hubhex, nlo);
+    if (remove) { rbmqtt_publish(topic, "", 0, true); rbmqtt_publish(topic_rssi, "", 0, true); return; }   /* empty retained → delete */
     cJSON *c = cJSON_CreateObject();
     char buf[48], st[64];
     snprintf(buf, sizeof(buf), "rbgrid_%s_espnow_%s", hubhex, nlo);
@@ -647,8 +742,21 @@ static void espnow_publish_ha_node(const uint8_t mac[6], bool remove)
     cJSON_AddStringToObject(dev, "via_device", hubhex);   /* nest under the hub device */
     cJSON_AddItemToObject(c, "dev", dev);
     char *json = cJSON_PrintUnformatted(c);
-    cJSON_Delete(c);
     if (json) { rbmqtt_publish(topic, json, 0, true); free(json); }
+    /* second entity on the same device: link signal (dBm) from the same status topic */
+    snprintf(buf, sizeof(buf), "rbgrid_%s_espnow_%s_rssi", hubhex, nlo);
+    cJSON_ReplaceItemInObject(c, "uniq_id", cJSON_CreateString(buf));
+    snprintf(buf, sizeof(buf), "Node %02X:%02X:%02X:%02X:%02X:%02X Signal", mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+    cJSON_ReplaceItemInObject(c, "name", cJSON_CreateString(buf));
+    cJSON_ReplaceItemInObject(c, "dev_cla", cJSON_CreateString("signal_strength"));
+    cJSON_ReplaceItemInObject(c, "val_tpl", cJSON_CreateString("{{ value_json.rssi_dbm | default(none) }}"));
+    cJSON_DeleteItemFromObject(c, "pl_on"); cJSON_DeleteItemFromObject(c, "pl_off");
+    cJSON_AddStringToObject(c, "unit_of_meas", "dBm");
+    cJSON_AddStringToObject(c, "stat_cla", "measurement");
+    cJSON_AddStringToObject(c, "ent_cat", "diagnostic");
+    json = cJSON_PrintUnformatted(c);
+    cJSON_Delete(c);
+    if (json) { rbmqtt_publish(topic_rssi, json, 0, true); free(json); }
 }
 
 /* (Re)publish the HA "Online" sensor + current state for every registered node. Called from the HA
@@ -795,6 +903,17 @@ static void inject_task(void *arg)
                 portEXIT_CRITICAL(&s_units_mux);
                 if (used && now_on != was) espnow_emit_presence(mac, now_on);
             }
+            static uint32_t s_health_div = 0;   /* link health (rssi / loss / last heard) for HA, once a minute */
+            if (++s_health_div >= 60) {
+                s_health_div = 0;
+                for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++) {
+                    portENTER_CRITICAL(&s_units_mux);
+                    bool used = s_nodes[i].used, on = s_nodes[i].online; uint8_t mac[6];
+                    if (used) memcpy(mac, s_nodes[i].mac, 6);
+                    portEXIT_CRITICAL(&s_units_mux);
+                    if (used) espnow_publish_status(mac, on);
+                }
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(200));
     }
@@ -804,12 +923,8 @@ static void inject_task(void *arg)
 
 esp_err_t esp_now_hub_start(uint8_t channel)
 {
-#if !RBN_HAVE_KEYS
-    (void)channel;
-    ESP_LOGW(TAG, "ESP-NOW hub not started: this image has no ESP-NOW keys (espnow_keys.h absent at build)");
-    return ESP_ERR_NOT_SUPPORTED;
-#endif
     if (s_running) { ESP_LOGW(TAG, "already running"); return ESP_OK; }
+    hub_pmk_load();   /* the installation key: NVS, generated at the first start */
 
     if (channel > 0) {
         esp_err_t ce = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
@@ -823,7 +938,7 @@ esp_err_t esp_now_hub_start(uint8_t channel)
     esp_err_t e = esp_now_init();
     if (e != ESP_OK) { ESP_LOGE(TAG, "esp_now_init failed: %s", esp_err_to_name(e)); return e; }
     /* Provision the shared Primary Master Key (used for the CCMP-encrypted unicast peers). */
-    { static const uint8_t pmk[16] = RBN_PMK16; esp_now_set_pmk(pmk); }
+    esp_now_set_pmk(s_pmk);
     esp_now_register_recv_cb(on_recv);
     esp_now_register_send_cb(on_send);
 
@@ -839,6 +954,10 @@ esp_err_t esp_now_hub_start(uint8_t channel)
         if (esp_now_registry_load(&reg)) {
             for (int i = 0; i < reg.node_count; i++) {
                 hub_add_enc_peer(reg.nodes[i].mac);
+                /* not heard yet in this run: its points read "no data" until its first REALTIME (they read present
+                 * from the config default, so an unplugged node looked "receiving" after a hub restart) */
+                for (int c = 0; c < reg.nodes[i].ch_count; c++)
+                    rbpower_set_unit_hardware_present(rbgrid_create_espnow_unit_id(reg.nodes[i].mac, reg.nodes[i].channels[c].ch), false);
                 if (reg.nodes[i].flags & ESPNOW_REG_FLAG_DISABLED) {   /* apply persisted disable */
                     enh_node_t *nd = enh_node_slot(reg.nodes[i].mac);
                     if (nd) nd->disabled = true;
@@ -1038,6 +1157,7 @@ uint32_t esp_now_hub_delnode_cascade(const uint8_t mac[6])
     portEXIT_CRITICAL(&s_units_mux);
     if (esp_now_is_peer_exist(mac)) esp_now_del_peer(mac);   /* drop the encrypted peer */
     espnow_publish_ha_node(mac, true);                       /* remove the node's HA "Online" sensor */
+    espnow_publish_event("removed", mac);
     ESP_LOGW(TAG, "delnode cascade %02X:%02X:%02X:%02X:%02X:%02X → %u unit(s) removed",
              mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], (unsigned)removed);
     return removed;
@@ -1073,7 +1193,8 @@ char *esp_now_hub_status_json(void)
     cJSON_AddBoolToObject(root, "running", s_running);
     {   int8_t en = esp_now_hub_enabled_setting();
         cJSON_AddStringToObject(root, "enabled", en < 0 ? "auto" : (en ? "on" : "off"));   /* hub_on / hub_off / auto */
-        cJSON_AddBoolToObject(root, "keys", RBN_HAVE_KEYS);           /* false: this image can't start ESP-NOW */
+        cJSON_AddBoolToObject(root, "keys", true);                    /* per-installation key (F1): every image can run it */
+        cJSON_AddStringToObject(root, "key_source", s_pmk_source);    /* generated | stored | dev | none (not started yet) */
         cJSON_AddNumberToObject(root, "max_nodes", ESPNOW_REG_MAX_NODES);
         cJSON_AddNumberToObject(root, "max_channels_per_node", ESPNOW_REG_MAX_CH);
         cJSON_AddNumberToObject(root, "pairing_left_s", esp_now_hub_pairing_open()
@@ -1108,6 +1229,7 @@ char *esp_now_hub_status_json(void)
             cJSON_AddBoolToObject(jn, "disabled", have && hs.disabled);
             cJSON_AddNumberToObject(jn, "last_seen_s",
                                     (have && hs.last_rt_us) ? (double)((now - hs.last_rt_us) / 1000000) : -1);
+            if (have && hs.rssi) cJSON_AddNumberToObject(jn, "rssi_dbm", hs.rssi);
             if (have) {
                 cJSON *sync = cJSON_AddObjectToObject(jn, "sync");
                 cJSON_AddNumberToObject(sync, "resid_sd_us", hs.resid_sd);
