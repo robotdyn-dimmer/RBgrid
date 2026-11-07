@@ -623,10 +623,16 @@ void esp_now_hub_publish_ha_nodes(void)
 /** Inject task (200 ms loop) — runs OFF the recv callback. Drains REALTIME (200ms inject) + PERIOD (period_result).
  * Units are CONFIG units (rbgrid_config_add_espnow_module) — we only compute the unit_id and feed; the
  * inject_* APIs no-op if the unit isn't configured (i.e. an unpaired/unknown node). No runtime create. */
+extern bool rbwebserver_ota_in_progress(void);   /* rbwebserver_ota.c */
 static void inject_task(void *arg)
 {
     uint32_t sweep_div = 0;
     while (s_running) {
+        /* Firmware upload in progress: hold the injects (they take the home lock and commit the hour image to NVS,
+         * which waits behind the OTA flash writes — the stats task then starved on that lock and the task watchdog
+         * reset the hub mid-upload, on the bench, twice). PERIOD frames stay queued and un-ACKed; the node keeps
+         * them and resends. */
+        if (rbwebserver_ota_in_progress()) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
         /* --- REALTIME --- */
         for (int i = 0; i < ENH_MAX_UNITS; i++) {
             portENTER_CRITICAL(&s_units_mux);
@@ -673,6 +679,12 @@ static void inject_task(void *arg)
              * REALTIME): ACKed and dropped on purpose, so the node doesn't keep resending them. */
             bool disabled = enh_node_is_disabled(f.mac);
             uint8_t ok = 0, bad = 0;
+            /* Mark the frame as counted in NVS BEFORE the inject. The NVS commit is the slow step (it waits on flash,
+             * e.g. behind an OTA write); a crash inside it leaves the frame neither marked nor injected, so the
+             * node's resend is counted once. Marking AFTER the inject left a window where a crash (watchdog during
+             * an OTA, seen on the bench) re-counted the resend: one quarter twice. Remaining window: a crash
+             * between this commit and the RAM inject that follows loses that frame (ms, no flash I/O). */
+            enh_dedup_persist(f.mac, f.seq, f.ts);
             for (uint8_t r = 0; r < f.n; r++) {
                 const rbn_period_rec_t *rec = &f.recs[r];
                 if (disabled) { bad++; continue; }
@@ -688,14 +700,13 @@ static void inject_task(void *arg)
                          rec->period_type, rec->avg_power_w, rec->energy_wh, (unsigned long)rec->period_ms,
                          ie == RBPOWER_OK ? "ok" : "REJECTED");
             }
-            /* Remember it BEFORE the ACK (a resend after a lost ACK is then recognized), persist the latest, ACK. */
+            /* Remember it in RAM BEFORE the ACK (a resend after a lost ACK is then recognized), then ACK. */
             portENTER_CRITICAL(&s_units_mux);
             enh_dedup_add(f.mac, f.seq, f.ts);
             s_periods_injected += ok;
             s_periods_dropped  += bad;
             s_frames[i].used = false;
             portEXIT_CRITICAL(&s_units_mux);
-            enh_dedup_persist(f.mac, f.seq, f.ts);
             if (bad) rbpower_diag_printf("FAIL espnow: node %02X:..:%02X frame seq=%u — %u record(s) not counted (%s)",
                                          f.mac[0], f.mac[5], (unsigned)f.seq, (unsigned)bad,
                                          disabled ? "node disabled" : "unit rejected the period");
