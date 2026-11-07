@@ -868,6 +868,94 @@ void esp_now_hub_status(void)
 bool esp_now_hub_running(void) { return s_running; }
 
 /* Open the pairing window for `seconds` (the hub accepts new-node PAIR_REQ during it). */
+/* ===== Hub ESP-NOW switch (persisted) =====
+ * NVS espnow_cfg/enabled: unset = automatic (start when the registry has nodes, as before), 1 = on, 0 = off.
+ * "off" wins over a non-empty registry; "on" starts the radio even with no node yet (ready to pair). */
+int8_t esp_now_hub_enabled_setting(void)
+{
+    nvs_handle_t h; uint8_t v = 0xFF;
+    if (nvs_open("espnow_cfg", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "enabled", &v); nvs_close(h); }
+    return v == 0xFF ? -1 : (int8_t)(v ? 1 : 0);
+}
+static void esp_now_hub_set_enabled_setting(bool on)
+{
+    nvs_handle_t h;
+    if (nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, "enabled", on ? 1 : 0); nvs_commit(h); nvs_close(h);
+}
+
+static bool enh_parse_mac(const char *s, uint8_t mac[6])
+{
+    return s && (sscanf(s, "%2hhx:%2hhx:%2hhx:%2hhx:%2hhx:%2hhx", &mac[0],&mac[1],&mac[2],&mac[3],&mac[4],&mac[5]) == 6 ||
+                 sscanf(s, "%2hhx%2hhx%2hhx%2hhx%2hhx%2hhx", &mac[0],&mac[1],&mac[2],&mac[3],&mac[4],&mac[5]) == 6);
+}
+
+/* One implementation of the node actions for HTTP (POST /api/v1/espnow) and MQTT (cmd set espnow). @p req is the
+ * request object {action, mac?, seconds?, channels?}. Returns a malloc'd JSON reply; *status = HTTP status. */
+char *esp_now_hub_action(const cJSON *req, int *status)
+{
+    const cJSON *ja = req ? cJSON_GetObjectItem(req, "action") : NULL;
+    const cJSON *jm = req ? cJSON_GetObjectItem(req, "mac") : NULL;
+    const char *action = cJSON_IsString(ja) ? ja->valuestring : "";
+    uint8_t mac[6];
+    bool have_mac = cJSON_IsString(jm) && enh_parse_mac(jm->valuestring, mac);
+    char out[200];
+    int st = 200;
+#define ENH_ERR(code, ...) do { st = (code); snprintf(out, sizeof(out), __VA_ARGS__); } while (0)
+    if (!strcmp(action, "hub_on")) {
+        esp_now_hub_set_enabled_setting(true);
+        esp_err_t e = esp_now_hub_running() ? ESP_OK : esp_now_hub_start(0);
+        if (e != ESP_OK) ENH_ERR(503, "{\"ok\":false,\"error\":\"ESPNOW_START_FAILED\",\"message\":\"%s\"}", esp_err_to_name(e));
+        else snprintf(out, sizeof(out), "{\"ok\":true,\"running\":true,\"enabled\":true}");
+    } else if (!strcmp(action, "hub_off")) {
+        esp_now_hub_set_enabled_setting(false);
+        esp_now_hub_stop();
+        snprintf(out, sizeof(out), "{\"ok\":true,\"running\":false,\"enabled\":false}");
+    } else if (!strcmp(action, "pair")) {
+        const cJSON *js = cJSON_GetObjectItem(req, "seconds");
+        uint32_t sec = cJSON_IsNumber(js) ? (uint32_t)js->valuedouble : 120;
+        if (sec < 10) sec = 10;
+        if (sec > 600) sec = 600;
+        if (esp_now_hub_enabled_setting() == 0) {
+            ENH_ERR(409, "{\"ok\":false,\"error\":\"ESPNOW_DISABLED\",\"message\":\"Remote nodes are switched off on this hub (action hub_on).\"}");
+        } else {
+            esp_err_t e = esp_now_hub_running() ? ESP_OK : esp_now_hub_start(0);   /* first node: start on demand */
+            if (e != ESP_OK) ENH_ERR(503, "{\"ok\":false,\"error\":\"ESPNOW_START_FAILED\",\"message\":\"%s\"}", esp_err_to_name(e));
+            else { esp_now_hub_open_pairing(sec); snprintf(out, sizeof(out), "{\"ok\":true,\"pairing_open_s\":%u}", (unsigned)sec); }
+        }
+    } else if (!strcmp(action, "pair_cancel")) {
+        s_pair_window_until = 0;
+        snprintf(out, sizeof(out), "{\"ok\":true,\"pairing_open\":false,\"paired\":%u}", (unsigned)s_paired_count);
+    } else if (!strcmp(action, "latch")) {
+        if (!esp_now_hub_running()) ENH_ERR(409, "{\"ok\":false,\"error\":\"ESPNOW_OFF\"}");
+        else snprintf(out, sizeof(out), "{\"ok\":true,\"latched\":%u}", (unsigned)esp_now_hub_latch_all(0));
+    } else if (!strcmp(action, "remove") && have_mac) {
+        snprintf(out, sizeof(out), "{\"ok\":true,\"removed_units\":%u}", (unsigned)esp_now_hub_delnode_cascade(mac));
+    } else if ((!strcmp(action, "disable") || !strcmp(action, "enable")) && have_mac) {
+        esp_now_hub_set_node_disabled(mac, !strcmp(action, "disable"));
+        snprintf(out, sizeof(out), "{\"ok\":true,\"disabled\":%s}", !strcmp(action, "disable") ? "true" : "false");
+    } else if (!strcmp(action, "add") && have_mac) {
+        espnow_reg_chan_t ch[ESPNOW_REG_MAX_CH]; uint8_t n = 0;
+        const cJSON *jch = cJSON_GetObjectItem(req, "channels"), *e = NULL;
+        if (cJSON_IsArray(jch)) cJSON_ArrayForEach(e, jch) {
+            if (n >= ESPNOW_REG_MAX_CH) break;
+            const cJSON *cc = cJSON_GetObjectItem(e, "ch"), *ct = cJSON_GetObjectItem(e, "ct_code");
+            if (cJSON_IsNumber(cc) && cJSON_IsNumber(ct)) { ch[n].ch = (uint8_t)cc->valuedouble; ch[n].ct_code = (uint8_t)ct->valuedouble; n++; }
+        }
+        if (n == 0) ENH_ERR(400, "{\"ok\":false,\"error\":\"BAD_REQUEST\",\"message\":\"channels[] required\"}");
+        else {
+            esp_err_t e2 = esp_now_registry_add_node(mac, ch, n);
+            if (e2 != ESP_OK) ENH_ERR(500, "{\"ok\":false,\"error\":\"REGISTRY\",\"message\":\"%s\"}", esp_err_to_name(e2));
+            else snprintf(out, sizeof(out), "{\"ok\":true,\"reboot_to_register\":true,\"channels\":%u}", n);
+        }
+    } else {
+        ENH_ERR(400, "{\"ok\":false,\"error\":\"BAD_REQUEST\",\"message\":\"action = hub_on|hub_off|pair|pair_cancel|latch|remove|disable|enable|add (+ mac)\"}");
+    }
+#undef ENH_ERR
+    if (status) *status = st;
+    return strdup(out);
+}
+
 void esp_now_hub_open_pairing(uint32_t seconds)
 {
     s_pair_window_until = esp_timer_get_time() + (int64_t)seconds * 1000000;
@@ -950,6 +1038,13 @@ char *esp_now_hub_status_json(void)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "running", s_running);
+    {   int8_t en = esp_now_hub_enabled_setting();
+        cJSON_AddStringToObject(root, "enabled", en < 0 ? "auto" : (en ? "on" : "off"));   /* hub_on / hub_off / auto */
+        cJSON_AddBoolToObject(root, "keys", RBN_HAVE_KEYS);           /* false: this image can't start ESP-NOW */
+        cJSON_AddNumberToObject(root, "max_nodes", ESPNOW_REG_MAX_NODES);
+        cJSON_AddNumberToObject(root, "max_channels_per_node", ESPNOW_REG_MAX_CH);
+        cJSON_AddNumberToObject(root, "pairing_left_s", esp_now_hub_pairing_open()
+                                ? (double)((s_pair_window_until - esp_timer_get_time()) / 1000000) : 0); }
     cJSON_AddNumberToObject(root, "channel", s_channel);
     cJSON_AddBoolToObject(root, "pairing_open", esp_now_hub_pairing_open());
     cJSON_AddNumberToObject(root, "paired_count", s_paired_count);

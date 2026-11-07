@@ -2117,11 +2117,6 @@ static esp_err_t espnow_http_get(httpd_req_t *req)
     return ESP_OK;
 }
 /** Parse a MAC given as 12 hex digits or colon-separated. */
-static bool espnow_http_parse_mac(const char *s, uint8_t mac[6])
-{
-    return s && (sscanf(s, "%2hhx%2hhx%2hhx%2hhx%2hhx%2hhx", &mac[0],&mac[1],&mac[2],&mac[3],&mac[4],&mac[5]) == 6 ||
-                 sscanf(s, "%2hhx:%2hhx:%2hhx:%2hhx:%2hhx:%2hhx", &mac[0],&mac[1],&mac[2],&mac[3],&mac[4],&mac[5]) == 6);
-}
 /** POST /api/v1/espnow {action: pair|latch|add|remove|disable|enable, mac, seconds, channels} (token-guarded). */
 static esp_err_t espnow_http_post(httpd_req_t *req)
 {
@@ -2135,48 +2130,17 @@ static esp_err_t espnow_http_post(httpd_req_t *req)
     if (rl > 0 && httpd_req_recv(req, body, rl) <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body"); return ESP_FAIL; }
     cJSON *j = cJSON_Parse(body);
     if (!j) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "json"); return ESP_FAIL; }
-    const cJSON *ja = cJSON_GetObjectItem(j, "action");
-    const cJSON *jm = cJSON_GetObjectItem(j, "mac");
-    const char *action = cJSON_IsString(ja) ? ja->valuestring : "";
-    char resp[160]; resp[0] = 0; bool ok = true; uint8_t mac[6];
-    httpd_resp_set_type(req, "application/json");
-    if (!strcmp(action, "pair")) {
-        const cJSON *js2 = cJSON_GetObjectItem(j, "seconds");
-        uint32_t sec = cJSON_IsNumber(js2) ? (uint32_t)js2->valuedouble : 120;
-        /* First node: ESP-NOW auto-starts only when the registry already has nodes — on a fresh hub
-         * `pair` would answer {"error":"espnow off"} and the FIRST node could never be paired over
-         * HTTP. Start the hub on demand here instead. */
-        if (!esp_now_hub_running()) {
-            esp_err_t se = esp_now_hub_start(0);
-            if (se != ESP_OK) { ok = false; snprintf(resp, sizeof(resp), "{\"error\":\"espnow start failed: %s\"}", esp_err_to_name(se)); }
-        }
-        if (ok) { esp_now_hub_open_pairing(sec); snprintf(resp, sizeof(resp), "{\"ok\":true,\"pairing_open_s\":%u}", (unsigned)sec); }
-    } else if (!strcmp(action, "latch")) {
-        if (!esp_now_hub_running()) { ok = false; snprintf(resp, sizeof(resp), "{\"error\":\"espnow off\"}"); }
-        else { uint32_t n = esp_now_hub_latch_all(0); snprintf(resp, sizeof(resp), "{\"ok\":true,\"latched\":%u}", (unsigned)n); }
-    } else if (!strcmp(action, "remove") && cJSON_IsString(jm) && espnow_http_parse_mac(jm->valuestring, mac)) {
-        uint32_t rm = esp_now_hub_delnode_cascade(mac);
-        snprintf(resp, sizeof(resp), "{\"ok\":true,\"removed_units\":%u}", (unsigned)rm);
-    } else if ((!strcmp(action, "disable") || !strcmp(action, "enable")) && cJSON_IsString(jm) && espnow_http_parse_mac(jm->valuestring, mac)) {
-        esp_now_hub_set_node_disabled(mac, !strcmp(action, "disable"));
-        snprintf(resp, sizeof(resp), "{\"ok\":true,\"disabled\":%s}", !strcmp(action, "disable") ? "true" : "false");
-    } else if (!strcmp(action, "add") && cJSON_IsString(jm) && espnow_http_parse_mac(jm->valuestring, mac)) {
-        espnow_reg_chan_t ch[ESPNOW_REG_MAX_CH]; uint8_t n = 0;
-        const cJSON *jch = cJSON_GetObjectItem(j, "channels"), *e = NULL;
-        if (cJSON_IsArray(jch)) cJSON_ArrayForEach(e, jch) {
-            if (n >= ESPNOW_REG_MAX_CH) break;
-            const cJSON *cc = cJSON_GetObjectItem(e, "ch"), *ct = cJSON_GetObjectItem(e, "ct_code");
-            if (cJSON_IsNumber(cc) && cJSON_IsNumber(ct)) { ch[n].ch = (uint8_t)cc->valuedouble; ch[n].ct_code = (uint8_t)ct->valuedouble; n++; }
-        }
-        if (n == 0) { ok = false; snprintf(resp, sizeof(resp), "{\"error\":\"channels[] required\"}"); }
-        else { esp_err_t e2 = esp_now_registry_add_node(mac, ch, n);
-               ok = (e2 == ESP_OK); snprintf(resp, sizeof(resp), "{\"ok\":%s,\"reboot_to_register\":true,\"channels\":%u}", ok?"true":"false", n); }
-    } else {
-        ok = false; snprintf(resp, sizeof(resp), "{\"error\":\"action=pair|latch|add|remove|disable|enable + mac\"}");
-    }
+    int st = 200;
+    char *out = esp_now_hub_action(j, &st);   /* shared with MQTT `cmd set espnow` */
     cJSON_Delete(j);
-    if (!ok) httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_set_type(req, "application/json");
+    if (st != 200) {
+        char sl[40];
+        snprintf(sl, sizeof(sl), "%d %s", st, st == 400 ? "Bad Request" : st == 409 ? "Conflict" : st == 503 ? "Service Unavailable" : "Internal Server Error");
+        httpd_resp_set_status(req, sl);
+    }
+    httpd_resp_send(req, out ? out : "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
+    free(out);
     return ESP_OK;
 }
 /** Auto-start the ESP-NOW hub on boot once WiFi is associated, if the registry has nodes. Fixes the recurring
@@ -2189,10 +2153,11 @@ static void espnow_autostart_task(void *arg)
     for (int i = 0; i < 120 && esp_wifi_sta_get_ap_info(&ap) != ESP_OK; i++)
         vTaskDelay(pdMS_TO_TICKS(500));   /* up to ~60s for STA association (hub channel = router channel) */
     espnow_registry_t reg;
-    if (!esp_now_hub_running() && esp_now_registry_load(&reg) && reg.node_count > 0) {
+    int8_t en = esp_now_hub_enabled_setting();   /* off wins; on starts even without a node (ready to pair) */
+    if (!esp_now_hub_running() && en != 0 && (en == 1 || (esp_now_registry_load(&reg) && reg.node_count > 0))) {
         esp_err_t e = esp_now_hub_start(0);
-        ESP_LOGW(TAG, "ESP-NOW auto-start (registry %d node(s)): %s, running=%d",
-                 reg.node_count, esp_err_to_name(e), (int)esp_now_hub_running());
+        ESP_LOGW(TAG, "ESP-NOW auto-start (setting %d): %s, running=%d",
+                 (int)en, esp_err_to_name(e), (int)esp_now_hub_running());
     }
     vTaskDelete(NULL);
 }
@@ -2258,6 +2223,7 @@ static void register_espnow_http(void)
     }
     rbgrid_register_espnow_status_provider(esp_now_hub_status_json);   // MQTT `cmd get espnow` → status JSON
     rbgrid_register_unit_deleted_hook(esp_now_on_unit_deleted);        // a deleted node point stays deleted
+    rbgrid_register_espnow_action_handler(esp_now_hub_action);         // MQTT `cmd set espnow` → same actions as HTTP
     ESP_LOGI(TAG, "main-side API registered: GET/POST /api/v1/espnow + GET /api/system/provisioning");
 }
 

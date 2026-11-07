@@ -287,6 +287,9 @@ void rbgrid_register_espnow_status_provider(char *(*fn)(void)) { s_espnow_status
  * back after a restart (an unused node input could not be switched off). */
 static void (*s_unit_deleted_hook)(uint16_t unit_id) = NULL;
 void rbgrid_register_unit_deleted_hook(void (*fn)(uint16_t)) { s_unit_deleted_hook = fn; }
+/* ESP-NOW node actions (the hub in main/ registers it): MQTT `cmd set espnow {data:{action,…}}` = POST /api/v1/espnow. */
+static char *(*s_espnow_action)(const cJSON *req, int *status) = NULL;
+void rbgrid_register_espnow_action_handler(char *(*fn)(const cJSON *req, int *status)) { s_espnow_action = fn; }
 
 /* ==== moved verbatim from rbwebserver.c (command dispatch + api config/units/sensors/history) ==== */
 static char* cmd_ack_json(const char* cmd, const char* section,
@@ -392,6 +395,20 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
 
     char* ack = NULL;
     char msg[96];
+    if (strcmp(section, "espnow") == 0) {
+        if (!s_espnow_action) {
+            ack = cmd_ack_json("set", section, "error", "ESP-NOW not available in this build", id);
+        } else {
+            int st = 200;
+            char *rep = s_espnow_action(data, &st);
+            ack = cmd_ack_json("set", section, st == 200 ? "ok" : "error", st == 200 ? "espnow action done" : "espnow action failed", id);
+            /* carry the action's own reply (same JSON as the HTTP answer) */
+            cJSON *a = ack ? cJSON_Parse(ack) : NULL, *r = rep ? cJSON_Parse(rep) : NULL;
+            cJSON *ad = a ? cJSON_GetObjectItem(a, "data") : NULL;
+            if (ad && r) { cJSON_AddItemToObject(ad, "reply", r); r = NULL; char *re = cJSON_PrintUnformatted(a); if (re) { free(ack); ack = re; } }
+            cJSON_Delete(a); cJSON_Delete(r); free(rep);
+        }
+    } else
     if (strcmp(section, "tariff") == 0) {
         rbgrid_json_err_t e = rbgrid_json_parse_tariff_plan_config(data_str);
         if (e == RBGRID_JSON_OK) {

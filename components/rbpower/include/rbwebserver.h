@@ -186,6 +186,9 @@ extern "C"
     void rbgrid_register_espnow_status_provider(char *(*fn)(void));
     /** @brief Register a callback run after a point is deleted over the API (ESP-NOW: drop the node channel). */
     void rbgrid_register_unit_deleted_hook(void (*fn)(uint16_t unit_id));
+    /** @brief Register the ESP-NOW node-action handler (MQTT `cmd set espnow` → same as POST /api/v1/espnow). */
+    struct cJSON;
+    void rbgrid_register_espnow_action_handler(char *(*fn)(const struct cJSON *req, int *status));
 
     /**
      * @brief Read the persisted HTTPS flag (/https_enabled in littlefs) into RAM. Call at boot before
