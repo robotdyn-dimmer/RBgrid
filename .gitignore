@@ -22,6 +22,8 @@ node_modules/
 # Secrets — bench WiFi creds etc. (NEVER commit; provision locally only)
 wifi_secrets.h
 main/wifi_secrets.h
+components/rbgrid_app/wifi_secrets.h
+components/rbgrid_app/espnow_keys.h
 *.secret
 
 # Temporary files

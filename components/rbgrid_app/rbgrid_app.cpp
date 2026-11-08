@@ -18,6 +18,7 @@
 // in effect this early (same trap that silently flipped CONFIG_SPIRAM/MAX_UNITS off before).
 // Without this, CONFIG_RBGRID_BENCH_FULL reads as undefined here → RBGRID_RBBENCH=0 → the whole
 // rbbench console is compiled OUT of the unified build (dead console + no diag).
+#include "rbgrid_app.h"
 #include "sdkconfig.h"
 // CONFIG_RBGRID_DEBUG_BRIDGE / CONFIG_RBGRID_BENCH_FULL come from sdkconfig.h (included above).
 // - RBAMP_BRIDGE_ENABLE / RBGRID_RBAMP_FLEET: rbAmp I2C fleet as the telemetry source.
@@ -165,7 +166,7 @@ extern "C" void add_cors_headers(httpd_req_t *req);  // rbwebserver CORS policy 
 // ===== WI-FI removed - now in rbwifi module
 
 // WiFi credentials: provisioned via a GITIGNORED local header so the secret never enters
-// the tracked repo. Copy main/wifi_secrets.h.example -> main/wifi_secrets.h and fill it in.
+// the tracked repo. Copy components/rbgrid_app/wifi_secrets.h.example -> components/rbgrid_app/wifi_secrets.h and fill it in.
 // If the file is absent, the firmware falls back to NVS-stored credentials (AP portal).
 #if defined(__has_include)
 #  if __has_include("wifi_secrets.h")
@@ -3479,7 +3480,10 @@ static void app_core_start(void)
 
 }
 
-extern "C" void app_main(void) {
+/** Boot sequence. @p hosted: a host (ESPHome) owns Wi-Fi, OTA and image confirmation; only the core stages run
+ *  and the host calls rbgrid_core_image_confirmed() when it decides the image is good. @return false if the core
+ *  could not start. */
+static bool rbgrid_boot(bool hosted) {
     { cJSON_Hooks h = { rbgrid_cjson_malloc, rbgrid_cjson_free }; cJSON_InitHooks(&h); }   /* before any JSON */
     /* factory reset (POST /api/system/factory-reset) runs here, before NVS and the config file system open */
     const bool factory_reset_done = rbgrid_core_factory_reset_at_boot();
@@ -3513,12 +3517,12 @@ extern "C" void app_main(void) {
 
     const bool wifi_initialized = app_net_init();
     rbpower_extended_config_t* extended_config = app_core_init();
-    if (!extended_config) return;
+    if (!extended_config) return false;
     app_ifaces_start(extended_config, wifi_initialized);
     app_core_start();
     app_espnow_start();
 #if !CONFIG_RBGRID_IF_WIFI
-    app_image_confirm_on_network();   /* no Wi-Fi callback in this build: confirm from boot */
+    if (!hosted) app_image_confirm_on_network();   /* no Wi-Fi callback in this build: confirm from boot */
 #endif
 
     /* Event log files (after rbpower storage init — it may own the `logs` mount) + boot forensics in EVERY
@@ -3638,6 +3642,8 @@ extern "C" void app_main(void) {
 
         test_period_statistics_api();
 */
+    (void)hosted;
+    return true;
 }
 
 // ====== LOOP ======
@@ -3759,4 +3765,9 @@ __attribute__((unused)) static void demo_readout_loop(void) {
     vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
+/* ---- Entry points ---- */
+/** Standalone application (main/main.c → app_main). */
+extern "C" void rbgrid_app_main(void) { (void)rbgrid_boot(false); }
 
+/** Hosted start (ESPHome external component): run after the host has NVS, netif, the event loop and Wi-Fi up. */
+extern "C" esp_err_t rbgrid_host_start(void) { return rbgrid_boot(true) ? ESP_OK : ESP_FAIL; }
