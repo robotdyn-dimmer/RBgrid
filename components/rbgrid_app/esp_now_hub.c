@@ -1483,7 +1483,9 @@ char *esp_now_hub_status_json(void)
                                 ? (double)((s_pair_window_until - esp_timer_get_time()) / 1000000) : 0); }
     cJSON_AddNumberToObject(root, "channel", s_channel);
     cJSON_AddBoolToObject(root, "pairing_open", esp_now_hub_pairing_open());
-    cJSON_AddNumberToObject(root, "paired_count", s_paired_count);
+    cJSON_AddNumberToObject(root, "paired_count", s_paired_count);   /* paired in THIS window (restart registers them) */
+    { int tot = 0, on = 0; esp_now_hub_node_counts(&tot, &on);
+      cJSON_AddNumberToObject(root, "nodes_total", tot); cJSON_AddNumberToObject(root, "nodes_online", on); }
     cJSON_AddNumberToObject(root, "beacons_sent", s_beacons_sent);
     cJSON_AddNumberToObject(root, "periods_recv", s_periods_recv);          /* PERIOD frames queued */
     cJSON_AddNumberToObject(root, "periods_injected", s_periods_injected);  /* records counted */

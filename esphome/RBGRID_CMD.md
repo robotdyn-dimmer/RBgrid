@@ -54,7 +54,7 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
 | `economics` | `/api/v1/economics` | `"unit":"0100"` |
 | `summary` | `/api/v1/summary` | `"unit"`, `"period"` (hour/day/month…), `"from"`, `"to"` (unix) |
 | `i2c` | `/api/v1/i2c`: buses, board pin profile, modules | |
-| `espnow` | `/api/v1/espnow`: nodes, pairing state | |
+| `espnow` | `/api/v1/espnow`: nodes, pairing state. `nodes_total` / `nodes_online` = paired nodes / online now; `paired_count` = nodes paired in the current pairing window (a restart gives them their points) | |
 | `price` | External prices stored (see below): `{"type":"price","now","active","prices":[{"from","until","buy","sell"?}]}` | |
 
 ### Change
@@ -169,8 +169,8 @@ Every line of the device's event log, except the periodic trace, is sent to HA a
 
 | Field | Value |
 |---|---|
-| `kind` | `reverse_flow`, `module_absent`, `module_restored`, `module_poll_fail`, `bus_stuck`, `node_online`, `node_offline`, `boot`, `tariff`, `firmware`; otherwise `fail` or `event` |
-| `level` | `fail` (an invariant / error line, "FAIL …") or `event` |
+| `kind` | `reverse_flow`, `module_absent`, `module_restored`, `module_poll_fail`, `bus_stuck`, `node_online`, `node_offline`, `boot`, `tariff`, `firmware`, `diag` (reboot-gap / period reconciliation detail); otherwise `fail` or `event` |
+| `level` | `fail` (an invariant / error line, "FAIL …"), `debug` (a `diag` line that is not a failure: hide by default) or `event` |
 | `message` | The log line as the device wrote it |
 
 Blueprints trigger on `event_type: esphome.rbgrid_event` with `event_data: {kind: …}`. Events from the device are not gated by the integration's "allow service calls" option. The device never calls HA actions.

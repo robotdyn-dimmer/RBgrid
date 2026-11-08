@@ -69,8 +69,19 @@ static const char *event_kind(const char *m, bool fail) {
       {"joined late", "module_restored"},        {"poll restored", "module_restored"},
       {" poll:", "module_poll_fail"},            {"held low", "bus_stuck"},
       {"espnow: node", "node"},                  {"boot: reset", "boot"},
-      {"tariff", "tariff"},                      {"ota", "firmware"},
+      {"tariff", "tariff"},                      {"OTA", "firmware"},
   };
+  // reboot-gap / period reconciliation lines ("m0 gap …", "QTR m0 … anchor=…", "cnt=+nanWh"): diagnostics, not news
+  if (strstr(m, "anchor=") || strstr(m, " cnt=+") || strstr(m, " cnt=-") || strstr(m, "QTR m")) return "diag";
+  for (const char *g = strstr(m, " gap "); g != nullptr; g = strstr(g + 1, " gap ")) {   // "m<N> gap …"
+    const char *d = g;
+    while (d > m && d[-1] >= '0' && d[-1] <= '9') d--;
+    if (d < g && d > m && d[-1] == 'm') return "diag";
+  }
+  {   // "ota: …" at the start or after a space ("total:" must not match)
+    const char *o = strstr(m, "ota:");
+    if (o != nullptr && (o == m || o[-1] == ' ')) return "firmware";
+  }
   for (const auto &k : KINDS) {
     if (strstr(m, k.needle) != nullptr) {
       if (!strcmp(k.kind, "node")) return strstr(m, " offline") ? "node_offline" : "node_online";
@@ -403,7 +414,7 @@ void RBgridComponent::fire_event_(const char *msg, bool fail) {
   k.value = StringRef(kind);
   auto &l = req.data.emplace_back();
   l.key = StringRef("level");
-  l.value = StringRef(fail ? "fail" : "event");
+  l.value = StringRef(fail ? "fail" : (!strcmp(kind, "diag") ? "debug" : "event"));
   auto &m = req.data.emplace_back();
   m.key = StringRef("message");
   m.value = StringRef(msg);
