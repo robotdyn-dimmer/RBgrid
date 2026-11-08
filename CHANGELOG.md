@@ -11,7 +11,7 @@
 ### Remote nodes
 - **Energy records from a node with current-only modules.** A node period with no voltage (voltage 0, energy 0,
   current > 0) is estimated from the hub's nominal voltage, like the live values; the hour is flagged `ESTIMATED`.
-  Needs node firmware 1.2 (older nodes send no records without a voltage module).
+  Needs node firmware 1.5 (older nodes send no records without a voltage module).
 - **A node period longer than 15 minutes** (energy the node counted before it had the hub's clock, e.g. it started
   while the hub was out of reach) is kept: it goes into that period's hour, flagged `OUTAGE`.
 
