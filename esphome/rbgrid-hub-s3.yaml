@@ -6,6 +6,32 @@ esphome:
   project:
     name: rbgrid.hub_s3
     version: 1.2.0-dev
+  # one HA device per point slot (rbgrid: slot_devices: true); the user renames them in HA
+  devices:
+    - id: rbgrid_point_1
+      name: "Point 1"
+    - id: rbgrid_point_2
+      name: "Point 2"
+    - id: rbgrid_point_3
+      name: "Point 3"
+    - id: rbgrid_point_4
+      name: "Point 4"
+    - id: rbgrid_point_5
+      name: "Point 5"
+    - id: rbgrid_point_6
+      name: "Point 6"
+    - id: rbgrid_point_7
+      name: "Point 7"
+    - id: rbgrid_point_8
+      name: "Point 8"
+    - id: rbgrid_point_9
+      name: "Point 9"
+    - id: rbgrid_point_10
+      name: "Point 10"
+    - id: rbgrid_point_11
+      name: "Point 11"
+    - id: rbgrid_point_12
+      name: "Point 12"
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -64,6 +90,7 @@ rbgrid:
   id: rb
   point_slots: 12           # fixed grid; points take free slots at runtime, no YAML change
   slot_current: true        # + "Point N current" per slot
+  slot_devices: true        # each slot's entities under the sub-device rbgrid_point_N (declared above)
   currency: EUR             # label of the money entities = the tariff plan's currency (HA does not convert)
   power:
     name: "Grid power"

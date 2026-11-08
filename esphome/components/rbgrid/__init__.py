@@ -47,6 +47,8 @@ CONF_CURRENT = "current"
 CONF_VOLTAGE = "voltage"
 CONF_SLOT_CURRENT = "slot_current"
 CONF_SLOT_VOLTAGE = "slot_voltage"
+CONF_SLOT_DEVICES = "slot_devices"
+CONF_DEVICE_ID = "device_id"
 CONF_CURRENCY = "currency"
 CONF_ENERGY_DAY_IN = "energy_day_in"
 CONF_ENERGY_DAY_OUT = "energy_day_out"
@@ -127,19 +129,26 @@ def _expand_slots(config):
     n = config.pop(CONF_POINT_SLOTS, 12)
     with_i = config.pop(CONF_SLOT_CURRENT, True)
     with_v = config.pop(CONF_SLOT_VOLTAGE, False)
+    devices = config.pop(CONF_SLOT_DEVICES, False)
     if CONF_SLOTS not in config:
         slots = []
         for i in range(1, n + 1):
+            # slot_devices: each slot's entities belong to the sub-device `rbgrid_point_<i>` (declared under
+            # `esphome: devices:`), so HA shows every point as its own device; entity names are then short.
+            def ent(label, i=i):
+                if devices:
+                    return {CONF_NAME: label.capitalize(), CONF_DEVICE_ID: f"rbgrid_point_{i}"}
+                return {CONF_NAME: f"Point {i} {label}"}
             sl = {
-                CONF_POINT_NAME: {CONF_NAME: f"Point {i} name"},
-                CONF_POWER: {CONF_NAME: f"Point {i} power"},
-                CONF_ENERGY_IN: {CONF_NAME: f"Point {i} energy in"},
-                CONF_ENERGY_OUT: {CONF_NAME: f"Point {i} energy out"},
+                CONF_POINT_NAME: ent("name"),
+                CONF_POWER: ent("power"),
+                CONF_ENERGY_IN: ent("energy in"),
+                CONF_ENERGY_OUT: ent("energy out"),
             }
             if with_i:
-                sl[CONF_CURRENT] = {CONF_NAME: f"Point {i} current"}
+                sl[CONF_CURRENT] = ent("current")
             if with_v:
-                sl[CONF_VOLTAGE] = {CONF_NAME: f"Point {i} voltage"}
+                sl[CONF_VOLTAGE] = ent("voltage")
             slots.append(sl)
         config[CONF_SLOTS] = slots
     return config
@@ -155,6 +164,7 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema({cv.Optional(CONF_POINT_SLOTS, default=12): cv.int_range(min=0, max=MAX_SLOTS),
                cv.Optional(CONF_SLOT_CURRENT, default=True): cv.boolean,
                cv.Optional(CONF_SLOT_VOLTAGE, default=False): cv.boolean,
+               cv.Optional(CONF_SLOT_DEVICES, default=False): cv.boolean,
                cv.Optional(CONF_CURRENCY, default="EUR"): cv.All(cv.string, cv.Length(min=3, max=3))},
               extra=cv.ALLOW_EXTRA),
     _expand_slots,

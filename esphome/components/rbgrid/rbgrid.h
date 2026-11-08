@@ -62,6 +62,8 @@ class RBgridComponent : public Component {
   /// Config version computed off the loop task (rbgrid_core_config_version builds a few KB of JSON).
   static char version_buf[9];
   static std::atomic<bool> version_ready;
+  /// Ask the version task to recompute now (after a command that may change the configuration).
+  static void version_kick();
 
  protected:
   struct Slot {
@@ -108,6 +110,12 @@ class RBgridComponent : public Component {
   std::string last_reply_;
   bool last_ok_{false};
   std::string last_error_;
+  // A reply over the ESPHome JSON cap (5120 B) goes out in base64 parts: the whole reply stays here until the next
+  // command (or 120 s), the client fetches the other parts with {"cmd":"part","rid":R,"part":i}.
+  std::string cache_;
+  uint32_t cache_rid_{0};
+  uint32_t cache_ms_{0};
+  int part_req_{-1};
 };
 
 }  // namespace rbgrid

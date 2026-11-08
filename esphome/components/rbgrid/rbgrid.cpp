@@ -5,7 +5,9 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <algorithm>
 #include <cmath>
+#include "esp_random.h"
 #include <cstdio>
 #include <cstring>
 #include "freertos/FreeRTOS.h"
@@ -31,17 +33,40 @@ std::atomic<bool> RBgridComponent::frame_ready{false};
 char RBgridComponent::version_buf[9] = {0};
 std::atomic<bool> RBgridComponent::version_ready{false};
 static std::atomic<bool> s_core_up{false};
+static TaskHandle_t s_version_task = nullptr;
+static constexpr size_t REPLY_INLINE_MAX = 4000;   // ESPHome's JSON builder caps a response at 5119 bytes
+static constexpr size_t PART_RAW = 3072;           // → 4096 base64 characters per part
+
+void RBgridComponent::version_kick() {
+  if (s_version_task != nullptr) xTaskNotifyGive(s_version_task);
+}
+
+static std::string b64(const char *p, size_t n) {
+  static const char *const T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string o;
+  o.reserve((n + 2) / 3 * 4);
+  for (size_t i = 0; i < n; i += 3) {
+    uint32_t v = (uint8_t) p[i] << 16;
+    if (i + 1 < n) v |= (uint8_t) p[i + 1] << 8;
+    if (i + 2 < n) v |= (uint8_t) p[i + 2];
+    o += T[(v >> 18) & 63];
+    o += T[(v >> 12) & 63];
+    o += i + 1 < n ? T[(v >> 6) & 63] : '=';
+    o += i + 2 < n ? T[v & 63] : '=';
+  }
+  return o;
+}
 
 // Config version off the loop task: the core builds the points + tariff JSON for it (a few KB, tens of ms).
 static void version_task(void *) {
   for (;;) {
-    if (s_core_up.load() && !RBgridComponent::version_ready.load()) {
+    if (s_core_up.load()) {
       char v[9];
       rbgrid_core_config_version(v);
       memcpy(RBgridComponent::version_buf, v, sizeof(v));
       RBgridComponent::version_ready.store(true);
     }
-    vTaskDelay(pdMS_TO_TICKS(30000));
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(30000));   // every 30 s, or at once after a changing command
   }
 }
 
@@ -69,7 +94,7 @@ void RBgridComponent::setup() {
     return;
   }
   if (this->config_version_ != nullptr)
-    xTaskCreatePinnedToCore(version_task, "rbgrid_ver", 6144, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(version_task, "rbgrid_ver", 6144, nullptr, 1, &s_version_task, 0);
 }
 
 void RBgridComponent::loop() {
@@ -135,8 +160,9 @@ void RBgridComponent::publish_frame_() {
   pub_(this->revenue_total_, (float) st.rev_total);
   pub_(this->cost_day_, (float) st.cost_day);
   pub_(this->revenue_day_, (float) st.rev_day);
-  pub_(this->buy_price_, (float) tn.buy_rate_all_in);   // the basis of the cost figures (fees + VAT included)
-  pub_(this->sell_price_, tn.sell_rate);
+  // prices rounded to 5 decimals (the float32 transport still shows ~1e-8 noise beyond that)
+  pub_(this->buy_price_, (float) (std::round(tn.buy_rate_all_in * 1e5) / 1e5));   // basis of the cost figures (fees + VAT)
+  pub_(this->sell_price_, (float) (std::round((double) tn.sell_rate * 1e5) / 1e5));
   if (this->tariff_zone_ != nullptr && this->tariff_zone_->state != tn.zone) this->tariff_zone_->publish_state(tn.zone);
   if (this->time_valid_ != nullptr) this->time_valid_->publish_state(tn.time_valid);
   if (this->tariff_placeholder_ != nullptr) this->tariff_placeholder_->publish_state(tn.placeholder);
@@ -203,9 +229,31 @@ std::string RBgridComponent::command(const std::string &json) {
 // The device reply decides success: an error ack (data.result "error"), a flat {"status":"error"} or an HTTP-style
 // code >= 400 from a point operation. The message comes back as the action's error.
 void RBgridComponent::run_command(const std::string &json) {
-  this->last_reply_ = this->command(json);
   this->last_ok_ = true;
   this->last_error_.clear();
+  this->part_req_ = -1;
+  cJSON *q = cJSON_Parse(json.c_str());
+  const char *cmd = q ? cJSON_GetStringValue(cJSON_GetObjectItem(q, "cmd")) : nullptr;
+  if (cmd != nullptr && !strcmp(cmd, "part")) {   // next part of a large reply, from the cache
+    const cJSON *rid = cJSON_GetObjectItem(q, "rid"), *pt = cJSON_GetObjectItem(q, "part");
+    size_t parts = (this->cache_.size() + PART_RAW - 1) / PART_RAW;
+    if (this->cache_.empty() || millis() - this->cache_ms_ > 120000 || !cJSON_IsNumber(rid) ||
+        (uint32_t) rid->valuedouble != this->cache_rid_ || !cJSON_IsNumber(pt) || pt->valueint < 0 ||
+        (size_t) pt->valueint >= parts) {
+      this->last_ok_ = false;
+      this->last_error_ = "no such part (expired or another command ran since: repeat the command)";
+    } else {
+      this->part_req_ = pt->valueint;
+    }
+    cJSON_Delete(q);
+    return;
+  }
+  bool changing = cmd != nullptr && strcmp(cmd, "get") != 0 && strcmp(cmd, "history") != 0;
+  cJSON_Delete(q);
+  this->cache_.clear();
+  this->cache_.shrink_to_fit();
+  this->last_reply_ = this->command(json);
+  if (changing) version_kick();
   cJSON *r = cJSON_Parse(this->last_reply_.c_str());
   if (r == nullptr) {
     this->last_ok_ = false;
@@ -229,6 +277,29 @@ void RBgridComponent::fill_reply(JsonObject root) {
   root["ok"] = this->last_ok_;
   root["schema"] = 1;
   root["config_version"] = this->version_;
+  if (this->part_req_ >= 0) {   // a cached part
+    size_t parts = (this->cache_.size() + PART_RAW - 1) / PART_RAW, off = (size_t) this->part_req_ * PART_RAW;
+    root["rid"] = this->cache_rid_;
+    root["parts"] = parts;
+    root["part"] = this->part_req_;
+    root["b64"] = b64(this->cache_.data() + off, std::min(PART_RAW, this->cache_.size() - off));
+    this->cache_ms_ = millis();
+    this->part_req_ = -1;
+    return;
+  }
+  if (this->last_reply_.size() > REPLY_INLINE_MAX) {   // too large for one response: part 0 now, the rest on request
+    this->cache_ = std::move(this->last_reply_);
+    this->last_reply_.clear();
+    this->cache_rid_ = this->cache_rid_ + 1 + (esp_random() & 0xFFFF);
+    this->cache_ms_ = millis();
+    size_t parts = (this->cache_.size() + PART_RAW - 1) / PART_RAW;
+    root["rid"] = this->cache_rid_;
+    root["parts"] = parts;
+    root["part"] = 0;
+    root["bytes"] = this->cache_.size();
+    root["b64"] = b64(this->cache_.data(), std::min(PART_RAW, this->cache_.size()));
+    return;
+  }
   JsonDocument doc;
   if (deserializeJson(doc, this->last_reply_) == DeserializationError::Ok) {
     if (doc["type"].is<const char *>()) root["type"] = doc["type"].as<const char *>();
