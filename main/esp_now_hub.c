@@ -17,6 +17,7 @@
  *  - inject_task feeds REALTIME/PERIOD data into rbpower and runs the presence-timeout sweep.
  *  - The public functions are called from the console, the HTTP server and the HA discovery task.
  */
+#include "rbstats_v4_types.h"
 #include "esp_idf_version.h"
 #include "esp_now_hub.h"
 #include "espnow_proto.h"
@@ -80,7 +81,11 @@ static uint32_t s_last_node_fits = 0;
 #define ENH_NOMINAL_V    230.0f   /* fallback voltage for current-only nodes with no V source */
 /** @brief Nominal mains voltage (V) from the hardware config, defined in main.cpp (fallback 230 V).
  *  @return Nominal voltage in V. */
-extern float rbgrid_nominal_voltage_v(void);   /* main.cpp: hardware-config nominal (fallback 230) */
+extern float rbgrid_nominal_voltage_v(void);
+/** @brief Longest node period filed as is (15 min + 1 min of clock slack); a longer one is flagged OUTAGE. */
+#define RBN_PERIOD_MAX_MS     (16u * 60u * 1000u)
+/** @brief Nominal node period (15 min), the slot duration for an over-long one. */
+#define RBN_PERIOD_NOMINAL_MS (15u * 60u * 1000u)   /* main.cpp: hardware-config nominal (fallback 230) */
 /** @brief No REALTIME for this long (ms) marks the unit absent (nodes send REALTIME about every 1 s). */
 #define ESPNOW_PRESENCE_TIMEOUT_MS 15000   /* no REALTIME for this long → mark the unit absent (REALTIME ~1s) */
 /** @brief Latest REALTIME sample of one (node MAC, channel), written by on_recv, consumed by inject_task. */
@@ -976,9 +981,32 @@ static void inject_task(void *arg)
                 /* the period's own boundary (node_ts, wall clock) picks its tariff zone and hour, not the time the
                  * frame arrived — a frame held through a hub restart or a radio gap used to be priced at delivery */
                 if (f.ts > 1600000000u && !ts_future) rbpower_home_set_next_period_end(uid, f.ts);
+                float e_wh = rec->energy_wh, p_avg = rec->avg_power_w, p_max = rec->max_power_w, v_rec = rec->voltage_v;
+                uint32_t dur_ms = rec->period_ms;
+                uint16_t q_extra = 0;
+                /* Current-only channel (no voltage on the node: voltage 0, energy 0, current > 0): estimate from the
+                 * nominal voltage, as the live values do; the hour is flagged ESTIMATED. */
+                if (v_rec <= 0.0f && fabsf(e_wh) < 1e-6f && rec->current_avg_a > 0.0f) {
+                    const float vn = rbgrid_nominal_voltage_v();
+                    p_avg = vn * rec->current_avg_a;
+                    p_max = vn * rec->current_max_a;
+                    e_wh  = p_avg * (float)dur_ms / 3600000.0f;
+                    v_rec = vn;
+                    q_extra |= RBSTATS_Q_ESTIMATED;
+                }
+                /* A period longer than 15 min: the node counted energy before it had the hub's clock (it started
+                 * while the hub was out of reach). The energy is kept, its time inside the span is unknown: it goes
+                 * into this period's hour, flagged OUTAGE, and the slot keeps a 15-min duration so the hour's
+                 * coverage stays sane (same policy as an rbAmp module's energy across a long hub outage). */
+                if (dur_ms > RBN_PERIOD_MAX_MS) {
+                    q_extra |= RBSTATS_Q_OUTAGE;
+                    p_avg = e_wh * 3600000.0f / (float)RBN_PERIOD_NOMINAL_MS;
+                    dur_ms = RBN_PERIOD_NOMINAL_MS;
+                }
+                if (q_extra) rbpower_stats_flag_open_hour(uid, q_extra);
                 rbpower_err_t ie = rbpower_home_inject_period_result(uid, (rbpower_stat_period_type_t)rec->period_type,
-                    rec->avg_power_w, rec->max_power_w, rec->energy_wh, rec->period_ms,
-                    rec->voltage_v, rec->current_avg_a, rec->current_min_a, rec->current_max_a);
+                    p_avg, p_max, e_wh, dur_ms,
+                    v_rec, rec->current_avg_a, rec->current_min_a, rec->current_max_a);
                 if (ie == RBPOWER_OK) ok++; else bad++;
                 ESP_LOGW(TAG, "PERIOD inject unit=0x%04X type=%u avg=%.2fW E=%.4fWh dt=%lums -> %s", (unsigned)uid,
                          rec->period_type, rec->avg_power_w, rec->energy_wh, (unsigned long)rec->period_ms,

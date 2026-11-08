@@ -2916,6 +2916,7 @@ char* rbgrid_json_create_units_config(const rbgrid_json_context_t* context) {
                 cJSON_AddNumberToObject(unit_obj, "phase", unit_def->phase);           /* reserved */
                 cJSON_AddNumberToObject(unit_obj, "group_id", unit_def->group_id);     /* reserved */
                 cJSON_AddNumberToObject(unit_obj, "role_trunk", unit_def->role_trunk); /* reserved */
+                cJSON_AddNumberToObject(unit_obj, "inside", unit_def->inside_unit_id); /* measured inside this point (0 = none) */
 
                 // === ADDITIONAL STATE INFO ===
                 cJSON_AddBoolToObject(unit_obj, "has_realtime_data", home_unit->has_realtime_data);

@@ -285,6 +285,11 @@ typedef struct
     uint32_t ev_charge_threshold_w;   ///< Charging detection threshold, 0..100000 W (0 = system default)
     uint16_t ev_idle_timeout_min;     ///< Idle timeout, 0..1440 min (0 = system default)
 
+    /* Measurement nesting: this point measures a circuit INSIDE another metered point (a charger inside a metered
+     * sub-panel). Informational for the clients' remainder ("unmetered" = input − top-level lines); the hub's own
+     * totals are taken at the grid boundary and never sum lines. 0 = not inside another point. */
+    uint16_t inside_unit_id;          ///< Point this one is measured inside (0 = none)
+
 } rbpower_unit_definition_t;
 
 /* Capability bits (unit_def.caps) — what the unit's SOURCE can measure/provide.
@@ -2633,6 +2638,8 @@ rbpower_unit_id_t rbpower_home_find_unit_by_point(const char* point);
  * @return Definition, or NULL if the unit is not found.
  */
 rbpower_unit_definition_t* rbpower_home_get_unit_definition_mutable(rbpower_unit_id_t unit_id);
+/** @brief After a point is deleted: points measured inside it become top-level (inside_unit_id = 0). @param removed Deleted point. */
+void rbpower_home_clear_inside_refs(rbpower_unit_id_t removed);
 /**
  * @brief Read-only access to a live unit's definition.
  * @param[in] unit_id Unit ID.

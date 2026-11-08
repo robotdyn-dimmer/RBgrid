@@ -8,6 +8,20 @@
   makes every certificate look not valid yet, the hub opens a TLS broker connection only once its clock is set
   (NTP, or by hand); the event log says "mqtt: TLS broker — waiting for the clock". Plain `mqtt://` is not delayed.
 
+### Remote nodes
+- **Energy records from a node with current-only modules.** A node period with no voltage (voltage 0, energy 0,
+  current > 0) is estimated from the hub's nominal voltage, like the live values; the hour is flagged `ESTIMATED`.
+  Needs node firmware 1.2 (older nodes send no records without a voltage module).
+- **A node period longer than 15 minutes** (energy the node counted before it had the hub's clock, e.g. it started
+  while the hub was out of reach) is kept: it goes into that period's hour, flagged `OUTAGE`.
+
+### Points measured inside other points
+- A point can be marked as measured **inside** another one (a charger inside a metered sub-panel):
+  `PATCH /api/v1/units/{id}` `{"inside": <point id>}` (number or hex string; 0, "" or null clears). It must be an
+  existing point other than this one, not the input, and not make a loop. `units-config` shows `inside`; deleting
+  a point makes the points inside it top-level. The hub's own totals don't change (they are taken at the input);
+  the app uses it so the "unmetered" figure doesn't count a nested load twice. `capabilities.pointNesting: true`.
+
 ### API
 - `GET /api/v1/schema` → `quality_bits` now names every bit the hub sets: `SRC_RESTART` (9), `SRC_FW` (10),
   `REVERSE_LOST` (11), `OUTAGE` (12), as well as 0–8. Additive.

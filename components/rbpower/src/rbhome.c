@@ -2817,6 +2817,22 @@ rbpower_err_t rbpower_home_rebind_unit_source(rbpower_unit_id_t unit_id,
     return RBPOWER_OK;
 }
 
+/* Points measured inside a deleted point become top-level. Whole-struct copy-in/copy-out: the definitions live in
+ * PSRAM and partial-word stores there were seen to corrupt the neighbouring bytes on ESP32 rev < 3. */
+void rbpower_home_clear_inside_refs(rbpower_unit_id_t removed)
+{
+    rbpower_home_lock();
+    for (int i = 0; i < g_home_network.units_count && i < RBPOWER_MAX_HOME_UNITS; i++) {
+        rbpower_unit_definition_t *live = &g_home_network.units[i].definition;
+        if (!g_home_network.units[i].has_valid_definition || live->inside_unit_id != removed) continue;
+        rbpower_unit_definition_t nd;
+        memcpy(&nd, live, sizeof(nd));
+        nd.inside_unit_id = 0;
+        memcpy(live, &nd, sizeof(nd));
+    }
+    rbpower_home_unlock();
+}
+
 rbpower_err_t rbpower_home_remove_unit(rbpower_unit_id_t unit_id)
 {
     if (!g_home_network_initialized) return RBPOWER_ERR_NOT_INIT;

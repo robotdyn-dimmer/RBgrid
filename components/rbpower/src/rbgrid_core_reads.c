@@ -412,6 +412,7 @@ char *rbgrid_build_schema_json(void)
     // Explicit capability flags (schema-driven UI; more reliable than inferring from endpoints[]).
     cJSON *cap = cJSON_AddObjectToObject(root, "capabilities");
     cJSON_AddBoolToObject(cap, "espnow", true);
+    cJSON_AddBoolToObject(cap, "pointNesting", true);   /* units-config `inside`, PATCH units/{id} {inside} */
     cJSON_AddBoolToObject(cap, "economics", true);
     cJSON_AddBoolToObject(cap, "summary", true);
     cJSON_AddBoolToObject(cap, "exportCsv", true);
