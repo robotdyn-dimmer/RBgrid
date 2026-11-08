@@ -10,6 +10,7 @@
  * MQTT Discovery configs) and parses the matching POST bodies back into rbpower structures.
  * JSON keys and values emitted here are part of the public API contract (see the API reference).
  */
+#include "rbgrid_core.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -265,6 +266,168 @@ static bool rbjson_extra_supply(const rbpower_home_unit_t* u)
         return g_home_network.specialized.has_alternative_supply &&
                u->definition.unit_id != g_home_network.system.alternative_supply_unit_id;
     return false;
+}
+
+/* System totals at the grid boundary (supply points only; load points are breakdowns and never summed). Shared by
+ * the telemetry builder and rbgrid_core_system_totals() for hosts. Call with rbpower_home_lock held. */
+void rbgrid_core_system_totals(rbgrid_system_totals_t *t, bool with_energy)
+{
+    memset(t, 0, sizeof(*t));
+    float net_power = 0.0f, net_reactive = 0.0f;
+    uint8_t net_direction = g_home_network.system.net_direction;
+    if (g_home_network.specialized.has_main_supply) {
+        rbpower_main_supply_t* msp = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
+        if (msp) {
+            net_power += msp->statistics_3sec.electrical.rms_samples_count > 0 ?
+                msp->statistics_3sec.electrical.power_active_sum / msp->statistics_3sec.electrical.rms_samples_count :
+                msp->realtime_200ms.power_active_w;
+            net_reactive += msp->statistics_3sec.electrical.rms_samples_count > 0 ?
+                msp->statistics_3sec.electrical.power_reactive_sum / msp->statistics_3sec.electrical.rms_samples_count :
+                msp->realtime_200ms.power_reactive_var;
+            net_direction = msp->realtime_200ms.direction;   // main supply drives system direction
+        }
+    }
+    if (g_home_network.specialized.has_main_supply || g_home_network.specialized.has_alternative_supply) {
+        /* further supply-role units beyond the specialized main/alt (a three-phase input split into one point per
+         * phase): part of the grid boundary too */
+        for (int i = 0; i < g_home_network.units_count; i++) {
+            rbpower_home_unit_t* u2 = &g_home_network.units[i];
+            if (!rbjson_extra_supply(u2)) continue;
+            net_power    += u2->realtime_average_200ms.average_200ms.power_active_avg_w;
+            net_reactive += u2->realtime_average_200ms.average_200ms.power_reactive_avg_var;
+        }
+    }
+    if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
+        rbpower_alternative_supply_t* asp = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
+        net_power += asp->statistics_3sec.electrical_samples_count > 0 ?
+            asp->statistics_3sec.power_active_sum / asp->statistics_3sec.electrical_samples_count :
+            asp->realtime_200ms.power_active_w;
+        /* alt reactive too — without it system p_rea is inconsistent with p_act when an alt
+         * supply carries vars. */
+        net_reactive += asp->statistics_3sec.electrical_samples_count > 0 ?
+            asp->statistics_3sec.power_reactive_sum / asp->statistics_3sec.electrical_samples_count :
+            asp->realtime_200ms.power_reactive_var;
+    }
+
+    /* Role-based fallback: on an install without the legacy specialized setup
+     * there are NO specialized main/alt structs — a supply is an ordinary (rbAmp) unit
+     * carrying the MAIN_SUPPLY/ALTERNATIVE_SUPPLY role. Live system power then aggregates by
+     * ROLE across units. Only when neither specialized supply exists (no double-count). */
+    if (!g_home_network.specialized.has_main_supply && !g_home_network.specialized.has_alternative_supply) {
+        for (int i = 0; i < g_home_network.units_count; i++) {
+            rbpower_home_unit_t* u2 = &g_home_network.units[i];
+            if (!u2->has_valid_definition) continue;
+            if (u2->definition.role != RBPOWER_ROLE_MAIN_SUPPLY &&
+                u2->definition.role != RBPOWER_ROLE_ALTERNATIVE_SUPPLY) continue;
+            net_power    += u2->realtime_average_200ms.average_200ms.power_active_avg_w;
+            net_reactive += u2->realtime_average_200ms.average_200ms.power_reactive_avg_var;
+            if (u2->definition.role == RBPOWER_ROLE_MAIN_SUPPLY)
+                net_direction = u2->realtime_average_200ms.zc_analysis.current_direction;
+        }
+    }
+
+    t->p_w = net_power; t->q_var = net_reactive; t->direction = net_direction;
+    {
+        uint8_t units_valid = 0, units_present = 0;
+        for (int i = 0; i < g_home_network.units_count; i++) {
+            if (!g_home_network.units[i].has_valid_definition) continue;
+            units_valid++;
+            if (g_home_network.units[i].hardware_present) units_present++;
+        }
+        t->units_valid = units_valid; t->units_present = units_present;
+    }
+    if (!with_energy) return;
+    {
+        double e_in = 0, e_out = 0, e_day_in = 0, e_day_out = 0;
+        double cost_total = 0, cost_day = 0, rev_total = 0, rev_day = 0;
+        if (g_home_network.specialized.has_main_supply) {
+            rbpower_main_supply_t* ms = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
+            if (ms) {
+                e_in     += ms->lifetime_accumulators.total_energy_consumed_wh;
+                e_out    += ms->lifetime_accumulators.total_energy_supplied_wh;
+                e_day_in += ms->lifetime_accumulators.daily_energy_consumed_wh;
+                e_day_out+= ms->lifetime_accumulators.daily_energy_supplied_wh;
+                cost_total += ms->lifetime_accumulators.total_cost_consumed;
+                cost_day   += ms->lifetime_accumulators.daily_cost_consumed;
+                rev_total  += ms->lifetime_accumulators.total_cost_supplied;
+                rev_day    += ms->lifetime_accumulators.daily_cost_supplied;
+            }
+        }
+        if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
+            rbpower_alternative_supply_t* as = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
+            e_in     += as->lifetime_accumulators.total_energy_consumed_wh;
+            e_out    += as->lifetime_accumulators.total_energy_supplied_wh;
+            e_day_in += as->lifetime_accumulators.daily_energy_consumed_wh;
+            e_day_out+= as->lifetime_accumulators.daily_energy_supplied_wh;
+            cost_total += as->lifetime_accumulators.total_cost_consumed;
+            cost_day   += as->lifetime_accumulators.daily_cost_consumed;
+            rev_total  += as->lifetime_accumulators.total_cost_supplied;
+            rev_day    += as->lifetime_accumulators.daily_cost_supplied;
+        }
+        for (int i = 0; i < g_home_network.units_count; i++) {   /* + further supply points (per phase) */
+            rbpower_home_unit_t* u2 = &g_home_network.units[i];
+            if (!rbjson_extra_supply(u2)) continue;
+            const rbpower_lifetime_accumulators_basic_t* la = &u2->statistics.lifetime_accumulators;
+            e_in      += lifetime_wh(u2->definition.unit_id, true,  la->total_energy_consumed_wh);
+            e_out     += lifetime_wh(u2->definition.unit_id, false, la->total_energy_supplied_wh);
+            e_day_in  += la->daily_energy_consumed_wh;
+            e_day_out += la->daily_energy_supplied_wh;
+            cost_total += la->total_cost_consumed;
+            cost_day   += la->daily_cost_consumed;
+            rev_total  += la->total_cost_supplied;
+            rev_day    += la->daily_cost_supplied;
+        }
+        t->e_in_wh = e_in; t->e_out_wh = e_out; t->e_day_in_wh = e_day_in; t->e_day_out_wh = e_day_out;
+        t->cost_total = cost_total; t->cost_day = cost_day; t->rev_total = rev_total; t->rev_day = rev_day;
+    }
+}
+
+/* Per-point snapshot for hosts. The specialized main / alternative supply keep their live and lifetime values in
+ * their own structs (as the telemetry `main` / `alt` blocks read them); every other point uses its unit record.
+ * Call with rbpower_home_lock held. */
+int rbgrid_core_points_snapshot(rbgrid_point_snap_t *out, int max)
+{
+    int n = 0;
+    for (int i = 0; i < g_home_network.units_count && n < max; i++) {
+        rbpower_home_unit_t *u = &g_home_network.units[i];
+        if (!u->has_valid_definition || !u->definition.is_active) continue;
+        if (u->definition.type == RBPOWER_METRIC_VOLTAGE_BUS) continue;
+        rbgrid_point_snap_t *o = &out[n++];
+        memset(o, 0, sizeof(*o));
+        const rbpower_unit_id_t uid = u->definition.unit_id;
+        o->unit_id = uid;
+        o->inside = u->definition.inside_unit_id;
+        o->role = (uint8_t)u->definition.role;
+        o->present = u->hardware_present;
+        o->estimated = rbpower_get_unit_energy_mode(uid) == RBPOWER_ENERGY_MODE_HOST;
+        strlcpy(o->point, u->definition.point, sizeof(o->point));
+        strlcpy(o->name, u->definition.name, sizeof(o->name));
+        o->p_w = u->realtime_average_200ms.average_200ms.power_active_avg_w;
+        o->i_a = u->realtime_average_200ms.average_200ms.current_rms_avg;
+        o->v_v = u->realtime_average_200ms.average_200ms.voltage_rms_avg;
+        const rbpower_lifetime_accumulators_basic_t *la = &u->statistics.lifetime_accumulators;
+        float fin = la->total_energy_consumed_wh, fout = la->total_energy_supplied_wh;
+        if (g_home_network.specialized.has_main_supply && uid == g_home_network.system.main_supply_unit_id &&
+            g_home_network.specialized.main_supply) {
+            rbpower_main_supply_t *ms = (rbpower_main_supply_t *)g_home_network.specialized.main_supply;
+            o->p_w = ms->statistics_3sec.electrical.rms_samples_count > 0 ?
+                ms->statistics_3sec.electrical.power_active_sum / ms->statistics_3sec.electrical.rms_samples_count :
+                ms->realtime_200ms.power_active_w;
+            fin = ms->lifetime_accumulators.total_energy_consumed_wh;
+            fout = ms->lifetime_accumulators.total_energy_supplied_wh;
+        } else if (g_home_network.specialized.has_alternative_supply && uid == g_home_network.system.alternative_supply_unit_id &&
+                   g_home_network.specialized.alternative_supply) {
+            rbpower_alternative_supply_t *as = (rbpower_alternative_supply_t *)g_home_network.specialized.alternative_supply;
+            o->p_w = as->statistics_3sec.electrical_samples_count > 0 ?
+                as->statistics_3sec.power_active_sum / as->statistics_3sec.electrical_samples_count :
+                as->realtime_200ms.power_active_w;
+            fin = as->lifetime_accumulators.total_energy_consumed_wh;
+            fout = as->lifetime_accumulators.total_energy_supplied_wh;
+        }
+        o->e_in_wh  = lifetime_wh(uid, true, fin);
+        o->e_out_wh = lifetime_wh(uid, false, fout);
+    }
+    return n;
 }
 
 /** @brief Add the CT nominal of a channel in A, from the module's sensor class + the channel's model code
@@ -3219,59 +3382,9 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
      * is only ever set to 0 at init and never updated for injected supplies (net_pwr would read 0
      * while units.main.p_act is non-zero). Supply-role units (main + alt) = the system
      * boundary; load sub-meters are breakdowns, excluded (no double-count). */
-    float net_power = 0.0f, net_reactive = 0.0f;
-    uint8_t net_direction = g_home_network.system.net_direction;
-    if (g_home_network.specialized.has_main_supply) {
-        rbpower_main_supply_t* msp = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
-        if (msp) {
-            net_power += msp->statistics_3sec.electrical.rms_samples_count > 0 ?
-                msp->statistics_3sec.electrical.power_active_sum / msp->statistics_3sec.electrical.rms_samples_count :
-                msp->realtime_200ms.power_active_w;
-            net_reactive += msp->statistics_3sec.electrical.rms_samples_count > 0 ?
-                msp->statistics_3sec.electrical.power_reactive_sum / msp->statistics_3sec.electrical.rms_samples_count :
-                msp->realtime_200ms.power_reactive_var;
-            net_direction = msp->realtime_200ms.direction;   // main supply drives system direction
-        }
-    }
-    if (g_home_network.specialized.has_main_supply || g_home_network.specialized.has_alternative_supply) {
-        /* further supply-role units beyond the specialized main/alt (a three-phase input split into one point per
-         * phase): part of the grid boundary too */
-        for (int i = 0; i < g_home_network.units_count; i++) {
-            rbpower_home_unit_t* u2 = &g_home_network.units[i];
-            if (!rbjson_extra_supply(u2)) continue;
-            net_power    += u2->realtime_average_200ms.average_200ms.power_active_avg_w;
-            net_reactive += u2->realtime_average_200ms.average_200ms.power_reactive_avg_var;
-        }
-    }
-    if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
-        rbpower_alternative_supply_t* asp = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
-        net_power += asp->statistics_3sec.electrical_samples_count > 0 ?
-            asp->statistics_3sec.power_active_sum / asp->statistics_3sec.electrical_samples_count :
-            asp->realtime_200ms.power_active_w;
-        /* alt reactive too — without it system p_rea is inconsistent with p_act when an alt
-         * supply carries vars. */
-        net_reactive += asp->statistics_3sec.electrical_samples_count > 0 ?
-            asp->statistics_3sec.power_reactive_sum / asp->statistics_3sec.electrical_samples_count :
-            asp->realtime_200ms.power_reactive_var;
-    }
-
-    /* Role-based fallback: on an install without the legacy specialized setup
-     * there are NO specialized main/alt structs — a supply is an ordinary (rbAmp) unit
-     * carrying the MAIN_SUPPLY/ALTERNATIVE_SUPPLY role. Live system power then aggregates by
-     * ROLE across units. Only when neither specialized supply exists (no double-count). */
-    if (!g_home_network.specialized.has_main_supply && !g_home_network.specialized.has_alternative_supply) {
-        for (int i = 0; i < g_home_network.units_count; i++) {
-            rbpower_home_unit_t* u2 = &g_home_network.units[i];
-            if (!u2->has_valid_definition) continue;
-            if (u2->definition.role != RBPOWER_ROLE_MAIN_SUPPLY &&
-                u2->definition.role != RBPOWER_ROLE_ALTERNATIVE_SUPPLY) continue;
-            net_power    += u2->realtime_average_200ms.average_200ms.power_active_avg_w;
-            net_reactive += u2->realtime_average_200ms.average_200ms.power_reactive_avg_var;
-            if (u2->definition.role == RBPOWER_ROLE_MAIN_SUPPLY)
-                net_direction = u2->realtime_average_200ms.zc_analysis.current_direction;
-        }
-    }
-
+    rbgrid_system_totals_t st_tot; rbgrid_core_system_totals(&st_tot, false);
+    float net_power = st_tot.p_w, net_reactive = st_tot.q_var;
+    uint8_t net_direction = st_tot.direction;
     cJSON_AddNumberToObject(root, "net_dir", net_direction);
     cJSON_AddNumberToObject(root, "net_pwr", round(net_power * 100) / 100);
 
@@ -3285,56 +3398,15 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
     {
         cJSON* sys = cJSON_CreateObject();
         if (sys) {
-            uint8_t units_valid = 0, units_present = 0;
-            for (int i = 0; i < g_home_network.units_count; i++) {
-                if (!g_home_network.units[i].has_valid_definition) continue;
-                units_valid++;
-                if (g_home_network.units[i].hardware_present) units_present++;
-            }
+            uint8_t units_valid = st_tot.units_valid, units_present = st_tot.units_present;
             cJSON_AddNumberToObject(sys, "p_act",     round(net_power * 100) / 100);
             cJSON_AddNumberToObject(sys, "p_rea",     round(net_reactive * 100) / 100);
             // LEAN: skip the lifetime/economics aggregation (the heavy part — lifetime-accumulator reads
             // across supplies + 8 monetary fields) every push. Clients read these from /api/v1/summary.
             if (!lean) {
-                double e_in = 0, e_out = 0, e_day_in = 0, e_day_out = 0;
-                double cost_total = 0, cost_day = 0, rev_total = 0, rev_day = 0;
-                if (g_home_network.specialized.has_main_supply) {
-                    rbpower_main_supply_t* ms = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
-                    if (ms) {
-                        e_in     += ms->lifetime_accumulators.total_energy_consumed_wh;
-                        e_out    += ms->lifetime_accumulators.total_energy_supplied_wh;
-                        e_day_in += ms->lifetime_accumulators.daily_energy_consumed_wh;
-                        e_day_out+= ms->lifetime_accumulators.daily_energy_supplied_wh;
-                        cost_total += ms->lifetime_accumulators.total_cost_consumed;
-                        cost_day   += ms->lifetime_accumulators.daily_cost_consumed;
-                        rev_total  += ms->lifetime_accumulators.total_cost_supplied;
-                        rev_day    += ms->lifetime_accumulators.daily_cost_supplied;
-                    }
-                }
-                if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
-                    rbpower_alternative_supply_t* as = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
-                    e_in     += as->lifetime_accumulators.total_energy_consumed_wh;
-                    e_out    += as->lifetime_accumulators.total_energy_supplied_wh;
-                    e_day_in += as->lifetime_accumulators.daily_energy_consumed_wh;
-                    e_day_out+= as->lifetime_accumulators.daily_energy_supplied_wh;
-                    cost_total += as->lifetime_accumulators.total_cost_consumed;
-                    cost_day   += as->lifetime_accumulators.daily_cost_consumed;
-                    rev_total  += as->lifetime_accumulators.total_cost_supplied;
-                    rev_day    += as->lifetime_accumulators.daily_cost_supplied;
-                }
-                for (int i = 0; i < g_home_network.units_count; i++) {   /* + further supply points (per phase) */
-                    rbpower_home_unit_t* u2 = &g_home_network.units[i];
-                    if (!rbjson_extra_supply(u2)) continue;
-                    const rbpower_lifetime_accumulators_basic_t* la = &u2->statistics.lifetime_accumulators;
-                    e_in      += lifetime_wh(u2->definition.unit_id, true,  la->total_energy_consumed_wh);
-                    e_out     += lifetime_wh(u2->definition.unit_id, false, la->total_energy_supplied_wh);
-                    e_day_in  += la->daily_energy_consumed_wh;
-                    e_day_out += la->daily_energy_supplied_wh;
-                    cost_total += la->total_cost_consumed;
-                    cost_day   += la->daily_cost_consumed;
-                    rev_total  += la->total_cost_supplied;
-                    rev_day    += la->daily_cost_supplied;
-                }
+                rbgrid_system_totals_t et; rbgrid_core_system_totals(&et, true);
+                double e_in = et.e_in_wh, e_out = et.e_out_wh, e_day_in = et.e_day_in_wh, e_day_out = et.e_day_out_wh;
+                double cost_total = et.cost_total, cost_day = et.cost_day, rev_total = et.rev_total, rev_day = et.rev_day;
                 cJSON_AddNumberToObject(sys, "e_in",      round(e_in * 100) / 100);
                 cJSON_AddNumberToObject(sys, "e_out",     round(e_out * 100) / 100);
                 cJSON_AddNumberToObject(sys, "e_day_in",  round(e_day_in * 100) / 100);

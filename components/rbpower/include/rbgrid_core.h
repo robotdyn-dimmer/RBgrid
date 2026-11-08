@@ -180,6 +180,55 @@ char *rbgrid_build_summary_json(rbpower_unit_id_t unit, int sp, const char *peri
  */
 bool rbgrid_base_w(rbpower_unit_id_t unit, float *base_w, int *hours, int *nights);
 
+/* ---- Snapshots for hosts (no JSON) --------------------------------------------------------- */
+
+/** @brief System totals at the grid boundary (supply points only). */
+typedef struct {
+    float   p_w;            ///< Net active power, W (signed: import > 0)
+    float   q_var;          ///< Net reactive power, var
+    uint8_t direction;      ///< System flow direction (as telemetry `net_dir`)
+    uint8_t units_valid;    ///< Configured points
+    uint8_t units_present;  ///< Points with their source present
+    double  e_in_wh;        ///< Lifetime import, Wh (non-decreasing)
+    double  e_out_wh;       ///< Lifetime export, Wh (non-decreasing)
+    double  e_day_in_wh;    ///< Today's import, Wh
+    double  e_day_out_wh;   ///< Today's export, Wh
+    double  cost_total, cost_day, rev_total, rev_day;   ///< Money, plan currency
+} rbgrid_system_totals_t;
+
+/**
+ * @brief System totals, the same figures as telemetry `system{}`.
+ * @param[out] t            Totals.
+ * @param[in]  with_energy  Also the lifetime/day energy and money (a little more work).
+ * @note Call with rbpower_home_lock() held.
+ */
+void rbgrid_core_system_totals(rbgrid_system_totals_t *t, bool with_energy);
+
+/** @brief One point's live values and lifetime energy. */
+typedef struct {
+    uint16_t unit_id;       ///< Point id
+    uint16_t inside;        ///< Point it is measured inside (0 = top level)
+    uint8_t  role;          ///< rbpower_load_role_t
+    bool     present;       ///< Source present (module / node heard)
+    bool     estimated;     ///< Energy is a host estimate (current-only source)
+    char     point[33];     ///< Point slug
+    char     name[32];      ///< Display name
+    float    p_w;           ///< Active power, W (signed)
+    float    i_a;           ///< RMS current, A
+    float    v_v;           ///< RMS voltage, V (0 = unknown)
+    double   e_in_wh;       ///< Lifetime energy in, Wh
+    double   e_out_wh;      ///< Lifetime energy out, Wh
+} rbgrid_point_snap_t;
+
+/**
+ * @brief Snapshot of every point (the voltage bus excluded), in point-list order.
+ * @param[out] out  Array of at least @p max entries.
+ * @param[in]  max  Capacity.
+ * @return Number of entries written.
+ * @note Call with rbpower_home_lock() held; copy, release the lock, then publish.
+ */
+int rbgrid_core_points_snapshot(rbgrid_point_snap_t *out, int max);
+
 /* ---- Hooks main/ registers (ESP-NOW hub lives above this component) ------------------------- */
 
 /** @brief Register the ESP-NOW status JSON builder (`cmd get espnow`). @param fn Builder. */
