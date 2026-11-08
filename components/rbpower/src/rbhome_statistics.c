@@ -14,6 +14,7 @@
  * @date 2025-01-10
  */
 
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "nvs.h"            /* open-HOUR accumulator persist/restore across reboots */
 #include "rbpower.h"
 #include "rbpower_enums.h"
@@ -1591,7 +1592,7 @@ static void hour_persist(uint8_t unit_idx)
     uint32_t h = (rbtime_is_time_valid() && s_hour_of_acc[unit_idx]) ? s_hour_of_acc[unit_idx] : hour_start_now();
     if (h == 0 || !acc->is_active || acc->metadata.input_periods_received == 0) return;
     nvs_handle_t nh;
-    if (nvs_open("rbhour", NVS_READWRITE, &nh) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbhour", NVS_READWRITE, &nh) != ESP_OK) return;
     static rbhome_hour_blob_t b;   /* ~accumulator-sized: off the stats task stack (callers hold the home lock) */
     memset(&b, 0, sizeof(b));
     b.magic = RBHOME_HOUR_MAGIC; b.hour_ts = h;
@@ -1605,7 +1606,7 @@ static void hour_persist(uint8_t unit_idx)
         rbpower_diag_printf("FAIL hour persist u%u: %s", unit_idx, esp_err_to_name(e));
     } else {
         nvs_stats_t st; size_t nfree = 0, nused = 0;
-        if (nvs_get_stats(NULL, &st) == ESP_OK) { nfree = st.free_entries; nused = st.used_entries; }
+        if (nvs_get_stats(rbgrid_nvs_partition(), &st) == ESP_OK) { nfree = st.free_entries; nused = st.used_entries; }
         rbpower_diag_printf("%shour persist u%u ts=%lu quarters=%lu E=%.3fWh nvs=%u/%u", nfree < 40 ? "FAIL " : "",
                             unit_idx, (unsigned long)h, (unsigned long)acc->metadata.input_periods_received,
                             acc->energy.consumed_wh_accumulator, (unsigned)nused, (unsigned)(nused + nfree));
@@ -1616,7 +1617,7 @@ static void hour_persist(uint8_t unit_idx)
 static void hour_persist_erase(uint8_t unit_idx)
 {
     nvs_handle_t nh;
-    if (nvs_open("rbhour", NVS_READWRITE, &nh) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbhour", NVS_READWRITE, &nh) != ESP_OK) return;
     char key[8]; snprintf(key, sizeof(key), "u%u", (unsigned)unit_idx);
     if (nvs_erase_key(nh, key) == ESP_OK) nvs_commit(nh);
     nvs_close(nh);
@@ -1630,7 +1631,7 @@ static void hour_restore_once(uint8_t unit_idx)
     if (h == 0) return;                                   /* no wall clock yet — try again next quarter */
     s_hour_restore_tried[unit_idx] = true;
     nvs_handle_t nh;
-    if (nvs_open("rbhour", NVS_READONLY, &nh) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbhour", NVS_READONLY, &nh) != ESP_OK) return;
     char key[8]; snprintf(key, sizeof(key), "u%u", (unsigned)unit_idx);
     static rbhome_hour_blob_t b;   /* off the stack (rollup holds the home lock) */
     size_t len = sizeof(b);

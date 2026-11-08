@@ -21,6 +21,7 @@
  * @date 2025-01-10
  */
 
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbpower.h"
 #include "rbpower_enums.h"
 #include "rbpower_constants.h"
@@ -269,7 +270,7 @@ static bool nm_key(uint8_t i, char key[12])
 static void nm_persist(uint8_t i)
 {
     char key[12]; nvs_handle_t h;
-    if (!nm_key(i, key) || nvs_open("rbnm", NVS_READWRITE, &h) != ESP_OK) return;
+    if (!nm_key(i, key) || rbgrid_nvs_open("rbnm", NVS_READWRITE, &h) != ESP_OK) return;
     esp_err_t e = nvs_set_blob(h, key, &g_net_metering[i], sizeof(g_net_metering[i]));
     if (e == ESP_OK) e = nvs_commit(h);
     if (e != ESP_OK) {
@@ -293,7 +294,7 @@ void rbpower_tariff_net_metering_forget(rbpower_unit_id_t unit_id)
     uint8_t i = find_unit_index_by_id(unit_id);
     if (i == 0xFF || i >= RBPOWER_MAX_HOME_UNITS) return;
     char key[12]; nvs_handle_t h;
-    if (nm_key(i, key) && nvs_open("rbnm", NVS_READWRITE, &h) == ESP_OK) {
+    if (nm_key(i, key) && rbgrid_nvs_open("rbnm", NVS_READWRITE, &h) == ESP_OK) {
         (void)nvs_erase_key(h, key);
         (void)nvs_commit(h);
         nvs_close(h);
@@ -307,7 +308,7 @@ static void nm_restore(uint8_t i)
     if (i >= RBPOWER_MAX_HOME_UNITS || s_nm_restored[i]) return;
     s_nm_restored[i] = true;
     char key[12]; nvs_handle_t h;
-    if (!nm_key(i, key) || nvs_open("rbnm", NVS_READONLY, &h) != ESP_OK) return;
+    if (!nm_key(i, key) || rbgrid_nvs_open("rbnm", NVS_READONLY, &h) != ESP_OK) return;
     size_t len = sizeof(g_net_metering[i]);
     esp_err_t e = nvs_get_blob(h, key, &g_net_metering[i], &len);
     nvs_close(h);

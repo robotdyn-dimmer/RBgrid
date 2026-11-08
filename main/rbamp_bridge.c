@@ -22,6 +22,7 @@
  *  - s_hostacc is shared between the poll task and the collector and is guarded by s_hostacc_mux.
  */
 
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbamp_bridge.h"
 #include "rbstats_v4_types.h"
 #include "rbfault.h"   /* test builds: simulated long outage */
@@ -622,7 +623,7 @@ static void anchor_save(uint8_t m, const rbamp_std_energy_t *e) { anchor_write(m
 static void anchor_write(uint8_t m, const rbamp_std_energy_t *e, bool force)
 {
     nvs_handle_t h;
-    if (nvs_open("rbampan", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbampan", NVS_READWRITE, &h) != ESP_OK) return;
     rbamp_anchor3_t a; memset(&a, 0, sizeof(a));
     a.magic = RBAMP_ANCHOR_MAGIC3;
     a.ts    = rbtime_is_time_valid() ? (uint32_t)rbtime_get_unix_timestamp() : 0;
@@ -654,7 +655,7 @@ static void anchor_write(uint8_t m, const rbamp_std_energy_t *e, bool force)
 static bool anchor_load(uint8_t m, rbamp_anchor_t *out)
 {
     nvs_handle_t h;
-    if (nvs_open("rbampan", NVS_READONLY, &h) != ESP_OK) return false;
+    if (rbgrid_nvs_open("rbampan", NVS_READONLY, &h) != ESP_OK) return false;
     char key[8]; snprintf(key, sizeof(key), "m%u", (unsigned)m);
     union { rbamp_anchor3_t a3; rbamp_anchor2_t a2; rbamp_anchor1_t a1; uint8_t raw[sizeof(rbamp_anchor3_t) + 64]; } b;
     size_t len = sizeof(b);
@@ -826,7 +827,7 @@ static void hourq_restore(uint8_t m)
     s_hourq_done[m] = true;
     uint32_t now = (uint32_t)rbtime_get_unix_timestamp();
     nvs_handle_t h;
-    if (nvs_open("rbampan", NVS_READONLY, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbampan", NVS_READONLY, &h) != ESP_OK) return;
     char key[8]; snprintf(key, sizeof(key), "h%u", (unsigned)m);
     rbamp_hourq_t q = {0}; size_t len = sizeof(q);
     bool ok = nvs_get_blob(h, key, &q, &len) == ESP_OK && len == sizeof(q);
@@ -842,7 +843,7 @@ static void flag_module_hour_bits(uint8_t m, uint16_t bits)
     if (rbtime_is_time_valid()) {
         uint32_t now = (uint32_t)rbtime_get_unix_timestamp(), hr = now - now % 3600u;
         nvs_handle_t h;
-        if (nvs_open("rbampan", NVS_READWRITE, &h) == ESP_OK) {
+        if (rbgrid_nvs_open("rbampan", NVS_READWRITE, &h) == ESP_OK) {
             char key[8]; snprintf(key, sizeof(key), "h%u", (unsigned)m);
             rbamp_hourq_t q = {0}; size_t len = sizeof(q);
             if (nvs_get_blob(h, key, &q, &len) != ESP_OK || len != sizeof(q) || q.hour != hr) { q.hour = hr; q.bits = 0; }
@@ -1578,7 +1579,7 @@ static void srcid_check(uint8_t m, const char *where)
     if (bc == 0xFFFFFFFFu) return;
     bc &= 0xFFFF;
     nvs_handle_t h;
-    if (nvs_open("rbampan", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbampan", NVS_READWRITE, &h) != ESP_OK) return;
     char key[8]; snprintf(key, sizeof(key), "b%u", (unsigned)m);
     rbamp_srcid_t old = {0}, now = { RBAMP_SRCID_MAGIC, (uint16_t)bc, md.fw };
     size_t len = sizeof(old);

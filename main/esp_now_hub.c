@@ -17,6 +17,7 @@
  *  - inject_task feeds REALTIME/PERIOD data into rbpower and runs the presence-timeout sweep.
  *  - The public functions are called from the console, the HTTP server and the HA discovery task.
  */
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "esp_idf_version.h"
 #include "esp_now_hub.h"
 #include "espnow_proto.h"
@@ -229,14 +230,14 @@ static void enh_dedup_persist(const uint8_t *mac, uint32_t seq, uint32_t ts)
 {
     nvs_handle_t h; char key[12]; uint32_t v[2] = { seq, ts };
     enh_dedup_nvs_key(mac, key);
-    if (nvs_open("espnow_dd", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("espnow_dd", NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_blob(h, key, v, sizeof(v)); nvs_commit(h); nvs_close(h);
 }
 static void enh_dedup_restore(const uint8_t *mac)
 {
     nvs_handle_t h; char key[12]; uint32_t v[2]; size_t l = sizeof(v);
     enh_dedup_nvs_key(mac, key);
-    if (nvs_open("espnow_dd", NVS_READONLY, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("espnow_dd", NVS_READONLY, &h) != ESP_OK) return;
     if (nvs_get_blob(h, key, v, &l) == ESP_OK && l == sizeof(v)) {
         portENTER_CRITICAL(&s_units_mux);
         if (!enh_dedup_seen(mac, v[0], v[1])) enh_dedup_add(mac, v[0], v[1]);
@@ -398,7 +399,7 @@ static enh_nodecfg_slot_t *ncfg_get(const uint8_t mac[6], bool create)
         /* not cached yet: load if stored */
         nvs_handle_t h; char key[12]; enh_nodecfg_t c; size_t l = sizeof(c);
         ncfg_key(mac, key);
-        if (nvs_open("espnow_nc", NVS_READONLY, &h) != ESP_OK) return NULL;
+        if (rbgrid_nvs_open("espnow_nc", NVS_READONLY, &h) != ESP_OK) return NULL;
         esp_err_t e = nvs_get_blob(h, key, &c, &l);
         nvs_close(h);
         if (e != ESP_OK || l != sizeof(c)) return NULL;
@@ -417,7 +418,7 @@ static void ncfg_save(enh_nodecfg_slot_t *sl)
 {
     nvs_handle_t h; char key[12];
     ncfg_key(sl->mac, key);
-    if (nvs_open("espnow_nc", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("espnow_nc", NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_blob(h, key, &sl->c, sizeof(sl->c)); nvs_commit(h); nvs_close(h);
     sl->dirty = false;
 }
@@ -440,7 +441,7 @@ static const char *s_pmk_source = "none";
 static void hub_pmk_load(void)
 {
     nvs_handle_t h; size_t sz = sizeof(s_pmk);
-    if (nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) { esp_fill_random(s_pmk, sizeof(s_pmk)); s_pmk_source = "ram"; return; }
+    if (rbgrid_nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) { esp_fill_random(s_pmk, sizeof(s_pmk)); s_pmk_source = "ram"; return; }
     if (nvs_get_blob(h, "pmk", s_pmk, &sz) == ESP_OK && sz == sizeof(s_pmk)) {
         s_pmk_source = "stored";
     } else {
@@ -1168,13 +1169,13 @@ bool esp_now_hub_running(void) { return s_running; }
 int8_t esp_now_hub_enabled_setting(void)
 {
     nvs_handle_t h; uint8_t v = 0xFF;
-    if (nvs_open("espnow_cfg", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "enabled", &v); nvs_close(h); }
+    if (rbgrid_nvs_open("espnow_cfg", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "enabled", &v); nvs_close(h); }
     return v == 0xFF ? -1 : (int8_t)(v ? 1 : 0);
 }
 static void esp_now_hub_set_enabled_setting(bool on)
 {
     nvs_handle_t h;
-    if (nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_u8(h, "enabled", on ? 1 : 0); nvs_commit(h); nvs_close(h);
 }
 
@@ -1347,7 +1348,7 @@ uint32_t esp_now_hub_delnode_cascade(const uint8_t mac[6])
     espnow_publish_event("removed", mac);
     {   /* forget its settings: a node paired again starts from all channels on (the node resets too) */
         nvs_handle_t h; char key[12]; ncfg_key(mac, key);
-        if (nvs_open("espnow_nc", NVS_READWRITE, &h) == ESP_OK) { nvs_erase_key(h, key); nvs_commit(h); nvs_close(h); }
+        if (rbgrid_nvs_open("espnow_nc", NVS_READWRITE, &h) == ESP_OK) { nvs_erase_key(h, key); nvs_commit(h); nvs_close(h); }
         for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
             if (s_ncfg[i].used && memcmp(s_ncfg[i].mac, mac, 6) == 0) memset(&s_ncfg[i], 0, sizeof(s_ncfg[i]));
     }

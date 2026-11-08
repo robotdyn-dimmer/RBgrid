@@ -13,4 +13,15 @@ menu "RBPower Configuration"
             enabled when debugging specific Flash or statistics issues.
             This will significantly impact performance.
 
+    config RBGRID_NVS_PARTITION
+        string "NVS partition for RBgrid data"
+        default "nvs"
+        help
+            NVS partition that holds RBgrid's own data: lifetime energy anchors, the open hour, net metering,
+            migration flags, the ESP-NOW key / node settings, rbAmp anchors, OTA rollback notes.
+            "nvs" (default, the product image): the default NVS partition, as on every installed hub.
+            Another label (e.g. "rbnvs" in a build hosted by ESPHome) keeps this data in its own partition,
+            so a host that erases the default NVS cannot take it. The partition must exist in the partition
+            table. Wi-Fi credentials and the Wi-Fi driver's own data stay in the default "nvs".
+
 endmenu # RBPower Configuration

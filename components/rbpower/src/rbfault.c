@@ -1,6 +1,7 @@
 /* SPDX-FileCopyrightText: 2026 Zhuhai RobotDyn Technology Co., Ltd.
  * SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 */
 /* Fault injection (see rbfault.h). Compiled empty unless RBGRID_FAULT_INJECT. */
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbfault.h"
 #ifdef RBGRID_FAULT_INJECT
 #include <string.h>
@@ -33,7 +34,7 @@ void rbfault_arm_skip(rbfault_point_t p, uint32_t count, uint32_t skip)
     if (p >= RBFAULT_COUNT) return;
     if (p == RBFAULT_LFS_MOUNT_IO || p == RBFAULT_GAP_PLUS_DAY) {
         nvs_handle_t h;
-        if (nvs_open("rbfault", NVS_READWRITE, &h) == ESP_OK) {
+        if (rbgrid_nvs_open("rbfault", NVS_READWRITE, &h) == ESP_OK) {
             nvs_set_u32(h, p == RBFAULT_LFS_MOUNT_IO ? "mount_io" : "gap_day", count); nvs_commit(h); nvs_close(h);
         }
         return;
@@ -48,7 +49,7 @@ void rbfault_load_boot(void)
 {
     nvs_handle_t h;
     uint32_t n = 0;
-    if (nvs_open("rbfault", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbfault", NVS_READWRITE, &h) != ESP_OK) return;
     if (nvs_get_u32(h, "mount_io", &n) == ESP_OK && n) {
         s_left[RBFAULT_LFS_MOUNT_IO] = n;
         nvs_erase_key(h, "mount_io");    /* one boot only */

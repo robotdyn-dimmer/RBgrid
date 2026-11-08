@@ -1625,7 +1625,7 @@ static int rbgrid_dbg_etstat(int argc, char **argv) {
 #endif
     {   /* NVS budget (anchors / open hour / net-metering all live here; a full partition drops them silently) */
         nvs_stats_t st;
-        if (nvs_get_stats(NULL, &st) == ESP_OK && n < 740)
+        if (nvs_get_stats(rbgrid_nvs_partition(), &st) == ESP_OK && n < 740)
             n = rb_scat(buf, 768, n, " | nvs used=%u free=%u ns=%u", (unsigned)st.used_entries, (unsigned)st.free_entries, (unsigned)st.namespace_count);
     }
     rbbench_reply("%s", buf);
@@ -1990,7 +1990,7 @@ static void ota_report_rollback(void)
     char sha[17];
     for (int i = 0; i < 8; i++) sprintf(&sha[i * 2], "%02x", d.app_elf_sha256[i]);
     nvs_handle_t h;
-    if (nvs_open("rbota", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbota", NVS_READWRITE, &h) != ESP_OK) return;
     char seen[17] = {0}; size_t n = sizeof(seen);
     if (nvs_get_str(h, "rb_seen", seen, &n) != ESP_OK || strcmp(seen, sha) != 0) {
         const esp_partition_t *run = esp_ota_get_running_partition();

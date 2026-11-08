@@ -14,6 +14,7 @@
  * (survives power cycles) -> start from zero.
  */
 
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbpower_lifetime_accumulators.h"
 #include "rbpower_lifetime_api.h"
 #include "rbhome_types.h"
@@ -282,7 +283,7 @@ rbpower_err_t rbpower_lifetime_init(void) {
         // RTC empty/corrupt (power cycle, OTA with a layout change) -> last NVS snapshot.
         bool nvs_restored = false;
         nvs_handle_t h;
-        if (nvs_open("rbltm", NVS_READONLY, &h) == ESP_OK) {
+        if (rbgrid_nvs_open("rbltm", NVS_READONLY, &h) == ESP_OK) {
             size_t len = sizeof(g_rtc_backup);
             if (nvs_get_blob(h, "snap", &g_rtc_backup, &len) == ESP_OK &&
                 len == sizeof(g_rtc_backup) && validate_rtc_data()) {
@@ -1000,7 +1001,7 @@ rbpower_err_t rbpower_lifetime_persist_to_nvs(void) {
         return RBPOWER_ERR_NOT_INIT;
     }
     nvs_handle_t h;
-    esp_err_t e = nvs_open("rbltm", NVS_READWRITE, &h);
+    esp_err_t e = rbgrid_nvs_open("rbltm", NVS_READWRITE, &h);
     if (e != ESP_OK) {
         ESP_LOGW(TAG, "NVS open failed for lifetime snapshot: %s", esp_err_to_name(e));
         return RBPOWER_ERR_INVALID_STATE;

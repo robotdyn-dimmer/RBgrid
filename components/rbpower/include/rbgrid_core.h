@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include "rbpower.h"
 #include "rbjson.h"
+#include "nvs.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -82,6 +83,28 @@ void rbgrid_core_notify_reboot(void);
  * Idempotent.
  */
 void rbgrid_core_image_confirmed(void);
+
+/* ---- NVS (RBgrid's own data) ------------------------------------------------------------------ */
+
+/** @brief Label of the NVS partition for RBgrid data (CONFIG_RBGRID_NVS_PARTITION, default "nvs"). */
+const char *rbgrid_nvs_partition(void);
+/**
+ * @brief Initialise RBgrid's NVS partition when it is not the default one (no-op for "nvs").
+ *
+ * A partition that is full or from a newer NVS version is erased and initialised again, as the default
+ * partition is at boot. Safe to call more than once.
+ *
+ * @return ESP_OK, or the nvs_flash error.
+ */
+esp_err_t rbgrid_nvs_init(void);
+/**
+ * @brief nvs_open() on RBgrid's NVS partition. Use for all RBgrid data namespaces (not for Wi-Fi).
+ * @param[in]  ns      Namespace.
+ * @param[in]  mode    NVS_READONLY / NVS_READWRITE.
+ * @param[out] handle  Handle.
+ * @return As nvs_open_from_partition().
+ */
+esp_err_t rbgrid_nvs_open(const char *ns, nvs_open_mode_t mode, nvs_handle_t *handle);
 
 /* ---- Factory reset ------------------------------------------------------------------------- */
 

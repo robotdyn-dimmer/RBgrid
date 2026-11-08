@@ -7,6 +7,7 @@
  *        boot flags in NVS, and storage diagnostic tests.
  */
 
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbstorage.h"
 #include "rbstorage_types.h"
 #include "rbstorage_transfer_types.h"
@@ -474,7 +475,7 @@ esp_err_t rbpower_storage_load_boot_flags(void)
     nvs_handle_t nvs_handle;
     esp_err_t ret;
     
-    ret = nvs_open(RBSTORAGE_NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    ret = rbgrid_nvs_open(RBSTORAGE_NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
     if (ret != ESP_OK) {
         return ret;
     }
@@ -529,7 +530,7 @@ esp_err_t rbpower_storage_save_boot_flags(void)
     nvs_handle_t nvs_handle;
     esp_err_t ret;
     
-    ret = nvs_open(RBSTORAGE_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    ret = rbgrid_nvs_open(RBSTORAGE_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (ret != ESP_OK) {
         return ret;
     }
