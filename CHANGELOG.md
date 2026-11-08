@@ -8,6 +8,10 @@
   makes every certificate look not valid yet, the hub opens a TLS broker connection only once its clock is set
   (NTP, or by hand); the event log says "mqtt: TLS broker — waiting for the clock". Plain `mqtt://` is not delayed.
 
+### API
+- `GET /api/v1/schema` → `quality_bits` now names every bit the hub sets: `SRC_RESTART` (9), `SRC_FW` (10),
+  `REVERSE_LOST` (11), `OUTAGE` (12), as well as 0–8. Additive.
+
 ## v1.1.7 — 2026-11-08
 
 ### Stored data survives faults
