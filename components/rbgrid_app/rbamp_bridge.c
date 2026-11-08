@@ -2961,7 +2961,8 @@ int rbamp_bridge_module_counts(int *online)
 {
     int on = 0, n = s_cfg.module_count;
     for (int m = 0; m < n && m < RBAMP_MAX_MODULES; ++m)
-        if (s_dev[m] != NULL && s_poll_fail_n[m] < 3) on++;   /* probed and its polls answer */
+        if (s_dev[m] != NULL && s_poll_fail_n[m] < 3 &&
+            !(s_poll_pause_until_us[m] && esp_timer_get_time() < s_poll_pause_until_us[m])) on++;   /* probed, polled, answers */
     if (online) *online = on;
     return n;
 }

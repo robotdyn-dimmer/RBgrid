@@ -14,6 +14,7 @@
    {"op":"bus","module":0,"bus":1}             the module was moved to the other bus (same address)
    {"op":"drdy","module":0,"gpio":33}          the module's own DRDY line (-1 = the shared fleet line)
    {"op":"pins","bus":0,"sda":8,"scl":9}       bus pins (board-profile checked), applied after a restart; "off":true
+   {"op":"pause","module":0,"seconds":120}     test: stop polling the module for a while (0 = resume); a poll hole
    @endverbatim
  * Reply: the I2C state (or the scan result) with "status":"ok", or {"status":"error","code","message"}; *status is
  * the HTTP-style code (200, 400, 404, 409).
@@ -23,6 +24,7 @@
 #include <string.h>
 #include "cJSON.h"
 #include "rbamp_bridge.h"
+#include "rbevlog.h"
 
 /** Integer field @p k of @p b (number or numeric string, "0x51" accepted), else @p dflt. */
 static int num(const cJSON *b, const char *k, int dflt)
@@ -107,8 +109,17 @@ char *rbi2c_action(const cJSON *req, int *status)
         int sda = off ? -1 : num(req, "sda", -2), scl = off ? -1 : num(req, "scl", -2);
         e = (bus < 0 || bus > 1 || sda == -2 || scl == -2) ? ESP_ERR_INVALID_ARG
                                                           : rbamp_bridge_i2c_set_pins((uint8_t)bus, sda, scl, why, sizeof(why));
+    } else if (!strcmp(op, "pause")) {
+        int m = num(req, "module", -1), sec = num(req, "seconds", -1);
+        e = (m < 0 || sec < 0 || sec > 3600 || rbamp_bridge_poll_pause((uint8_t)m, (uint32_t)sec) != 0) ? ESP_ERR_INVALID_ARG : ESP_OK;
+        if (e == ESP_OK) {
+            char line[64];
+            if (sec) snprintf(line, sizeof(line), "i2c: module %d poll paused for %d s (test)", m, sec);
+            else     snprintf(line, sizeof(line), "i2c: module %d poll resumed (test)", m);
+            rbevlog_add(line);
+        }
     } else {
-        return err(status, 404, "OP", "op: state | scan | add | address | bus | drdy | pins");
+        return err(status, 404, "OP", "op: state | scan | add | address | bus | drdy | pins | pause");
     }
     return result(status, e, why);
 }

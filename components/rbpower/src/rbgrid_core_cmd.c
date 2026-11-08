@@ -244,7 +244,12 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
         } else {
             int st = 200;
             char *rep = s_espnow_action(data, &st);
-            ack = cmd_ack_json("set", section, st == 200 ? "ok" : "error", st == 200 ? "espnow action done" : "espnow action failed", id);
+            const char *why = "espnow action failed";   /* the action's own message, if it gave one */
+            cJSON *rj = (st != 200 && rep) ? cJSON_Parse(rep) : NULL;
+            const char *m = rj ? cJSON_GetStringValue(cJSON_GetObjectItem(rj, "message")) : NULL;
+            if (m) { snprintf(msg, sizeof(msg), "%s", m); why = msg; }
+            ack = cmd_ack_json("set", section, st == 200 ? "ok" : "error", st == 200 ? "espnow action done" : why, id);
+            cJSON_Delete(rj);
             /* carry the action's own reply (same JSON as the HTTP answer) */
             cJSON *a = ack ? cJSON_Parse(ack) : NULL, *r = rep ? cJSON_Parse(rep) : NULL;
             cJSON *ad = a ? cJSON_GetObjectItem(a, "data") : NULL;
@@ -253,6 +258,19 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
         }
     } else
     if (strcmp(section, "tariff") == 0) {
+        /* `data` may be the whole `get tariff` document ({"type":"tariff_plan_list_config","data":{"list":[plan]}}),
+         * just {"list":[plan]}, or a bare plan object: wrap the short forms into the document the parser reads. */
+        if (!cJSON_GetObjectItem(data, "type")) {
+            cJSON* doc = cJSON_CreateObject();
+            cJSON* dd = cJSON_AddObjectToObject(doc, "data");
+            const cJSON* lst = cJSON_GetObjectItem(data, "list");
+            cJSON_AddStringToObject(doc, "type", "tariff_plan_list_config");
+            if (cJSON_IsArray(lst)) cJSON_AddItemToObject(dd, "list", cJSON_Duplicate(lst, 1));
+            else { cJSON* l = cJSON_AddArrayToObject(dd, "list"); cJSON_AddItemToArray(l, cJSON_Duplicate(data, 1)); }
+            char* w = cJSON_PrintUnformatted(doc);
+            cJSON_Delete(doc);
+            if (w) { free(data_str); data_str = w; }
+        }
         rbgrid_json_err_t e = rbgrid_json_parse_tariff_plan_config(data_str);
         if (e == RBGRID_JSON_OK) {
             ack = cmd_ack_json("set", section, "ok", "tariff applied", id);

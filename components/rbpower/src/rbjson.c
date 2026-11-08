@@ -3696,7 +3696,7 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
                 cJSON_AddNumberToObject(main_obj, "p_rea", round(power_reactive * 100) / 100);
                 cJSON_AddNumberToObject(main_obj, "pf", round(power_factor * 100) / 100);
                 cJSON_AddNumberToObject(main_obj, "dir", main_supply->realtime_200ms.direction);
-                rbgrid_telemetry_add_source(main_obj, RBGRID_UNIT_MAIN_SUPPLY);
+                rbgrid_telemetry_add_source(main_obj, g_home_network.system.main_supply_unit_id);   /* the real main input, not the legacy ADC id 0006 */
                 rbjson_add_phase_live(main_obj, g_home_network.system.main_supply_unit_id);  /* per-phase input (dashboard main card) */
 
                 // Energy + economics from the lifetime accumulators (LEAN: omitted → /api/v1/economics)

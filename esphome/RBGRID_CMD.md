@@ -61,13 +61,16 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
 
 | Command | Does |
 |---|---|
-| `{"cmd":"set","section":"tariff","data":{...}}` | Apply + save a tariff plan (same body as the HTTP POST) |
+| `{"cmd":"set","section":"tariff","data":{...}}` | Apply + save a tariff plan. `data` = the whole `get tariff` reply, or `{"list":[plan]}`, or one plan object (as in `list[0]`). The plan is merged into the running one: fields left out keep their values, zones and fixed payments are rebuilt from the body |
 | `{"cmd":"set","section":"units","data":{...}}` | Save the whole points config (applies after a restart) |
 | `{"cmd":"set","section":"i2c","data":{"op":"scan","bus":0}}` | Devices answering on a bus |
 | `{"cmd":"set","section":"i2c","data":{"op":"add","bus":0,"addr":80}}` | Add a scanned rbAmp module |
 | `{"cmd":"set","section":"i2c","data":{"op":"address","module":0,"addr":81}}` | Change a module's address |
 | `{"cmd":"set","section":"i2c","data":{"op":"pins","bus":0,"sda":8,"scl":9}}` | Bus pins (after a restart) |
+| `{"cmd":"set","section":"i2c","data":{"op":"pause","module":0,"seconds":120}}` | Test only: stop polling a module for up to 3600 s (0 = resume). A poll hole: `Modules online` drops, the event log gets "poll paused / resumed (test)"; no `module_absent` (a real unplug raises that) |
 | `{"cmd":"set","section":"espnow","data":{"action":"pair","seconds":180}}` | ESP-NOW actions (`pair`, `pair_cancel`, `configure`, `remove`, `disable`, `enable`, `latch`) |
+| `{"cmd":"set","section":"espnow","data":{"action":"configure","mac":"E8:DB:84:3D:42:E8","config":{"period_s":900,"channels":[{"ch":5,"enabled":false}]}}}` | A node's input settings. `channels[]`: `ch` (the node's channel id, as `get espnow` lists it), optional `enabled`, optional `ct_code` 1…7; only the listed channels change. `period_s` is optional and must be 900. `channels` may also sit next to `action` without `config`. At least one channel must stay on. Applies when the node acknowledges (`config_state` pending → applied in `get espnow`) |
+| `{"cmd":"set","section":"espnow","data":{"action":"disable","mac":"…"}}` | `disable` / `enable` / `remove` a node by `mac`; `pair` opens the window for `seconds`; `latch` closes the current period on every node now |
 | `{"cmd":"set","section":"price","data":{"buy":0.12,"sell":0.05,"from":unix,"until":unix}}` | External energy price for [`from`, `until`); `"prices":[...]` sets many at once, `{"clear":true}` drops them all. See below |
 
 ### Points: `{"cmd":"unit","op":...}`

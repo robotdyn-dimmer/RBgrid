@@ -1316,6 +1316,7 @@ char *esp_now_hub_action(const cJSON *req, int *status)
         snprintf(out, sizeof(out), "{\"ok\":true,\"disabled\":%s}", !strcmp(action, "disable") ? "true" : "false");
     } else if (!strcmp(action, "configure") && have_mac) {
         const cJSON *cfg = cJSON_GetObjectItem(req, "config");
+        if (!cfg && cJSON_GetObjectItem(req, "channels")) cfg = req;   /* channels[] / period_s also accepted at the top */
         const cJSON *jp = cfg ? cJSON_GetObjectItem(cfg, "period_s") : NULL;
         const cJSON *jch = cfg ? cJSON_GetObjectItem(cfg, "channels") : NULL;
         espnow_registry_t reg; int ni = -1;
