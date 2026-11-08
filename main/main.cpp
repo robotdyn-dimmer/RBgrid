@@ -1826,7 +1826,8 @@ typedef struct rbgrid_config_context_s rbgrid_config_context_t;   ///< see rbgri
 // build has no rbbench. Drive both banks to 0x00 (relays OFF) as the FIRST thing at boot, before
 // anything else can matter. PCF8574 latches the written value, so it stays OFF after we close the
 // bus. Gated to the no-rbbench build; the debug-bridge build's rbbench already fail-safes the bank.
-#if RBGRID_RBAMP_FLEET && !defined(CONFIG_RBGRID_DEBUG_BRIDGE)
+/* not on ESP32-S3: no GPIO23 and GPIO19 is its USB D-; the load bank is wired to the ESP32 bench hub only */
+#if RBGRID_RBAMP_FLEET && !defined(CONFIG_RBGRID_DEBUG_BRIDGE) && !CONFIG_IDF_TARGET_ESP32S3
 #define RBGRID_BENCH_RELAY_FAILSAFE 1   ///< 1 = drive the test-rig load-bank relays OFF at boot
 /** Drive both PCF8574 load-bank expanders to 0x00 (relays OFF) at boot (see the SAFETY note above). */
 static void bench_relays_failsafe_off(void) {

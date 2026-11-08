@@ -3530,6 +3530,22 @@ int rbamp_bridge_virt_cmd(int argc, char **argv, char *out, size_t cap)
  * to any GPIO that can drive open-drain, so the choice is "what is free on THIS board". WROVER RBgrid: flash 6-11,
  * PSRAM 16/17, ext NOR 12-15 (12 = VDD_SDIO strap), straps 0/2/5, UART0 1/3, 34-39 input-only, DRDY (from the
  * config, e.g. GPIO33). ── */
+#if CONFIG_IDF_TARGET_ESP32S3
+/* ESP32-S3 module N16R8 (16 MB quad flash + 8 MB octal PSRAM, DevKitC-1 board): flash 26-32, octal PSRAM 33-37,
+ * USB 19/20, UART0 43/44, straps 0/3/45/46, ext NOR 12-15, RGB LED 38 (DevKitC-1 v1.1) / 48 (v1.0). Default bus 8/9. */
+static const uint8_t BUS_PINS_OK[] = { 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 16, 17, 18, 21, 39, 40, 41, 42, 47 };
+static const struct { uint8_t gpio; const char *use; } PIN_RSV[] = {
+    { 0, "boot strap" }, { 3, "boot strap" },
+    { 12, "external flash MISO" }, { 13, "external flash MOSI" }, { 14, "external flash CLK" }, { 15, "external flash CS" },
+    { 19, "USB D-" }, { 20, "USB D+" },
+    { 26, "SPI flash" }, { 27, "SPI flash" }, { 28, "SPI flash" }, { 29, "SPI flash" }, { 30, "SPI flash" },
+    { 31, "SPI flash" }, { 32, "SPI flash" },
+    { 33, "PSRAM (octal)" }, { 34, "PSRAM (octal)" }, { 35, "PSRAM (octal)" }, { 36, "PSRAM (octal)" }, { 37, "PSRAM (octal)" },
+    { 38, "RGB LED (DevKitC-1 v1.1)" }, { 43, "UART0 TX (console)" }, { 44, "UART0 RX (console)" },
+    { 45, "boot strap" }, { 46, "boot strap" }, { 48, "RGB LED (DevKitC-1 v1.0)" },
+};
+#define RB_GPIO_MAX 48
+#else
 static const uint8_t BUS_PINS_OK[] = { 4, 18, 19, 21, 22, 23, 25, 26, 27, 32 };
 static const struct { uint8_t gpio; const char *use; } PIN_RSV[] = {
     { 0, "boot strap" }, { 1, "UART0 TX (console)" }, { 2, "boot strap" }, { 3, "UART0 RX (console)" }, { 5, "boot strap" },
@@ -3539,6 +3555,8 @@ static const struct { uint8_t gpio; const char *use; } PIN_RSV[] = {
     { 34, "input only" }, { 35, "input only" }, { 36, "input only" },
     { 37, "input only" }, { 38, "input only" }, { 39, "input only" },
 };
+#define RB_GPIO_MAX 39
+#endif
 static volatile bool s_i2c_reboot_pending;
 
 /** GPIO of bus b's SDA or SCL line from the config (-1 = bus 1 not configured). */
@@ -3652,8 +3670,8 @@ cJSON *rbamp_bridge_i2c_state(void)
     cJSON *ok = cJSON_AddArrayToObject(r, "pins_ok");
     for (size_t i = 0; i < sizeof(BUS_PINS_OK); ++i) cJSON_AddItemToArray(ok, cJSON_CreateNumber(BUS_PINS_OK[i]));
     cJSON *rsv = cJSON_AddArrayToObject(r, "pins_reserved");
-    for (int g = 0; g <= 39; ++g) {
-        if (g >= 20 && g <= 24 && g != 21 && g != 22 && g != 23) continue;   /* 20/24 do not exist on ESP32 */
+    for (int g = 0; g <= RB_GPIO_MAX; ++g) {
+        if (!GPIO_IS_VALID_GPIO(g)) continue;   /* e.g. 20/24/28-31 on ESP32, 22-25 on ESP32-S3 */
         const char *why = pin_blocked(g, -1);
         if (!why || !strcmp(why, "not offered on this board")) continue;
         cJSON *p = cJSON_CreateObject();
