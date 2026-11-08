@@ -22,6 +22,14 @@
 #include "rbpower.h"
 #include "rbjson.h"
 #include "nvs.h"
+#include "sdkconfig.h"
+
+/* A build whose sdkconfig predates the RBgrid Kconfig keys would read every new bool key as "off" (ESP-IDF
+ * defines only enabled bools) and silently drop features, e.g. SNTP. The string key is always defined in a
+ * current config: stop the build instead. */
+#ifndef CONFIG_RBGRID_NVS_PARTITION
+#error "sdkconfig is older than components/rbpower/Kconfig: run `idf.py reconfigure` (or delete the build's sdkconfig)"
+#endif
 
 #ifdef __cplusplus
 extern "C" {

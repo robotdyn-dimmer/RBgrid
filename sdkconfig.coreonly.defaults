@@ -5,3 +5,4 @@
 # CONFIG_RBGRID_IF_HTTP is not set
 # CONFIG_RBGRID_IF_MQTT is not set
 # CONFIG_RBGRID_IF_MDNS is not set
+# CONFIG_RBGRID_IF_SNTP is not set

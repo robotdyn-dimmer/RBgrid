@@ -108,7 +108,7 @@ async def to_code(config):
         esp32.add_idf_component(name=name, path=os.path.join(comps, name))
 
     # RBgrid interfaces off: ESPHome owns Wi-Fi, the API, OTA, mDNS and time.
-    for key in ("RBGRID_IF_WIFI", "RBGRID_IF_HTTP", "RBGRID_IF_MQTT", "RBGRID_IF_MDNS"):
+    for key in ("RBGRID_IF_WIFI", "RBGRID_IF_HTTP", "RBGRID_IF_MQTT", "RBGRID_IF_MDNS", "RBGRID_IF_SNTP"):
         esp32.add_idf_sdkconfig_option(f"CONFIG_{key}", False)
     esp32.add_idf_sdkconfig_option("CONFIG_RBGRID_NVS_PARTITION", config[CONF_NVS_PARTITION])
     esp32.add_idf_sdkconfig_option("CONFIG_RBGRID_PANIC_FORENSICS", False)   # ESPHome wraps esp_panic_handler itself

@@ -37,6 +37,12 @@ wifi:
   power_save_mode: none     # ESP-NOW beacons and nodes need the radio awake
   reboot_timeout: 0s        # never restart the meter because Wi-Fi is down
 
+# The system clock comes from ESPHome; RBgrid's tariff zones and days use RBgrid's own time zone (set through
+# rbgrid_cmd, section "time"), not this one.
+time:
+  - platform: sntp
+    id: sntp_time
+
 external_components:
   - source:
       type: local

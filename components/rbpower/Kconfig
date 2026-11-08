@@ -27,6 +27,13 @@ menu "RBPower Configuration"
         config RBGRID_IF_MQTT
             bool "MQTT client: telemetry, command channel, Home Assistant discovery"
             default y
+        config RBGRID_IF_SNTP
+            bool "SNTP client owned by RBgrid"
+            default y
+            help
+                Off when a host keeps the system clock (ESPHome `time: sntp`): RBgrid then starts no SNTP of its
+                own, takes the system clock once it is real (not before the build day), and still runs its
+                after-sync steps (clock-step flag, pending records, statistics timers).
         config RBGRID_IF_MDNS
             bool "mDNS announcement (rbgrid-xxxx.local, _rbgrid._tcp)"
             depends on RBGRID_IF_WIFI
