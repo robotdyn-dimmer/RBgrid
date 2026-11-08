@@ -11,7 +11,7 @@ Works with RBgrid hub firmware 1.1.7 or later.
 - **I2C pins:** SDA = GPIO 25, SCL = GPIO 26. Other pins: build with `-DRBN_I2C_SDA=<n> -DRBN_I2C_SCL=<n>`.
 - The node must be within ESP-NOW range of the hub.
 
-The hub uses up to 4 inputs per node and up to 6 nodes. All node points share 12 history slots on the hub.
+The hub uses up to 4 inputs per node and up to 6 nodes. The hub keeps history for 12 points in total, its own points and node points together; a point beyond that shows live values only.
 
 ## Build
 
