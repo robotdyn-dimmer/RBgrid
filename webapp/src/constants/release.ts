@@ -1,6 +1,6 @@
 /**
  * Release scope (v1.1.0, operator 20.10 via root): features whose code ships but whose UI is hidden
- * in a release build — ESP-NOW nodes, and the I2C bus tools (two buses / scan / address change /
+ * in a release build — ESP-NOW nodes (since fw 1.1.7 the hub's `keys` decides; this flag covers older hubs), and the I2C bus tools (two buses / scan / address change /
  * per-module DRDY, `/api/v1/i2c`; no screens yet, the flag is for when they land), and the
  * split-phase mains system (operator 20.10: SPLIT deferred — not offered unless a hub already has it).
  *

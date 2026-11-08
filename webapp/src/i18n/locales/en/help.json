@@ -4,7 +4,7 @@
   "netMeteringTitle": "Net metering",
   "netMetering": "Net metering: exported kWh are credited against the kWh you buy, settled monthly. Turn it on only if your contract does that. Paid per exported kWh (e.g. a Smart Export Guarantee tariff)? Leave it off and enter the sell price on each zone — exports are valued at it either way.",
   "sellRatioTitle": "Selling ratio",
-  "sellRatio": "Share of the buying price paid for an exported kWh when the zone has no own selling price. 0.7 = 70 % of the buying price.",
+  "sellRatio": "Share of the buying price paid for an exported kWh when the zone has no own selling price. 0.7 = 70 % of the buying price. With net metering on, the hub also banks this share of a surplus month's kWh into the credit.",
   "zoneRatioTitle": "Credit ratio",
   "zoneRatio": "Share of the kWh exported in this zone that become a credit against future purchases. 1 = every exported kWh cancels one bought.",
   "defaultZoneTitle": "Default zone",

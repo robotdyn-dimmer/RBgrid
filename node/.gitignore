@@ -1,0 +1,16 @@
+build/
+build_master/
+build_freerun/
+build_dimmer/
+sdkconfig
+sdkconfig.old
+.cache/
+
+# ESP-NOW dev keys (PMK/pairing key) — never commit
+espnow_keys.h
+main/espnow_keys.h
+build_output/
+
+# managed components are fetched at build time (versions pinned in dependencies.lock)
+managed_components/
+build55/

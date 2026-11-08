@@ -1214,6 +1214,8 @@ esp_err_t rbgrid_storage_load_units(rbgrid_config_handle_t config_handle)
                     def->group_id = (uint16_t)j->valueint;
                 if ((j = cJSON_GetObjectItem(unit, "role_trunk")) && cJSON_IsNumber(j))
                     def->role_trunk = (uint8_t)j->valueint;
+                if ((j = cJSON_GetObjectItem(unit, "inside")) && cJSON_IsNumber(j) && j->valuedouble >= 0 && j->valuedouble <= 0xFFFF)
+                    def->inside_unit_id = (uint16_t)j->valueint;
                 if ((j = cJSON_GetObjectItem(unit, "charge_threshold_w")) && cJSON_IsNumber(j) && j->valuedouble >= 0 && j->valuedouble <= 100000)
                     def->ev_charge_threshold_w = (uint32_t)j->valuedouble;
                 if ((j = cJSON_GetObjectItem(unit, "idle_timeout_min")) && cJSON_IsNumber(j) && j->valuedouble >= 0 && j->valuedouble <= 1440)

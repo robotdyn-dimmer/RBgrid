@@ -59,6 +59,7 @@ char *rbgrid_units_delete(rbpower_unit_id_t unit_id, int *status)
     }
 
     rbpower_err_t e = rbpower_home_remove_unit(unit_id);
+    if (e == RBPOWER_OK) rbpower_home_clear_inside_refs(unit_id);   /* points measured inside it become top-level */
     char body[160];
     if (e == RBPOWER_ERR_INVALID_ARG) {            // unknown / already removed (idempotent → 404)
         snprintf(body, sizeof(body), "{\"status\":\"error\",\"message\":\"unit %04X not found\"}", unit_id);
@@ -153,7 +154,7 @@ char *rbgrid_units_mutate(rbpower_unit_id_t uid, const char *op, const char *jso
     int rc;
     bool group_phases = false;   /* rebind ch 254: three-phase grouping, applies after a reboot */
     bool split_phases = false;   /* rebind of a phase-group point to one channel: split per phase, applies after a reboot */
-    char body[400];
+    char body[512];
     if (op[0] == '\0') {
         /* PARAMS PATCH — {name?, short_name?, phase?, rated_power_w?, max_current_a?, role?,
          * group_id?, role_trunk?, invert_sign?}: live-apply to the definition + persist. Supply roles are
@@ -213,6 +214,34 @@ char *rbgrid_units_mutate(rbpower_unit_id_t uid, const char *op, const char *jso
             cJSON_Delete(root);
             return rbu_reply(400, "{\"status\":\"error\",\"error_code\":\"OUT_OF_RANGE\",\"field\":\"idle_timeout_min\",\"message\":\"integer 0..1440 min (0 = system.ev)\"}");
         }
+        /* inside: the point this one is measured inside (number or hex string; 0, "" or null clears). Must exist,
+         * not be this point, not be a supply point, and not make a loop. */
+        int new_inside = -1;
+        if ((j = cJSON_GetObjectItem(root, "inside")) != NULL) {
+            unsigned v = 0; bool ok = true;
+            if (cJSON_IsNull(j)) v = 0;
+            else if (cJSON_IsNumber(j) && j->valuedouble >= 0 && j->valuedouble <= 0xFFFF) v = (unsigned)j->valueint;
+            else if (cJSON_IsString(j)) { if (j->valuestring[0] && sscanf(j->valuestring, "%x", &v) != 1) ok = false; }
+            else ok = false;
+            const rbpower_unit_definition_t *pd = v ? rbpower_home_get_unit_definition((rbpower_unit_id_t)v) : NULL;
+            if (ok && v) {
+                if (v == uid || !pd) ok = false;
+                else if (pd->role == RBPOWER_ROLE_MAIN_SUPPLY || pd->role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY) ok = false;
+                else {   /* walk up from the new parent: reaching this point would make a loop */
+                    rbpower_unit_id_t cur = (rbpower_unit_id_t)v;
+                    for (int depth = 0; depth < 16 && cur; depth++) {
+                        if (cur == uid) { ok = false; break; }
+                        const rbpower_unit_definition_t *cd = rbpower_home_get_unit_definition(cur);
+                        cur = cd ? cd->inside_unit_id : 0;
+                    }
+                }
+            }
+            if (!ok) {
+                cJSON_Delete(root);
+                return rbu_reply(400, "{\"status\":\"error\",\"field\":\"inside\",\"message\":\"an existing point other than this one, not the input, without a loop (0 clears)\"}");
+            }
+            new_inside = (int)v;
+        }
         int new_role = -1;
         if ((j = cJSON_GetObjectItem(root, "role")) != NULL) {
             if (cJSON_IsString(j)) {
@@ -262,6 +291,7 @@ char *rbgrid_units_mutate(rbpower_unit_id_t uid, const char *op, const char *jso
             def->sources[0].invert_sign = cJSON_IsTrue(j);
         }
         if (new_role >= 0) def->role = (rbpower_load_role_t)new_role;
+        if (new_inside >= 0) def->inside_unit_id = (uint16_t)new_inside;
         nd.unit_id = live->unit_id;   /* identity is never patched */
         memcpy(live, &nd, sizeof(nd));
         def = live;
@@ -275,11 +305,11 @@ char *rbgrid_units_mutate(rbpower_unit_id_t uid, const char *op, const char *jso
         snprintf(body, sizeof(body),
                  "{\"status\":\"ok\",\"unit_id\":\"%04X\",\"name\":\"%s\",\"short_name\":\"%s\","
                  "\"phase\":%u,\"rated_power_w\":%.1f,\"max_current_a\":%.1f,\"role\":\"%s\","
-                 "\"group_id\":%u,\"role_trunk\":%u,\"charge_threshold_w\":%lu,\"idle_timeout_min\":%u,"
+                 "\"group_id\":%u,\"role_trunk\":%u,\"inside\":%u,\"charge_threshold_w\":%lu,\"idle_timeout_min\":%u,"
                  "\"requires_reboot\":false,\"persist\":\"%s\"}",
                  uid, en, esn, def->phase, (double)def->rated_power_w,
                  (double)def->max_current_a, rbpower_load_role_name((unsigned)def->role),
-                 def->group_id, def->role_trunk, (unsigned long)def->ev_charge_threshold_w,
+                 def->group_id, def->role_trunk, (unsigned)def->inside_unit_id, (unsigned long)def->ev_charge_threshold_w,
                  (unsigned)def->ev_idle_timeout_min, esp_err_to_name(supd));
         ESP_LOGW(TAG, "units: params patched (unit 0x%04X)", uid);
         return rbu_reply(200, body);

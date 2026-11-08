@@ -49,14 +49,16 @@ export class BrowserMqttClient implements MqttLike {
     });
   }
 
-  /** Run now if connected, else queue until the lazily-loaded client exists. */
-  private withClient(f: (c: MqttClient) => void): void {
-    if (this.client) f(this.client);
-    else if (!this.ended) this.pending.push(f);
+  /** Run now if connected, else queue until the lazily-loaded client exists; the returned
+   *  function takes a still-queued call back out (a no-op once it ran). */
+  private withClient(f: (c: MqttClient) => void): () => void {
+    if (this.client) { f(this.client); return () => undefined; }
+    if (!this.ended) this.pending.push(f);
+    return () => { const i = this.pending.indexOf(f); if (i >= 0) this.pending.splice(i, 1); };
   }
 
-  publish(topic: string, payload: string): void {
-    this.withClient((c) => c.publish(topic, payload));
+  publish(topic: string, payload: string): () => void {
+    return this.withClient((c) => c.publish(topic, payload));
   }
 
   subscribe(topic: string, handler: (t: string, p: string) => void): () => void {

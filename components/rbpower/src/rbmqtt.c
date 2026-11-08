@@ -12,6 +12,9 @@
  * separately; the broker URI is passed in from config.
  */
 #include "rbgrid_core.h"
+#include "rbpower.h"   /* rbtime_is_time_valid */
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "rbmqtt.h"
 
 #include <string.h>
@@ -144,6 +147,18 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     }
 }
 
+/* TLS broker: start the client once the clock is real (certificate validity dates are checked). */
+static void rbmqtt_tls_wait_task(void *arg)
+{
+    (void)arg;
+    while (s_client && !rbtime_is_time_valid()) vTaskDelay(pdMS_TO_TICKS(1000));
+    if (s_client) {
+        esp_err_t e = esp_mqtt_client_start(s_client);
+        rbpower_diag_printf("mqtt: clock set — TLS connection started: %s", esp_err_to_name(e));
+    }
+    vTaskDelete(NULL);
+}
+
 static char s_broker_uri[160];
 const char *rbmqtt_broker_uri(void) { return s_broker_uri; }
 /* Planned reboot: publish the retained "offline" first (the core runs its reboot notifiers). */
@@ -189,7 +204,8 @@ esp_err_t rbmqtt_init(const char *broker_uri, const char *client_id, const char 
     /* mqtts:// / wss://: verify the broker against the ESP-IDF CA bundle (public CAs). Without it esp-mqtt
      * had no CA at all and every TLS connect failed. A broker with a self-signed / private-CA certificate
      * still fails verification — that needs a user-supplied CA (not in this release). */
-    if (strncmp(broker_uri, "mqtts://", 8) == 0 || strncmp(broker_uri, "wss://", 6) == 0) {
+    const bool tls = strncmp(broker_uri, "mqtts://", 8) == 0 || strncmp(broker_uri, "wss://", 6) == 0;
+    if (tls) {
         cfg.broker.verification.crt_bundle_attach = rbmqtt_crt_bundle_attach;
         ESP_LOGI(TAG, "TLS broker: verifying against the CA bundle");
     }
@@ -201,7 +217,20 @@ esp_err_t rbmqtt_init(const char *broker_uri, const char *client_id, const char 
     (void)rbgrid_core_register_reboot_notify(rbmqtt_reboot_notify);
     esp_err_t err = esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID,
                                                    mqtt_event_handler, NULL);
-    if (err == ESP_OK) err = esp_mqtt_client_start(s_client);
+    if (err == ESP_OK) {
+        if (tls && !rbtime_is_time_valid()) {
+            /* The broker certificate's dates are checked (CONFIG_MBEDTLS_HAVE_TIME_DATE): before the clock is real
+             * every certificate reads "not yet valid". Start the TLS connection once the clock is set (NTP or by
+             * hand); plain mqtt:// is not delayed. */
+            if (xTaskCreate(rbmqtt_tls_wait_task, "mqtt_tls_wait", 3072, NULL, tskIDLE_PRIORITY + 1, NULL) == pdPASS) {
+                rbpower_diag_printf("mqtt: TLS broker — waiting for the clock before connecting (certificate dates)");
+            } else {
+                err = esp_mqtt_client_start(s_client);   /* no task: try now, the client keeps retrying */
+            }
+        } else {
+            err = esp_mqtt_client_start(s_client);
+        }
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "start failed: %s", esp_err_to_name(err));
         esp_mqtt_client_destroy(s_client);

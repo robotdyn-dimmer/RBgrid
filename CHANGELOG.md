@@ -1,6 +1,32 @@
 # Changelog
 
-## v1.1.7 — unreleased
+## v1.1.8 — unreleased
+
+### Security
+- **`mqtts://`: the broker certificate's dates are checked** (valid from / valid to). An expired certificate, or one
+  not valid yet, is refused; v1.1.7 checked the authority and the host name only. Because a clock that isn't set
+  makes every certificate look not valid yet, the hub opens a TLS broker connection only once its clock is set
+  (NTP, or by hand); the event log says "mqtt: TLS broker — waiting for the clock". Plain `mqtt://` is not delayed.
+
+### Remote nodes
+- **Energy records from a node with current-only modules.** A node period with no voltage (voltage 0, energy 0,
+  current > 0) is estimated from the hub's nominal voltage, like the live values; the hour is flagged `ESTIMATED`.
+  Needs node firmware 1.5 (older nodes send no records without a voltage module).
+- **A node period longer than 15 minutes** (energy the node counted before it had the hub's clock, e.g. it started
+  while the hub was out of reach) is kept: it goes into that period's hour, flagged `OUTAGE`.
+
+### Points measured inside other points
+- A point can be marked as measured **inside** another one (a charger inside a metered sub-panel):
+  `PATCH /api/v1/units/{id}` `{"inside": <point id>}` (number or hex string; 0, "" or null clears). It must be an
+  existing point other than this one, not the input, and not make a loop. `units-config` shows `inside`; deleting
+  a point makes the points inside it top-level. The hub's own totals don't change (they are taken at the input);
+  the app uses it so the "unmetered" figure doesn't count a nested load twice. `capabilities.pointNesting: true`.
+
+### API
+- `GET /api/v1/schema` → `quality_bits` now names every bit the hub sets: `SRC_RESTART` (9), `SRC_FW` (10),
+  `REVERSE_LOST` (11), `OUTAGE` (12), as well as 0–8. Additive.
+
+## v1.1.7 — 2026-11-08
 
 ### Stored data survives faults
 An independent code review of v1.1.6/1.1.7-dev looked for ways a fault could lose or double energy, or reset the hub's
@@ -66,6 +92,8 @@ into the image. `GET /api/v1/espnow` reports `keys:true` and where the key came 
   `periods_recv`, `periods_injected`, `periods_dropped`, `periods_dup`; they now count over the whole boot.
 - A deleted node point stays deleted after a restart, and data the node still sends for it is ignored.
 - An update over the air while nodes are connected no longer restarts the hub by its watchdog.
+- **Node firmware is published** in `node/` (ESP32, 4 MB flash, no PSRAM; rbAmp modules on I2C). Build, flash and
+  pairing: `node/README.md`. It needs no key file: the node gets its key when paired.
 
 ### Platform
 - **ESP-IDF 5.5.1** (was 5.4.1). An update over the air from earlier versions works with the boot loader already on
@@ -73,6 +101,10 @@ into the image. `GET /api/v1/espnow` reports `keys:true` and where the key came 
   crash under bus faults) are carried over: 5.5.1 does not have them yet.
 - The metering core is now separate from the web server and MQTT code (the same functions serve HTTP, MQTT and
   later other hosts). The API does not change.
+
+### Web app 1.1.7
+Source in `webapp/` (`rbgrid-ui_v1.1.7.zip` is the built app). Nodes section on the Points page, the live-stream
+ticket, restore-point messages, the hub token kept per hub, and many fixes. Full list: `webapp/CHANGELOG.md`.
 
 ### Smaller fixes
 - The SNTP sync callback no longer skips the clock-step check and the flush of records kept before the first sync

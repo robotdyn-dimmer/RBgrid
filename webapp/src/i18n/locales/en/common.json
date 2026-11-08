@@ -22,5 +22,6 @@
   "language": "Language",
   "legend": "Legend",
   "confirm": "Confirm",
-  "savedDemo": "Saved (demo — this browser only, no hub touched)."
+  "savedDemo": "Saved (demo — this browser only, no hub touched).",
+  "sectionFailed": "«{name}» couldn't be shown. The rest of the page works; reload to try again."
 }

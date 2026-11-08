@@ -2,6 +2,7 @@
   "title": "Restore point",
   "intro": "A copy of the hub's settings kept on the hub: settings, points, tariffs, time, modules (no tokens). One only: a new one replaces the previous. Save one before big changes.",
   "none": "No restore point.",
+  "unsealed": "The restore point is incomplete (a save stopped part-way), so the hub won't restore it. Save a new one.",
   "unknown": "Couldn't find out whether there is a restore point.",
   "at": "Saved {when} · files: {n}",
   "atUnknown": "Saved (date unknown) · files: {n}",
@@ -15,5 +16,8 @@
   "restoreBody": "Current settings, points and tariffs are replaced by the saved ones, then the hub restarts (back in 20–30 s). Energy metering isn't interrupted.",
   "restored": "Files restored: {n}. The hub is restarting — back in 20–30 s.",
   "failed": "The hub didn't do it (no connection?).",
+  "saveFailed": "Couldn't save the restore point, and the previous one is no longer usable. Try again; if it keeps failing, the hub's storage may be failing.",
+  "incomplete": "The saved restore point is incomplete (an earlier save stopped part-way), so the hub didn't use it. Nothing was changed and no restart is needed. Save a new restore point.",
+  "restoreFailed": "The restore stopped part-way, and the hub put back the settings it had before. Nothing was changed and no restart is needed.",
   "restoredNoReboot": "Files restored: {n}, but the restart command didn't go. The settings take effect after the hub restarts."
 }

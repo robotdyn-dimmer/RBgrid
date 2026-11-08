@@ -2,6 +2,35 @@
 
 All notable changes to the RBGrid web interface. Newest first.
 
+## 1.1.7
+
+For hub firmware 1.1.7. Requires hub API version 1. App changes since 1.1.6. New sections appear only where the hub reports them (live-stream ticket, restore-point checks, remote nodes); on older hubs the app keeps their behaviour.
+
+### Added
+- **Live readings on hub firmware 1.1.7:** the app opens the live stream with a one-time ticket that is valid for 30 seconds. The hub token no longer goes into the connection address. Older hubs connect as before.
+- **Restore point on hub firmware 1.1.7:** saving and restoring are all or nothing on the hub, and the panel says what happened. A failed save says the point couldn't be saved. A saved point that is incomplete is refused, with a prompt to save a new one. A restore that stopped part-way says the hub put back its previous settings. In both refusals nothing changed and the hub doesn't restart. When the hub already knows a saved point is incomplete, the panel says so up front and keeps «Restore and restart» off.
+- **Remote nodes (ESP-NOW) on hub firmware 1.1.7:** a section on the Points page, shown where the hub's firmware can run nodes. Turn the radio for nodes on or off, and see its channel (the Wi-Fi router's). Pair a node with a countdown and a cancel; the new node is marked, and its points appear without a restart. See «N of 6 nodes», and how many of the 12 history slots are in use, before pairing. Each node card shows when it was last heard, lost packets and clock sync, and its channels with links to their points. A node can be turned off and on (turning it off asks first: the hub discards its energy while it's off), or removed with its points and their history after a confirmation. A firmware that can't run nodes says so. A node the hub hasn't heard since it started reads «not heard since the hub started». Where the hub reports a node's settings, «Settings» sets, per channel, on/off and the current clamp (the energy period is fixed at 15 min and shown); the card shows «settings not applied yet» until the node confirms. The setup wizard offers the Nodes step on a hub that can run nodes.
+
+### Fixed
+- **Hub token:** kept per hub. Switching hubs, or opening a link to another hub address, no longer sends one hub's token to another. A token saved before this version stays with the hub it was saved for.
+- **Economics, ESP-NOW, the setup status:** on a hub with a read token, these reads now carry it, so they no longer read as «no data».
+- **History by month and year:** a month's record starts on the 1st by the hub's calendar. A 31-day month used to start on the 4th, and «This year» dropped January. Days with a clock change (23 or 25 h) land on their own day.
+- **History:** switching points or periods while a slow answer is still on the way keeps the new series. The old answer no longer replaces it.
+- **Today in period totals:** month to date, Economics and History take today by the same rule as the Overview cards: the input's own counters where the hub's sums stay 0 (older hubs with an rbAmp input).
+- **Summary by point (CSV):** a failed read stops the export with an error. It used to download a file with zeros.
+- **CSV files:** a point name that starts like a spreadsheet formula (=, +, -, @) is written as text, so a spreadsheet shows it rather than runs it.
+- **Month forecast:** counted on the hub's calendar. A browser in another time zone near the turn of the month used the wrong month.
+- **Economics:** the net-metering card shows only once the plan is read and has net metering on. It used to flash while the plan was loading.
+- **Tariffs:** a zone time of 24:01–24:59 is refused. 24:30 used to be saved as 24:00.
+- **History, «Total and parts»:** when the lines add up to more than the input, the bar fits the scale. It used to run past the top of the chart.
+- **Switching hubs:** the module and sensor list of the previous hub no longer shows up under the new one.
+- **Hub address:** live readings work with an IPv6 address such as `http://[fe80::1]`.
+- **Tariffs, the week map and «zone now»:** each condition of a zone is checked on its own, as the hub does. A zone with two time windows, or two day sets joined by «or», showed only one.
+- **Tariffs:** a zone type another zone already uses isn't offered for a second zone. The hub keeps zones by type, so two «Night» zones mixed their hours and money.
+- **A hub that wants a token:** when the hub withholds its readings for want of a read token, the app says so and opens Settings → Security. It used to show «No connection».
+- **Settings, «Save and reboot»:** once the hub is back, the app re-reads what was written and says whether it took. Before, «Written, applies after a reboot» stayed up after the restart.
+- **Tariffs → Net metering:** the selling ratio stays visible while net metering is on. The hub scales each surplus month's kWh credit by it (0.7 on a new plan), so it matters even when every zone has its own selling price. The app used to hide it there and say it wasn't used.
+
 ## 1.1.6
 
 For hub firmware 1.1.6. Requires hub API version 1. App changes since 1.1.5. On older hubs the app keeps their behaviour: the input's history reads the main point, and the time settings are saved whole.

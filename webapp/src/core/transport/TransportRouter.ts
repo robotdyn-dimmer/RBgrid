@@ -10,6 +10,7 @@ import { DirectTransport } from './DirectTransport';
 import { MqttTransport } from './MqttTransport';
 import { CmdChannel } from './mqtt/CmdChannel';
 import { BrowserMqttClient } from './mqtt/BrowserMqttClient';
+import { tokenStore } from '../auth/authWiring';
 
 export function createTransport(target: DeviceTarget): DeviceTransport {
   switch (target.kind) {
@@ -25,7 +26,7 @@ export function createTransport(target: DeviceTarget): DeviceTransport {
         password: target.token,
       });
       const channel = new CmdChannel(client, `rbgrid/${target.deviceMac.toLowerCase()}`);
-      return new MqttTransport(channel);
+      return new MqttTransport(channel, () => tokenStore.get());
     }
     default: {
       const exhaustive: never = target.kind;

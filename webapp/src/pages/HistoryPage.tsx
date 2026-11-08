@@ -49,6 +49,7 @@ import { getApiClient } from '../services/api';
 import { isDemo } from '../services/connection';
 import { demoHistory } from '../mock/demo';
 import { toIntervalStarts, wireRange } from '../core/time/recordTime';
+import { inputDayTotals, mainUnit } from './overviewData';
 import { useHardware } from '../hooks/useHardware';
 import { isBasic, pointHardware } from '../entities/moduleLine';
 
@@ -398,6 +399,18 @@ const SvgTrend: React.FC<{
     if (u != null) maxUp = Math.max(maxUp, u);
     if (dn != null) maxDown = Math.max(maxDown, dn);
   }
+  // «Total and parts»: a stack is as tall as its lines' sum when they add up to more than the input
+  // (billShares allows it) — the scale must hold it, or its top runs out of the plot (Kimi #17).
+  if (stacked && inputKey && synced.length > 1) {
+    const inS = synced.find((x) => x.key === inputKey);
+    for (const r of inS?.recs ?? []) {
+      const sum = synced.filter((x) => x !== inS).reduce((a, x) => {
+        const rr = x.recs.find((q) => Math.abs(q.ts - r.ts) < STEP_SEC[period] / 2);
+        return a + Math.max(0, (rr && up(rr)) || 0);
+      }, 0);
+      maxUp = Math.max(maxUp, sum);
+    }
+  }
   if (maxUp === 0 && maxDown === 0) maxUp = 1;
   // Metering crumbs on the other side (a few Wh of «export») don't open a «−0.2 kWh» half (H3P-14).
   if (maxDown < maxUp * 0.02) maxDown = 0;
@@ -685,6 +698,8 @@ export const HistoryPage: React.FC = () => {
   // SCADA-R03: «Точки недоступны» while the hub's history was fine, and 8 s on .139 after a jump).
   const unitsShadow = useConfigShadow('units');
   const joinEarly = useUnitsConfig();
+  // The input's today by the Overview's rule (overviewData.inputDayTotals, Kimi #5).
+  const inputDay = data ? inputDayTotals(data.system.totals, mainUnit(data.units, joinEarly)) : undefined;
   const points = useMemo(() => {
     const live = data?.units ?? [];
     const cfg = Array.isArray(unitsShadow.reported.units) ? (unitsShadow.reported.units as JsonObject[]) : [];
@@ -874,9 +889,10 @@ export const HistoryPage: React.FC = () => {
         const g = points.find((p) => p.unitKey === k);
         const id = (g && joinEarly.forGroup(g)?.hex) || k;
         const get = (type: 'energy' | 'economics') => getApiClient().getHistory({ unit_id: id, period: span.step, type, offset: 0, limit: span.limit, ...wireRange(span.from, span.to, span.step) })
-          .then((r) => toIntervalStarts(r.data ?? [], span.step)).catch(() => [] as HistoryRecord[]);
+          // A failed family fails the export (exportFailed) — never a plausible file of zeros (Kimi #6).
+          .then((r) => toIntervalStarts(r.data ?? [], span.step, clock));
         const [e, m] = isDemo()
-          ? [toIntervalStarts(demoHistory('energy', span.step, 48, id), span.step), toIntervalStarts(demoHistory('economics', span.step, 48, id), span.step)]
+          ? [toIntervalStarts(demoHistory('energy', span.step, 48, id), span.step, clock), toIntervalStarts(demoHistory('economics', span.step, 48, id), span.step, clock)]
           : await Promise.all([get('energy'), get('economics')]);
         const te = windowTotals(e, span), tm = windowTotals(m, span);
         const input = !!g && joinEarly.forGroup(g)?.role === 'MAIN_SUPPLY';
@@ -932,7 +948,7 @@ export const HistoryPage: React.FC = () => {
         const g = points.find((p) => p.unitKey === k);
         return <TotalsProbe key={`pt-${k}-${win}`} k={k} id={(g && joinEarly.forGroup(g)?.hex) || k} group={g}
           period={win === 'today' ? 'day' : win === 'week' ? 'week' : win === 'thisMonth' ? 'month' : 'year'} isInput={!!g && joinEarly.forGroup(g)?.role === 'MAIN_SUPPLY'}
-          sys={data?.system.totals} onTotals={onPeriodTotals} onToday={onToday} />;
+          sys={inputDay} onTotals={onPeriodTotals} onToday={onToday} />;
       })}
       {/* hidden fetchers: one per selected point */}
       {selected.map((k) => (

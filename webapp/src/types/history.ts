@@ -118,10 +118,11 @@ export interface HistoryEnergyRecord extends HistoryRecordV4Header {
   et_out?: number;
 }
 
-/** ECONOMICS history record (type=economics). Currency minor units: cost / revenue / net. */
+/** ECONOMICS history record (type=economics). Money in MAJOR units (the hub stores cents and
+ *  divides by 100 on the wire — rbjson_serialize_economics): cost / revenue / net. */
 export interface HistoryEconomicsRecord extends HistoryRecordV4Header {
   ts: number;
-  /** Cost of consumed energy (v4: minor currency units, int). */
+  /** Cost of consumed energy, major currency units (stored as cents on the hub). */
   c: number;
   /** Revenue from supplied energy. */
   r: number;

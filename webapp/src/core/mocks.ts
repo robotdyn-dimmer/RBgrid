@@ -17,9 +17,14 @@ import { demoVariant } from '../mock/demoVariant';
 export function mockEspnow(): EspnowStatus {
   return {
     running: true,
+    enabled: 'auto',
+    // no `keys`: like a hub before 1.1.7, so a release demo shows no nodes (no published firmware has them)
+    max_nodes: 6,
+    max_channels_per_node: 4,
     channel: 6,
     pairing_open: false,
-    paired_count: 1,
+    pairing_left_s: 0,
+    paired_count: 0,
     beacons_sent: 1280,
     rt_recv: 1240,
     stats_recv: 410,

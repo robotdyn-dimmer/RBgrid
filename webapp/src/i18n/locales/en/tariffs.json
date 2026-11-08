@@ -58,7 +58,7 @@
   "priorityHint": "Where zones overlap, the more important one applies: critical peak → holiday → weekend (on Saturday and Sunday; on weekdays it ranks last) → evening peak → morning peak → night → late evening → day. A zone's days are set with «Days», whatever its type.",
   "toSingleZone": "One zone all day",
   "planTypeMismatch": "Plan type “{type}” but {n} zones are on. The hub prices by the zones — change the plan type so the label matches.",
-  "ratioUnused": "Every zone has its own selling price — the selling ratio is not used. Only zones without a price use it.",
+  "ratioCreditOnly": "Every zone has its own selling price, so the ratio doesn't price exports. It sets the share of a surplus month's kWh that goes into the credit (0–1).",
   "expired": "The plan expired ({date}) — the hub keeps pricing with it; check the tariff is still right.",
   "unsaved": "The tariff has unsaved changes",
   "sellWithoutNm": "Exports are valued at the zones' sell prices below even with net metering off. Net metering adds the kWh credit on top. No feed-in contract? Set the sell prices to 0.",

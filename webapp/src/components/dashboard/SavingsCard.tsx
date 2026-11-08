@@ -142,7 +142,7 @@ export const SavingsCard: React.FC<SavingsCardProps> = ({ groups, join, mainId, 
   // €2.19 (L3P-04).
   const mtdVal = mtd && !mtd.loading && mtd.n > 0 ? (money ? mtd.cost : mtd.inWh / 1000) : 0;
   const coveredDays = mtd?.since != null ? (now.getTime() / 1000 - mtd.since) / 86400 : null;
-  const forecast = mtdVal > 0 ? monthForecast(mtdVal, now, coveredDays) : null;
+  const forecast = mtdVal > 0 ? monthForecast(mtdVal, clock.parts(Math.floor(now.getTime() / 1000)), coveredDays) : null;
 
   // «к вчера (к этому часу)»: today's closed hours vs the same hours yesterday (useVsYesterday —
   // the same rule as the History; HOME-R03).
@@ -182,7 +182,7 @@ export const SavingsCard: React.FC<SavingsCardProps> = ({ groups, join, mainId, 
   const weekRate = weekNet != null && gross ? gross(weekNet) : weekNet;
   const floorKwh = floor.w != null ? monthlyKwh(floor.w) : null;
   const floorMoney = floorKwh != null && weekRate != null ? floorKwh * weekRate : null;
-  const monthKwh = mtd && mtd.n > 0 ? monthForecast(mtd.inWh / 1000, now, coveredDays)?.forecast ?? null : null;
+  const monthKwh = mtd && mtd.n > 0 ? monthForecast(mtd.inWh / 1000, clock.parts(Math.floor(now.getTime() / 1000)), coveredDays)?.forecast ?? null : null;
   const floorShare = floorKwh != null && monthKwh && monthKwh > 0 ? Math.min(100, (floorKwh / monthKwh) * 100) : null;
 
   /** The site's wording: «…Ind» keys on an industrial site. */
