@@ -156,6 +156,46 @@ void rbevlog_add(const char *msg)
 }
 
 /* ---- files ---- */
+/* Lines of this boot's ring after `since` (seq), as JSON for hosts without the HTTP endpoint (ESPHome → HA). */
+char *rbevlog_json(uint32_t since, uint32_t limit, int minlvl)
+{
+    if (limit < 1) limit = 1;
+    if (limit > 100) limit = 100;
+    cJSON *o = cJSON_CreateObject(), *a = cJSON_CreateArray();
+    if (!o || !a) { cJSON_Delete(o); cJSON_Delete(a); return NULL; }
+    cJSON_AddStringToObject(o, "type", "events");
+    cJSON_AddNumberToObject(o, "boot", s_boot);
+    uint32_t last = since; bool more = false;
+    if (s_ring) {
+        xSemaphoreTake(s_mtx, portMAX_DELAY);
+        uint32_t first_seq = s_base + oldest_k() + 1;
+        cJSON_AddNumberToObject(o, "first", first_seq);           /* older lines are only in the files (HTTP) */
+        uint32_t k = (since >= s_base) ? since - s_base : 0;
+        if (k < oldest_k()) k = oldest_k();
+        for (; k < s_count; k++) {
+            const ev_slot_t *sl = &s_ring[k % s_nslots];
+            if (sl->lvl < minlvl) continue;
+            if ((uint32_t)cJSON_GetArraySize(a) >= limit) { more = true; break; }
+            cJSON *e = cJSON_CreateObject();
+            cJSON_AddNumberToObject(e, "seq", sl->seq);
+            cJSON_AddNumberToObject(e, "ts", sl->ts);
+            cJSON_AddNumberToObject(e, "up", sl->up_s);
+            cJSON_AddStringToObject(e, "lvl", sl->lvl == LVL_FAIL ? "fail" : sl->lvl == LVL_EVENT ? "event" : "periodic");
+            cJSON_AddStringToObject(e, "msg", sl->msg);
+            cJSON_AddItemToArray(a, e);
+            last = sl->seq;
+        }
+        if (!more) last = s_base + s_count > last ? s_base + s_count : last;   /* cursor past skipped levels */
+        xSemaphoreGive(s_mtx);
+    }
+    cJSON_AddNumberToObject(o, "next", last);
+    cJSON_AddBoolToObject(o, "more", more);
+    cJSON_AddItemToObject(o, "lines", a);
+    char *r = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    return r;
+}
+
 static void ev_path(char *p, size_t n, int i) { snprintf(p, n, EV_DIR "/ev%d.log", i); }
 
 /** Rotate the files when ev0.log reached EV_FILE_MAX: drop the oldest, shift ev<i> to ev<i+1>. */

@@ -73,6 +73,27 @@ api:
 ota:
   - platform: esphome
 
+# hub health for HA and long runs: uptime, Wi-Fi signal, free heap, reset reason
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+  - platform: wifi_signal
+    name: "Wi-Fi signal"
+    update_interval: 60s
+  - platform: debug
+    free:
+      name: "Free heap"
+    block:
+      name: "Largest free block"
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset reason"
+
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password

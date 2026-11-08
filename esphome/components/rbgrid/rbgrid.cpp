@@ -68,7 +68,7 @@ static const char *event_kind(const char *m, bool fail) {
       {"ABSENT", "module_absent"},               {"no rbAmp modules", "module_absent"},
       {"joined late", "module_restored"},        {"poll restored", "module_restored"},
       {" poll:", "module_poll_fail"},            {"held low", "bus_stuck"},
-      {"espnow: node", "node"},                  {"boot: reset", "boot"},
+      {"(node disabled)", "node_disabled"},      {"espnow: node", "node"},                  {"boot: reset", "boot"},
       {"tariff", "tariff"},                      {"OTA", "firmware"},
   };
   // reboot-gap / period reconciliation lines ("m0 gap …", "QTR m0 … anchor=…", "cnt=+nanWh"): diagnostics, not news
@@ -298,7 +298,21 @@ void RBgridComponent::publish_frame_() {
 }
 
 std::string RBgridComponent::command(const std::string &json) {
-  char *r = rbgrid_command_dispatch(json.c_str(), (int) json.size());
+  char *r = nullptr;
+  {   // {"cmd":"get","section":"events","since":seq,"limit":50,"level":"all|event|fail"}: the device's event log
+    cJSON *q = cJSON_Parse(json.c_str());
+    const char *c = q ? cJSON_GetStringValue(cJSON_GetObjectItem(q, "cmd")) : nullptr;
+    const char *sec = q ? cJSON_GetStringValue(cJSON_GetObjectItem(q, "section")) : nullptr;
+    if (c && sec && !strcmp(c, "get") && !strcmp(sec, "events")) {
+      const cJSON *js = cJSON_GetObjectItem(q, "since"), *jl = cJSON_GetObjectItem(q, "limit");
+      const char *lv = cJSON_GetStringValue(cJSON_GetObjectItem(q, "level"));
+      int minlvl = (lv && !strcmp(lv, "fail")) ? 2 : (lv && !strcmp(lv, "all")) ? 0 : 1;
+      r = rbevlog_json(cJSON_IsNumber(js) ? (uint32_t) js->valuedouble : 0, cJSON_IsNumber(jl) ? (uint32_t) jl->valuedouble : 50,
+                       minlvl);
+    }
+    cJSON_Delete(q);
+  }
+  if (r == nullptr) r = rbgrid_command_dispatch(json.c_str(), (int) json.size());
   if (r == nullptr) return "{\"status\":\"error\",\"message\":\"no reply\"}";
   std::string out(r);
   free(r);
@@ -414,7 +428,8 @@ void RBgridComponent::fire_event_(const char *msg, bool fail) {
   k.value = StringRef(kind);
   auto &l = req.data.emplace_back();
   l.key = StringRef("level");
-  l.value = StringRef(fail ? "fail" : (!strcmp(kind, "diag") ? "debug" : "event"));
+  // a node the user disabled is not a failure; diag lines are detail
+  l.value = StringRef(!strcmp(kind, "node_disabled") ? "event" : fail ? "fail" : (!strcmp(kind, "diag") ? "debug" : "event"));
   auto &m = req.data.emplace_back();
   m.key = StringRef("message");
   m.value = StringRef(msg);
