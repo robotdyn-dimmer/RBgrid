@@ -16,6 +16,7 @@ extern "C" {
 #include "rbgrid_core.h"
 #include "rbhome_types.h"   // rbpower_home_lock / unlock
 #include "littlefs_raw.h"   // the slot map lives in the core's config store
+#include "cJSON.h"
 }
 
 namespace esphome {
@@ -27,6 +28,22 @@ static constexpr int MAX_POINTS = 64;
 static const char *const SLOT_MAP_FILE = "/esphome_slots.json";
 
 std::atomic<bool> RBgridComponent::frame_ready{false};
+char RBgridComponent::version_buf[9] = {0};
+std::atomic<bool> RBgridComponent::version_ready{false};
+static std::atomic<bool> s_core_up{false};
+
+// Config version off the loop task: the core builds the points + tariff JSON for it (a few KB, tens of ms).
+static void version_task(void *) {
+  for (;;) {
+    if (s_core_up.load() && !RBgridComponent::version_ready.load()) {
+      char v[9];
+      rbgrid_core_config_version(v);
+      memcpy(RBgridComponent::version_buf, v, sizeof(v));
+      RBgridComponent::version_ready.store(true);
+    }
+    vTaskDelay(pdMS_TO_TICKS(30000));
+  }
+}
 
 static void on_3s(uint64_t) {
   RBgridComponent::frame_ready.store(true);
@@ -37,7 +54,10 @@ static void on_3s(uint64_t) {
 static void start_task(void *) {
   esp_err_t e = rbgrid_host_start();
   ESP_LOGI(TAG, "RBgrid core start: %s", esp_err_to_name(e));
-  if (e == ESP_OK) rbgrid_core_register_3s_cb(on_3s);
+  if (e == ESP_OK) {
+    rbgrid_core_register_3s_cb(on_3s);
+    s_core_up.store(true);
+  }
   vTaskDelete(nullptr);
 }
 
@@ -46,7 +66,10 @@ void RBgridComponent::setup() {
   if (xTaskCreatePinnedToCore(start_task, "rbgrid_start", 8192, nullptr, 2, nullptr, 0) != pdPASS) {
     ESP_LOGE(TAG, "could not create the start task");
     this->mark_failed();
+    return;
   }
+  if (this->config_version_ != nullptr)
+    xTaskCreatePinnedToCore(version_task, "rbgrid_ver", 6144, nullptr, 1, nullptr, 0);
 }
 
 void RBgridComponent::loop() {
@@ -55,6 +78,14 @@ void RBgridComponent::loop() {
     rbgrid_core_image_confirmed();   // releases a deferred stats migration; ESPHome confirms the OTA image itself
   }
   if (frame_ready.exchange(false)) this->publish_frame_();
+  if (version_ready.load()) {
+    std::string v(version_buf);
+    version_ready.store(false);
+    if (this->config_version_ != nullptr && v != this->version_) {
+      this->version_ = v;
+      this->config_version_->publish_state(v);
+    }
+  }
 }
 
 // Slot map file: a JSON-ish line of unit ids, one per slot ("[1536,27400,0,...]"); 0 = free.
@@ -92,10 +123,28 @@ void RBgridComponent::publish_frame_() {
   rbgrid_core_system_totals(&st, true);
   int n = rbgrid_core_points_snapshot(pts, MAX_POINTS);
   rbpower_home_unlock();
+  rbgrid_tariff_now_t tn;
+  rbgrid_core_tariff_now(&tn);
 
-  if (this->power_ != nullptr) this->power_->publish_state(st.p_w);
-  if (this->energy_in_ != nullptr) this->energy_in_->publish_state((float) st.e_in_wh);
-  if (this->energy_out_ != nullptr) this->energy_out_->publish_state((float) st.e_out_wh);
+  pub_(this->power_, st.p_w);
+  pub_(this->energy_in_, (float) st.e_in_wh);
+  pub_(this->energy_out_, (float) st.e_out_wh);
+  pub_(this->energy_day_in_, (float) st.e_day_in_wh);
+  pub_(this->energy_day_out_, (float) st.e_day_out_wh);
+  pub_(this->cost_total_, (float) st.cost_total);
+  pub_(this->revenue_total_, (float) st.rev_total);
+  pub_(this->cost_day_, (float) st.cost_day);
+  pub_(this->revenue_day_, (float) st.rev_day);
+  pub_(this->buy_price_, (float) tn.buy_rate_all_in);   // the basis of the cost figures (fees + VAT included)
+  pub_(this->sell_price_, tn.sell_rate);
+  if (this->tariff_zone_ != nullptr && this->tariff_zone_->state != tn.zone) this->tariff_zone_->publish_state(tn.zone);
+  if (this->time_valid_ != nullptr) this->time_valid_->publish_state(tn.time_valid);
+  if (this->tariff_placeholder_ != nullptr) this->tariff_placeholder_->publish_state(tn.placeholder);
+  if (!this->currency_warned_ && tn.currency[0] && this->currency_ != tn.currency) {
+    this->currency_warned_ = true;   // the money unit is fixed at build time; HA only labels it
+    ESP_LOGW(TAG, "tariff currency is %s but the money entities are labelled %s (set `currency:` in YAML)", tn.currency,
+             this->currency_.c_str());
+  }
   if (this->slots_.empty()) return;
 
   if (!this->map_loaded_) this->load_map_();
@@ -128,6 +177,8 @@ void RBgridComponent::publish_frame_() {
         sl.power->publish_state(NAN);
         sl.energy_in->publish_state(NAN);
         sl.energy_out->publish_state(NAN);
+        pub_(sl.current, NAN);
+        pub_(sl.voltage, NAN);
       }
       continue;
     }
@@ -136,6 +187,8 @@ void RBgridComponent::publish_frame_() {
     sl.power->publish_state(pt->present ? pt->p_w : NAN);   // a point whose source is absent reads unknown
     sl.energy_in->publish_state((float) pt->e_in_wh);
     sl.energy_out->publish_state((float) pt->e_out_wh);
+    pub_(sl.current, pt->present ? pt->i_a : NAN);
+    pub_(sl.voltage, (pt->present && pt->v_v > 0) ? pt->v_v : NAN);
   }
 }
 
@@ -147,12 +200,56 @@ std::string RBgridComponent::command(const std::string &json) {
   return out;
 }
 
+// The device reply decides success: an error ack (data.result "error"), a flat {"status":"error"} or an HTTP-style
+// code >= 400 from a point operation. The message comes back as the action's error.
+void RBgridComponent::run_command(const std::string &json) {
+  this->last_reply_ = this->command(json);
+  this->last_ok_ = true;
+  this->last_error_.clear();
+  cJSON *r = cJSON_Parse(this->last_reply_.c_str());
+  if (r == nullptr) {
+    this->last_ok_ = false;
+    this->last_error_ = "device reply is not JSON";
+    return;
+  }
+  const cJSON *d = cJSON_GetObjectItem(r, "data");
+  const char *st = cJSON_GetStringValue(cJSON_GetObjectItem(r, "status"));
+  const char *res = d ? cJSON_GetStringValue(cJSON_GetObjectItem(d, "result")) : nullptr;
+  const cJSON *code = d ? cJSON_GetObjectItem(d, "code") : nullptr;
+  if ((st && !strcmp(st, "error")) || (res && !strcmp(res, "error")) || (cJSON_IsNumber(code) && code->valueint >= 400)) {
+    this->last_ok_ = false;
+    const char *m = d ? cJSON_GetStringValue(cJSON_GetObjectItem(d, "message")) : nullptr;
+    if (m == nullptr) m = cJSON_GetStringValue(cJSON_GetObjectItem(r, "message"));
+    this->last_error_ = m ? m : "command failed";
+  }
+  cJSON_Delete(r);
+}
+
+void RBgridComponent::fill_reply(JsonObject root) {
+  root["ok"] = this->last_ok_;
+  root["schema"] = 1;
+  root["config_version"] = this->version_;
+  JsonDocument doc;
+  if (deserializeJson(doc, this->last_reply_) == DeserializationError::Ok) {
+    if (doc["type"].is<const char *>()) root["type"] = doc["type"].as<const char *>();
+    root["data"] = doc.as<JsonVariantConst>();
+  } else {
+    root["data"] = this->last_reply_;
+  }
+  this->last_reply_.clear();
+  this->last_reply_.shrink_to_fit();
+}
+
 void RBgridComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "RBgrid core (hosted), NVS partition: %s, point slots: %u", rbgrid_nvs_partition(),
                 (unsigned) this->slots_.size());
   LOG_SENSOR("  ", "Power", this->power_);
   LOG_SENSOR("  ", "Energy in", this->energy_in_);
   LOG_SENSOR("  ", "Energy out", this->energy_out_);
+  LOG_SENSOR("  ", "Cost total", this->cost_total_);
+  LOG_SENSOR("  ", "Revenue total", this->revenue_total_);
+  LOG_TEXT_SENSOR("  ", "Tariff zone", this->tariff_zone_);
+  ESP_LOGCONFIG(TAG, "  Money entities labelled: %s", this->currency_.c_str());
 }
 
 }  // namespace rbgrid

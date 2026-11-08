@@ -30,6 +30,9 @@
 #include "rbwebserver.h"
 #include "rbamp_bridge.h"
 
+/** @brief I2C fleet action (rbi2c_cmd.c). */
+char *rbi2c_action(const cJSON *req, int *status);
+
 /*  @brief Add the web server's CORS headers to a response (defined in rbwebserver).
  *  @param[in] req  HTTP request. */
 extern void add_cors_headers(httpd_req_t *req);
@@ -54,17 +57,16 @@ static esp_err_t send_err(httpd_req_t *req, const char *status, const char *code
     cJSON_AddStringToObject(o, "message", msg);
     return send_json(req, o);
 }
-/** Reply to a write: the new I2C state with "status":"ok" on success, else an error mapped from @p e
- *  (NOT_FOUND → 404, INVALID_STATE → 409, other → 400). */
-static esp_err_t send_result(httpd_req_t *req, esp_err_t e, const char *why)
+/** Send an rbi2c_action() reply with its HTTP status. */
+static esp_err_t send_action(httpd_req_t *req, char *body, int st)
 {
-    if (e == ESP_OK) {
-        cJSON *o = rbamp_bridge_i2c_state();
-        if (o) cJSON_AddStringToObject(o, "status", "ok");
-        return send_json(req, o);
-    }
-    const char *st = e == ESP_ERR_NOT_FOUND ? "404 Not Found" : e == ESP_ERR_INVALID_STATE ? "409 Conflict" : "400 Bad Request";
-    return send_err(req, st, esp_err_to_name(e), why[0] ? why : esp_err_to_name(e));
+    if (!body) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json"); return ESP_FAIL; }
+    static const char *const codes[] = { "200 OK", "400 Bad Request", "404 Not Found", "409 Conflict", "500 Internal Server Error" };
+    httpd_resp_set_status(req, st == 200 ? codes[0] : st == 404 ? codes[2] : st == 409 ? codes[3] : st == 500 ? codes[4] : codes[1]);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, body);
+    free(body);
+    return ESP_OK;
 }
 
 static esp_err_t i2c_get(httpd_req_t *req)
@@ -74,16 +76,7 @@ static esp_err_t i2c_get(httpd_req_t *req)
     return send_json(req, rbamp_bridge_i2c_state());
 }
 
-/** Integer field @p k of @p b (number or numeric string, "0x51" accepted), else @p dflt. */
-static int num(cJSON *b, const char *k, int dflt)
-{
-    cJSON *j = cJSON_GetObjectItem(b, k);
-    if (j && cJSON_IsNumber(j)) return j->valueint;
-    if (j && cJSON_IsString(j)) return (int)strtol(j->valuestring, NULL, 0);   /* "0x51" accepted */
-    return dflt;
-}
-
-/** POST /api/v1/i2c/...: route scan / modules / modules/<m>/{address,bus,drdy} / buses/<b>. */
+/** POST /api/v1/i2c/...: the path picks the op of rbi2c_action() (rbi2c_cmd.c), the body carries its fields. */
 static esp_err_t i2c_post(httpd_req_t *req)
 {
     add_cors_headers(req);
@@ -94,48 +87,29 @@ static esp_err_t i2c_post(httpd_req_t *req)
     cJSON *b = cJSON_Parse(len > 0 ? buf : "{}");
     if (!b) return send_err(req, "400 Bad Request", "JSON", "bad JSON");
     const char *tail = req->uri + strlen("/api/v1/i2c/");
-    char why[128] = "";
-    esp_err_t e;
     unsigned m = 0, bus = 0;
-    if (!strncmp(tail, "scan", 4)) {
-        int bb = num(b, "bus", 0);
-        cJSON *o = cJSON_CreateObject(), *arr = cJSON_CreateArray();
-        e = (bb < 0 || bb > 1) ? ESP_ERR_INVALID_ARG : rbamp_bridge_i2c_scan((uint8_t)bb, arr);
-        cJSON_Delete(b);
-        if (e == ESP_ERR_INVALID_RESPONSE) {
-            cJSON_Delete(o); cJSON_Delete(arr);
-            return send_err(req, "409 Conflict", "BUS_STUCK", "a bus line is held low — a module may be without power, set to another mode (e.g. Modbus) or wired wrong: check the module connections, then scan again");
-        }
-        if (e != ESP_OK) { cJSON_Delete(o); cJSON_Delete(arr); return send_err(req, "409 Conflict", "BUS_DOWN", "bus is not running"); }
-        cJSON_AddStringToObject(o, "status", "ok");
-        cJSON_AddNumberToObject(o, "bus", bb);
-        cJSON_AddItemToObject(o, "devices", arr);
-        return send_json(req, o);
-    } else if (sscanf(tail, "modules/%u/address", &m) == 1 && strstr(tail, "/address")) {
-        int a = num(b, "addr", -1);
-        e = (a < 0 || a > 0x7F) ? ESP_ERR_INVALID_ARG : rbamp_bridge_i2c_set_addr((uint8_t)m, (uint8_t)a, why, sizeof(why));
-    } else if (sscanf(tail, "modules/%u/bus", &m) == 1 && strstr(tail, "/bus")) {
-        int bb = num(b, "bus", -1);
-        e = (bb < 0 || bb > 1) ? ESP_ERR_INVALID_ARG : rbamp_bridge_i2c_set_bus((uint8_t)m, (uint8_t)bb, why, sizeof(why));
-    } else if (sscanf(tail, "modules/%u/drdy", &m) == 1 && strstr(tail, "/drdy")) {
-        int g = num(b, "gpio", -2);
-        e = (g < -1 || g > 39) ? ESP_ERR_INVALID_ARG : rbamp_bridge_i2c_set_drdy((uint8_t)m, g, why, sizeof(why));
-    } else if (!strcmp(tail, "modules")) {
-        int bb = num(b, "bus", 0), a = num(b, "addr", -1);
-        int nm = -1;
-        e = (bb < 0 || bb > 1 || a < 0 || a > 0x7F) ? ESP_ERR_INVALID_ARG
-                                                     : rbamp_bridge_i2c_add((uint8_t)bb, (uint8_t)a, &nm, why, sizeof(why));
-    } else if (sscanf(tail, "buses/%u", &bus) == 1) {
-        cJSON *off = cJSON_GetObjectItem(b, "off");
-        int sda = cJSON_IsTrue(off) ? -1 : num(b, "sda", -2), scl = cJSON_IsTrue(off) ? -1 : num(b, "scl", -2);
-        e = (bus > 1 || (sda == -2 || scl == -2)) ? ESP_ERR_INVALID_ARG
-                                                  : rbamp_bridge_i2c_set_pins((uint8_t)bus, sda, scl, why, sizeof(why));
-    } else {
+    const char *op = NULL;
+    if (!strncmp(tail, "scan", 4)) op = "scan";
+    else if (sscanf(tail, "modules/%u/address", &m) == 1 && strstr(tail, "/address")) op = "address";
+    else if (sscanf(tail, "modules/%u/bus", &m) == 1 && strstr(tail, "/bus")) op = "bus";
+    else if (sscanf(tail, "modules/%u/drdy", &m) == 1 && strstr(tail, "/drdy")) op = "drdy";
+    else if (!strcmp(tail, "modules")) op = "add";
+    else if (sscanf(tail, "buses/%u", &bus) == 1) op = "pins";
+    if (!op) {
         cJSON_Delete(b);
         return send_err(req, "404 Not Found", "ROUTE", "scan | modules | modules/<m>/address | modules/<m>/bus | buses/<b>");
     }
+    cJSON_DeleteItemFromObject(b, "op");
+    cJSON_AddStringToObject(b, "op", op);
+    if (!strcmp(op, "address") || !strcmp(op, "bus") || !strcmp(op, "drdy")) {
+        cJSON_DeleteItemFromObject(b, "module");
+        cJSON_AddNumberToObject(b, "module", m);
+    }
+    if (!strcmp(op, "pins")) { cJSON_DeleteItemFromObject(b, "bus"); cJSON_AddNumberToObject(b, "bus", bus); }
+    int st = 200;
+    char *body = rbi2c_action(b, &st);
     cJSON_Delete(b);
-    return send_result(req, e, why);
+    return send_action(req, body, st);
 }
 
 /** @brief Register GET /api/v1/i2c and POST /api/v1/i2c/... on the running web server. Call after the server is up. */

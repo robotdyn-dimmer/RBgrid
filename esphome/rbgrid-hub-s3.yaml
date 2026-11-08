@@ -2,6 +2,10 @@
 # rbAmp bus: SDA GPIO8 / SCL GPIO9 (the S3 default in the RBgrid core).
 esphome:
   name: rbgrid-hub-s3
+  friendly_name: RBgrid Hub
+  project:
+    name: rbgrid.hub_s3
+    version: 1.2.0-dev
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -23,13 +27,18 @@ api:
   actions:
     # RBgrid configuration from Home Assistant, no YAML change: the RBgrid command format
     # ({"cmd":"get|set|history","section":...}). The reply comes back as the action's response.
+    # Reply: {"ok", "schema", "type", "config_version", "data": <device reply object>}; a device error comes back as
+    # the action's error (success: false + the device message), so HA raises instead of returning ok.
     - action: rbgrid_cmd
       variables:
         command: string
       then:
+        - lambda: 'id(rb).run_command(command);'
         - api.respond:
-            data: !lambda |-
-              root["reply"] = id(rb).command(command);
+            success: !lambda 'return id(rb).last_ok();'
+            error_message: !lambda 'return id(rb).last_error();'
+            data: !lambda 'id(rb).fill_reply(root);'
+
 
 ota:
   - platform: esphome
@@ -54,9 +63,35 @@ external_components:
 rbgrid:
   id: rb
   point_slots: 12           # fixed grid; points take free slots at runtime, no YAML change
+  slot_current: true        # + "Point N current" per slot
+  currency: EUR             # label of the money entities = the tariff plan's currency (HA does not convert)
   power:
     name: "Grid power"
   energy_in:
     name: "Energy in"
   energy_out:
     name: "Energy out"
+  energy_day_in:
+    name: "Energy in today"
+  energy_day_out:
+    name: "Energy out today"
+  cost_total:
+    name: "Cost"
+  revenue_total:
+    name: "Export value"
+  cost_day:
+    name: "Cost today"
+  revenue_day:
+    name: "Export value today"
+  buy_price:
+    name: "Buy price"
+  sell_price:
+    name: "Sell price"
+  tariff_zone:
+    name: "Tariff zone"
+  config_version:
+    name: "Config version"
+  time_valid:
+    name: "Clock set"
+  tariff_placeholder:
+    name: "Demo tariff"

@@ -28,6 +28,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include "esp_timer.h"
+#include "esp_rom_crc.h"   /* rbgrid_core_config_version */
 #include "rbhome_types.h"
 #include "littlefs_raw.h"   /* HA discovery tombstones (/ha_tomb) */
 #include "rbpower_constants.h"
@@ -381,6 +382,59 @@ void rbgrid_core_system_totals(rbgrid_system_totals_t *t, bool with_energy)
         t->e_in_wh = e_in; t->e_out_wh = e_out; t->e_day_in_wh = e_day_in; t->e_day_out_wh = e_day_out;
         t->cost_total = cost_total; t->cost_day = cost_day; t->rev_total = rev_total; t->rev_day = rev_day;
     }
+}
+
+/* Live tariff for hosts (no JSON): the same figures as telemetry `system.tariff{}`. */
+void rbgrid_core_tariff_now(rbgrid_tariff_now_t *t)
+{
+    memset(t, 0, sizeof(*t));
+    int zid = -1; float buy = 0, sell = 0;
+    rbpower_tariff_get_diag(NULL, NULL, NULL, NULL, &zid, &buy, &sell, NULL);
+    if (zid >= 0 && zid < RBPOWER_TARIFF_ZONE_COUNT)
+        snprintf(t->zone, sizeof(t->zone), "%s", rbpower_tariff_zone_type_text[zid]);
+    t->buy_rate = buy;
+    t->sell_rate = sell;
+    double buy_all = buy;
+    const rbpower_tariff_plan_t *tp = rbpower_tariff_get_current_plan();
+    if (tp && buy > 0) {
+        double fees = (double)tp->grid_usage_fee_per_kwh + (double)tp->energy_tax_per_kwh + (double)tp->renewable_levy_per_kwh;
+        buy_all = ((double)buy + fees) * (1.0 + (double)tp->vat_percent / 100.0);
+    }
+    t->buy_rate_all_in = buy_all;
+    snprintf(t->currency, sizeof(t->currency), "%s", rbpower_tariff_currency());
+    t->placeholder = tp && rbpower_tariff_plan_is_placeholder(tp->plan_name, tp->provider_name);
+    t->time_valid = rbtime_is_time_valid();
+}
+
+/* Version of the active configuration: CRC32 of the points + tariff plan JSON, as 8 hex digits. Builds both
+ * documents (a few KB), so a host calls it rarely (on change or every ~30 s). Takes the home lock itself. */
+void rbgrid_core_config_version(char out[9])
+{
+    uint32_t crc = 0;
+    rbpower_home_lock();
+    char *u = rbgrid_core_json_ctx() ? rbgrid_json_create_units_config(rbgrid_core_json_ctx()) : NULL;
+    rbpower_home_unlock();
+    char *t = rbgrid_core_json_ctx() ? rbgrid_json_create_rbpower_tariff_plan_config(rbgrid_core_json_ctx()) : NULL;
+    /* the documents carry a timestamp / live counters: hash only the stable "data" part of each */
+    const char *docs[2] = { u, t };
+    for (int i = 0; i < 2; i++) {
+        if (!docs[i]) continue;
+        cJSON *j = cJSON_Parse(docs[i]);
+        cJSON *d = j ? cJSON_GetObjectItem(j, "data") : NULL;
+        if (d && i == 0) {   /* points: drop live state fields */
+            cJSON *arr = cJSON_GetObjectItem(d, "units"), *e = NULL;
+            cJSON_ArrayForEach(e, arr) {
+                static const char *const live[] = { "has_realtime_data", "last_update_us", "total_updates", "history",
+                                                    "created_timestamp_us" };
+                for (size_t k = 0; k < sizeof(live) / sizeof(live[0]); k++) cJSON_DeleteItemFromObject(e, live[k]);
+            }
+        }
+        char *s = d ? cJSON_PrintUnformatted(d) : NULL;
+        if (s) { crc = esp_rom_crc32_le(crc, (const uint8_t *)s, strlen(s)); free(s); }
+        cJSON_Delete(j);
+    }
+    free(u); free(t);
+    snprintf(out, 9, "%08lx", (unsigned long)crc);
 }
 
 /* Per-point snapshot for hosts. The specialized main / alternative supply keep their live and lifetime values in

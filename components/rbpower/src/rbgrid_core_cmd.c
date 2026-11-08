@@ -56,6 +56,9 @@ void rbgrid_register_espnow_status_provider(char *(*fn)(void)) { s_espnow_status
  * from its registry: the node's points are registered from that registry at every boot, so a deleted point came
  * back after a restart (an unused node input could not be switched off). */
 static void (*s_unit_deleted_hook)(uint16_t unit_id) = NULL;
+/* I2C fleet actions (rbi2c_action in rbgrid_app): `get i2c` / `set i2c`. NULL until registered. */
+static char *(*s_i2c_action)(const cJSON *req, int *status) = NULL;
+void rbgrid_register_i2c_action_handler(char *(*fn)(const cJSON *req, int *status)) { s_i2c_action = fn; }
 void rbgrid_register_unit_deleted_hook(void (*fn)(uint16_t)) { s_unit_deleted_hook = fn; }
 void rbgrid_core_notify_unit_deleted(uint16_t unit_id) { if (s_unit_deleted_hook) s_unit_deleted_hook(unit_id); }
 /* ESP-NOW node actions (the hub in main/ registers it): MQTT `cmd set espnow {data:{action,…}}` = POST /api/v1/espnow. */
@@ -91,6 +94,12 @@ static char* cmd_get_section(const cJSON* root, const char* section)
     if (strcmp(section, "schema") == 0)  return rbgrid_build_schema_json();
     if (strcmp(section, "sensors") == 0) return rbgrid_json_create_sensors_list(rbgrid_core_json_ctx());
     if (strcmp(section, "espnow") == 0)  return s_espnow_status_provider ? s_espnow_status_provider() : NULL;
+    if (strcmp(section, "i2c") == 0) {
+        if (!s_i2c_action) return NULL;
+        cJSON *q = cJSON_CreateObject(); cJSON_AddStringToObject(q, "op", "state");
+        int st = 200; char *r = s_i2c_action(q, &st); cJSON_Delete(q);
+        return r;
+    }
     if (strcmp(section, "economics") == 0) {
         const cJSON* ju = cJSON_GetObjectItem(root, "unit");
         if (!cJSON_IsString(ju)) return NULL;
@@ -166,6 +175,20 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
 
     char* ack = NULL;
     char msg[96];
+    if (strcmp(section, "i2c") == 0) {
+        if (!s_i2c_action) {
+            ack = cmd_ack_json("set", section, "error", "I2C actions not available in this build", id);
+        } else {
+            int st = 200;
+            char *rep = s_i2c_action(data, &st);
+            cJSON *r = rep ? cJSON_Parse(rep) : NULL;
+            const char *m = r ? cJSON_GetStringValue(cJSON_GetObjectItem(r, "message")) : NULL;
+            ack = cmd_ack_json("set", section, st == 200 ? "ok" : "error", st == 200 ? "i2c action done" : (m ? m : "i2c action failed"), id);
+            cJSON *a = ack ? cJSON_Parse(ack) : NULL, *ad = a ? cJSON_GetObjectItem(a, "data") : NULL;
+            if (ad && r) { cJSON_AddItemToObject(ad, "reply", r); r = NULL; char *re = cJSON_PrintUnformatted(a); if (re) { free(ack); ack = re; } }
+            cJSON_Delete(a); cJSON_Delete(r); free(rep);
+        }
+    } else
     if (strcmp(section, "espnow") == 0) {
         if (!s_espnow_action) {
             ack = cmd_ack_json("set", section, "error", "ESP-NOW not available in this build", id);
@@ -246,6 +269,54 @@ static char* cmd_history(const cJSON* root)
     return js;   // flat {status,request,meta,data} — identical to HTTP /api/v1/history
 }
 
+/* Point operations over the command channel (the HTTP /api/v1/units routes, for builds without the web server):
+ *   {"cmd":"unit","op":"create","data":{sensor:{iface,...},name,role?,...}}
+ *   {"cmd":"unit","op":"patch|rebind|rename","unit":"0006","data":{...}}
+ *   {"cmd":"unit","op":"delete","unit":"0006"}
+ * Reply: cmd_ack with result ok|error, the HTTP-style code in data.code and the route's own reply in data.reply. */
+static char* cmd_unit(const cJSON* root, const char* id)
+{
+    char admin[48];
+    if (rbgrid_token_load(RBGRID_TOKEN_FILE, admin)) {
+        const char* tok = cJSON_GetStringValue(cJSON_GetObjectItem(root, "token"));
+        if (!tok || strcmp(tok, admin) != 0) return cmd_ack_json("unit", "-", "error", "unauthorized: admin token required", id);
+    }
+    const char* op = cJSON_GetStringValue(cJSON_GetObjectItem(root, "op"));
+    const char* us = cJSON_GetStringValue(cJSON_GetObjectItem(root, "unit"));
+    const cJSON* data = cJSON_GetObjectItem(root, "data");
+    if (!op) return cmd_ack_json("unit", "-", "error", "missing 'op' (create | patch | rebind | rename | delete)", id);
+    rbpower_unit_id_t uid = us ? (rbpower_unit_id_t)strtoul(us, NULL, 16) : 0;
+    char* body = data ? cJSON_PrintUnformatted(data) : NULL;
+    int st = 400;
+    char* rep = NULL;
+    if (!strcmp(op, "create")) {
+        rep = body ? rbgrid_units_create(body, &st) : NULL;
+    } else if (!strcmp(op, "patch") || !strcmp(op, "rebind") || !strcmp(op, "rename")) {
+        rep = (uid && body) ? rbgrid_units_mutate(uid, !strcmp(op, "patch") ? "" : op, body, &st) : NULL;
+    } else if (!strcmp(op, "delete")) {
+        rep = uid ? rbgrid_units_delete(uid, &st) : NULL;
+    } else {
+        free(body);
+        return cmd_ack_json("unit", op, "error", "unknown op (create | patch | rebind | rename | delete)", id);
+    }
+    free(body);
+    if (!rep) return cmd_ack_json("unit", op, "error", us || !strcmp(op, "create") ? "missing 'data'" : "missing 'unit' (hex id)", id);
+    cJSON* r = cJSON_Parse(rep);
+    const char* m = r ? cJSON_GetStringValue(cJSON_GetObjectItem(r, "message")) : NULL;
+    bool ok = st >= 200 && st < 300;
+    char* ack = cmd_ack_json("unit", op, ok ? "ok" : "error", ok ? "done" : (m ? m : "failed"), id);
+    cJSON* a = ack ? cJSON_Parse(ack) : NULL;
+    cJSON* ad = a ? cJSON_GetObjectItem(a, "data") : NULL;
+    if (ad) {
+        cJSON_AddNumberToObject(ad, "code", st);
+        if (r) { cJSON_AddItemToObject(ad, "reply", r); r = NULL; }
+        char* re = cJSON_PrintUnformatted(a);
+        if (re) { free(ack); ack = re; }
+    }
+    cJSON_Delete(a); cJSON_Delete(r); free(rep);
+    return ack;
+}
+
 // Public: parse a command JSON and return a malloc'd response JSON (caller frees), or NULL.
 char* rbgrid_command_dispatch(const char* in_json, int in_len)
 {
@@ -284,8 +355,10 @@ char* rbgrid_command_dispatch(const char* in_json, int in_len)
         out = cmd_set_section(root, sec_s, id_s);
     } else if (strcmp(cmd_s, "history") == 0) {
         out = cmd_history(root);
+    } else if (strcmp(cmd_s, "unit") == 0) {
+        out = cmd_unit(root, id_s);
     } else {
-        out = cmd_ack_json(cmd_s, sec_s, "error", "unknown cmd (use 'get' / 'set' / 'history')", id_s);
+        out = cmd_ack_json(cmd_s, sec_s, "error", "unknown cmd (use 'get' / 'set' / 'history' / 'unit')", id_s);
     }
 
 envelope:

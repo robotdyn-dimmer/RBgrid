@@ -137,7 +137,7 @@ bool rbgrid_core_factory_reset_at_boot(void);
 /* ---- Configuration (transport-neutral) ------------------------------------------------------ */
 
 /**
- * @brief Run one command: {"cmd":"get|set|history","section":…,"data":…,"id":…,"token":…}.
+ * @brief Run one command: {"cmd":"get|set|history|unit","section":…,"op":…,"unit":…,"data":…,"id":…,"token":…}.
  * @param[in] in_json  Command JSON (not NUL-terminated necessarily).
  * @param[in] in_len   Length in bytes.
  * @return malloc'd reply JSON (caller frees), or NULL.
@@ -237,10 +237,36 @@ typedef struct {
  */
 int rbgrid_core_points_snapshot(rbgrid_point_snap_t *out, int max);
 
+/** @brief The tariff in force now (as telemetry `system.tariff{}`). */
+typedef struct {
+    char   zone[16];          ///< Active zone name ("" = no active plan)
+    float  buy_rate;          ///< Zone buy rate, currency/kWh
+    float  sell_rate;         ///< Zone sell (feed-in) rate, currency/kWh
+    double buy_rate_all_in;   ///< Buy rate with per-kWh fees and VAT (the basis of the cost figures)
+    char   currency[8];       ///< Plan currency (ISO code)
+    bool   placeholder;       ///< Money is computed off the built-in demo plan (no plan saved yet)
+    bool   time_valid;        ///< The wall clock is set (zones need it)
+} rbgrid_tariff_now_t;
+
+/**
+ * @brief The tariff in force now. Cheap; no lock needed.
+ * @param[out] t  Tariff now.
+ */
+void rbgrid_core_tariff_now(rbgrid_tariff_now_t *t);
+
+/**
+ * @brief Version of the active configuration (points + tariff plan): CRC32, 8 hex digits.
+ * @param[out] out  9 bytes.
+ * @note Builds the two documents (a few KB); call rarely. Takes the home lock itself: do not hold it.
+ */
+void rbgrid_core_config_version(char out[9]);
+
 /* ---- Hooks main/ registers (ESP-NOW hub lives above this component) ------------------------- */
 
 /** @brief Register the ESP-NOW status JSON builder (`cmd get espnow`). @param fn Builder. */
 void rbgrid_register_espnow_status_provider(char *(*fn)(void));
+/** @brief Register the I2C fleet action handler (`cmd get i2c` / `set i2c`). @param fn Handler. */
+void rbgrid_register_i2c_action_handler(char *(*fn)(const cJSON *req, int *status));
 /** @brief Register the ESP-NOW action handler (`cmd set espnow`). @param fn Handler. */
 void rbgrid_register_espnow_action_handler(char *(*fn)(const cJSON *req, int *status));
 /** @brief Register a function called after a point is deleted. @param fn Hook. */

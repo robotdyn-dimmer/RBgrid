@@ -87,6 +87,7 @@
 #endif
 #include "rbevlog.h"               // on-hub event log + remote console verbs (for OTA-only hubs)
 extern "C" void modfw_register_http(void);   // main/modfw.c — STD module firmware update over the hub
+extern "C" char *rbi2c_action(const cJSON *req, int *status);   // rbi2c_cmd.c — I2C fleet actions (HTTP + cmd channel)
 extern "C" void rbi2c_register_http(void);   // main/rbi2c_api.c — I2C buses / module address API
 #include "esp_system.h"
 #include "rbhome_types.h"          // rbpower_get_unit_200ms_data for the `unit` verb
@@ -2145,6 +2146,7 @@ static void app_espnow_start(void)
 {
     rbgrid_register_espnow_status_provider(esp_now_hub_status_json);   // MQTT `cmd get espnow` → status JSON
     rbgrid_register_unit_deleted_hook(esp_now_on_unit_deleted);        // a deleted node point stays deleted
+    rbgrid_register_i2c_action_handler(rbi2c_action);                  // `cmd get|set i2c` → the I2C fleet actions (rbi2c_cmd.c)
     rbgrid_register_espnow_action_handler(esp_now_hub_action);         // MQTT `cmd set espnow` → same actions as HTTP
     xTaskCreate(espnow_autostart_task, "espnow_autostart", 4096, NULL, 4, NULL);
 }
