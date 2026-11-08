@@ -11,6 +11,7 @@
  * per-unit statistics pipeline.
  */
 
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
 #include "rbhome_main_supply.h"
 #include "rbhome_types.h"
 #include "rbpower.h"
@@ -489,7 +490,7 @@ static void update_main_supply_extended_stats(rbpower_main_supply_t* main_supply
     
     // Current local time in seconds since midnight
     time_t now = time(NULL);
-    struct tm* timeinfo = localtime(&now);
+    struct tm* timeinfo = rbgrid_localtime(&now);
     uint32_t seconds_since_midnight = timeinfo->tm_hour * 3600 + 
                                      timeinfo->tm_min * 60 + 
                                      timeinfo->tm_sec;

@@ -15,6 +15,7 @@
  * @date 2025-01-10
  */
 
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
 #include "rbpower.h"
 #include "rbpower_enums.h"
 #include "rbpower_constants.h"
@@ -181,7 +182,7 @@ static uint64_t calculate_time_to_next_15min_boundary(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
-    struct tm* time_info = localtime(&tv.tv_sec);
+    struct tm* time_info = rbgrid_localtime(&tv.tv_sec);
     if (!time_info) {
         return 15 * 60 * 1000000ULL; // Fallback: 15 minutes
     }
@@ -212,7 +213,7 @@ static uint64_t calculate_time_to_next_1hour_boundary(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
-    struct tm* time_info = localtime(&tv.tv_sec);
+    struct tm* time_info = rbgrid_localtime(&tv.tv_sec);
     if (!time_info) {
         return 3600 * 1000000ULL; // Fallback: 1 hour
     }
@@ -234,7 +235,7 @@ static uint64_t calculate_time_to_next_1day_boundary(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
-    struct tm* time_info = localtime(&tv.tv_sec);
+    struct tm* time_info = rbgrid_localtime(&tv.tv_sec);
     if (!time_info) {
         return 24 * 3600 * 1000000ULL; // Fallback: 24 hours
     }
@@ -258,7 +259,7 @@ static uint64_t calculate_time_to_next_1week_boundary(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
-    struct tm* time_info = localtime(&tv.tv_sec);
+    struct tm* time_info = rbgrid_localtime(&tv.tv_sec);
     if (!time_info) {
         return 7 * 24 * 3600 * 1000000ULL; // Fallback: 7 days
     }
@@ -293,7 +294,7 @@ static uint64_t calculate_time_to_next_1month_boundary(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
-    struct tm* time_info = localtime(&tv.tv_sec);
+    struct tm* time_info = rbgrid_localtime(&tv.tv_sec);
     if (!time_info) {
         return 30 * 24 * 3600 * 1000000ULL; // Fallback: 30 days
     }
@@ -305,7 +306,7 @@ static uint64_t calculate_time_to_next_1month_boundary(void)
     next_month.tm_hour = 0;
     next_month.tm_min = 0;
     next_month.tm_sec = 0;
-    next_month.tm_isdst = -1;  // Allow mktime() to auto-determine DST
+    next_month.tm_isdst = -1;  // Allow rbgrid_mktime() to auto-determine DST
 
     // Handle year transition
     if (next_month.tm_mon >= 12) {
@@ -313,7 +314,7 @@ static uint64_t calculate_time_to_next_1month_boundary(void)
         next_month.tm_year++;
     }
 
-    time_t target_time = mktime(&next_month);
+    time_t target_time = rbgrid_mktime(&next_month);
     if (target_time == -1) {
         return 30 * 24 * 3600 * 1000000ULL; // Fallback
     }
@@ -333,7 +334,7 @@ static uint64_t calculate_time_to_next_1year_boundary(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
-    struct tm* time_info = localtime(&tv.tv_sec);
+    struct tm* time_info = rbgrid_localtime(&tv.tv_sec);
     if (!time_info) {
         return 365 * 24 * 3600 * 1000000ULL; // Fallback: 365 days
     }
@@ -346,9 +347,9 @@ static uint64_t calculate_time_to_next_1year_boundary(void)
     next_year.tm_hour = 0;
     next_year.tm_min = 0;
     next_year.tm_sec = 0;
-    next_year.tm_isdst = -1;  // Allow mktime() to auto-determine DST
+    next_year.tm_isdst = -1;  // Allow rbgrid_mktime() to auto-determine DST
 
-    time_t target_time = mktime(&next_year);
+    time_t target_time = rbgrid_mktime(&next_year);
     if (target_time == -1) {
         return 365 * 24 * 3600 * 1000000ULL; // Fallback
     }

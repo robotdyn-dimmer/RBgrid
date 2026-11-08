@@ -21,6 +21,7 @@
  * @date 2025-01-10
  */
 
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
 #include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbpower.h"
 #include "rbpower_enums.h"
@@ -1999,7 +2000,7 @@ static void get_current_local_time(struct tm* timeinfo, uint64_t* unix_timestamp
         *unix_timestamp = (uint64_t)g_tariff_test_time_override_s;
         time_t ovr = (time_t)(*unix_timestamp);
         struct tm ovr_tm;
-        if (localtime_r(&ovr, &ovr_tm)) memcpy(timeinfo, &ovr_tm, sizeof(struct tm));
+        if (rbgrid_localtime_r(&ovr, &ovr_tm)) memcpy(timeinfo, &ovr_tm, sizeof(struct tm));
         return;
     }
 #if RBGRID_STATS_TIME_SCALE > 1
@@ -2019,7 +2020,7 @@ static void get_current_local_time(struct tm* timeinfo, uint64_t* unix_timestamp
     // daylight-saving transitions automatically. Reentrant (this is called from the
     // 3-sec stats path) — no static-buffer race like gmtime().
     struct tm local_tm;
-    if (localtime_r(&current_time, &local_tm)) {
+    if (rbgrid_localtime_r(&current_time, &local_tm)) {
         memcpy(timeinfo, &local_tm, sizeof(struct tm));
     }
 }
@@ -2489,7 +2490,7 @@ void rbpower_tariff_cost_injected_period(rbpower_unit_id_t unit_id, float energy
         if (end > 450) {
             time_t mid = (time_t)(end - 450);
             struct tm tm_mid;
-            if (localtime_r(&mid, &tm_mid)) mid_zone = find_active_tariff_zone(&tm_mid);
+            if (rbgrid_localtime_r(&mid, &tm_mid)) mid_zone = find_active_tariff_zone(&tm_mid);
         }
         if (tariff_clock_unset()) mid_zone = find_default_tariff_zone();   /* no real time → default zone */
     }
@@ -3117,7 +3118,7 @@ rbpower_err_t rbpower_tariff_get_forecast(rbpower_unit_id_t unit_id,
     for (uint8_t hour = 0; hour < max_results; hour++) {
         time_t future = (time_t)(now_unix + (uint64_t)hour * 3600);
         struct tm ftm;
-        localtime_r(&future, &ftm);
+        rbgrid_localtime_r(&future, &ftm);
         rbpower_tariff_zone_t* zone = find_active_tariff_zone(&ftm);
 
         rbpower_tariff_instant_result_t* fr = &forecast_results[hour];

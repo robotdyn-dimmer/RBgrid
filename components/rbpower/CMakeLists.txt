@@ -15,6 +15,7 @@ set(RBPOWER_SRCS
     "src/rbgrid.c"
     "src/rbgrid_config_api.c"
     "src/rbgrid_core.c"                      # core context, lifecycle hooks, factory reset
+    "src/rbgrid_tz.c"                        # own local time (POSIX TZ rule), independent of the process TZ
     "src/rbgrid_core_cmd.c"                  # transport-neutral command dispatcher + API tokens
     "src/rbgrid_core_reads.c"                # economics / summary / schema / base_w builders
     "src/rbgrid_units.c"                     # point create / change / delete

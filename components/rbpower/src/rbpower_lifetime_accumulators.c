@@ -14,6 +14,7 @@
  * (survives power cycles) -> start from zero.
  */
 
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
 #include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbpower_lifetime_accumulators.h"
 #include "rbpower_lifetime_api.h"
@@ -657,8 +658,8 @@ bool rbpower_lifetime_check_day_rollover(void)
     if (!rbpower_stats_clock_trusted((time_t)s_restored_snapshot_ts)) return false;   /* seed, or a snapshot taken under the fallback clock */
     struct tm a, b;
     time_t snap = (time_t)s_restored_snapshot_ts;
-    localtime_r(&snap, &a);
-    localtime_r(&now, &b);
+    rbgrid_localtime_r(&snap, &a);
+    rbgrid_localtime_r(&now, &b);
     if (a.tm_year == b.tm_year && a.tm_yday == b.tm_yday) return false;
     ESP_LOGW(TAG, "day rollover in downtime: snapshot %04d-%02d-%02d, now %04d-%02d-%02d -> daily counters reset",
              a.tm_year + 1900, a.tm_mon + 1, a.tm_mday, b.tm_year + 1900, b.tm_mon + 1, b.tm_mday);

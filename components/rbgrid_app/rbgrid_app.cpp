@@ -18,6 +18,7 @@
 // in effect this early (same trap that silently flipped CONFIG_SPIRAM/MAX_UNITS off before).
 // Without this, CONFIG_RBGRID_BENCH_FULL reads as undefined here → RBGRID_RBBENCH=0 → the whole
 // rbbench console is compiled OUT of the unified build (dead console + no diag).
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
 #include "rbgrid_app.h"
 #include "sdkconfig.h"
 // CONFIG_RBGRID_DEBUG_BRIDGE / CONFIG_RBGRID_BENCH_FULL come from sdkconfig.h (included above).
@@ -1541,9 +1542,9 @@ static int rbgrid_dbg_clock(int argc, char **argv) {
         if (sscanf(argv[1], "%d:%d:%d", &hh, &mm, &ss) < 2 || hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) {
             rbbench_reply("clock: bad time '%s'", argv[1]); return 1;
         }
-        time_t now = time(NULL); struct tm lt; localtime_r(&now, &lt);
+        time_t now = time(NULL); struct tm lt; rbgrid_localtime_r(&now, &lt);
         lt.tm_hour = hh; lt.tm_min = mm; lt.tm_sec = ss; lt.tm_isdst = -1;
-        time_t t = mktime(&lt);
+        time_t t = rbgrid_mktime(&lt);
         if (t <= 0) { rbbench_reply("clock: mktime failed"); return 1; }
         ts = (uint64_t)t;
     } else {
@@ -1551,7 +1552,7 @@ static int rbgrid_dbg_clock(int argc, char **argv) {
         if (ts < 1600000000ULL) { rbbench_reply("clock: unix_ts must be > 1600000000"); return 1; }
     }
     rbpower_err_t e = rbtime_set_manual_time(ts);
-    time_t t2 = (time_t)ts; struct tm lt2; localtime_r(&t2, &lt2);
+    time_t t2 = (time_t)ts; struct tm lt2; rbgrid_localtime_r(&t2, &lt2);
     rbbench_reply("clock set ts=%llu local=%04d-%02d-%02d %02d:%02d:%02d: %s", (unsigned long long)ts,
                   lt2.tm_year + 1900, lt2.tm_mon + 1, lt2.tm_mday, lt2.tm_hour, lt2.tm_min, lt2.tm_sec,
                   e == RBPOWER_OK ? "OK" : "ERROR");

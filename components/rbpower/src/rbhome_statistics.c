@@ -14,6 +14,7 @@
  * @date 2025-01-10
  */
 
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
 #include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "nvs.h"            /* open-HOUR accumulator persist/restore across reboots */
 #include "rbpower.h"
@@ -1004,7 +1005,7 @@ void rbpower_stats_boot_clock_tick(void)
     time_t now = rbpower_stats_clock_now();
     const bool clock_valid = rbpower_stats_clock_trusted(now);
     struct tm lt;
-    localtime_r(&now, &lt);
+    rbgrid_localtime_r(&now, &lt);
     uint64_t bk[RBSTATS_BK_COUNT];
     rbpower_stats_calc_buckets(now, &lt, bk);
 
@@ -1014,7 +1015,7 @@ void rbpower_stats_boot_clock_tick(void)
         if (rbpower_stats_clock_trusted((time_t)snap)) {   /* snapshot under Jan-2024 fallback = unknown day */
             time_t st = (time_t)snap;
             struct tm stm;
-            localtime_r(&st, &stm);
+            rbgrid_localtime_r(&st, &stm);
             rbpower_stats_calc_buckets(st, &stm, s_snap_bk);
             bool any = false;
             for (int i = RBSTATS_BK_DAY; i < RBSTATS_BK_COUNT; i++) any |= (s_snap_bk[i] != bk[i]);
@@ -1171,7 +1172,7 @@ static void rollup_dispatch_buckets(rbpower_unit_id_t unit_id)
 {
     time_t now = rbpower_stats_clock_now();
     struct tm timeinfo;
-    localtime_r(&now, &timeinfo);
+    rbgrid_localtime_r(&now, &timeinfo);
 
     // === BUCKET-CROSSING BOUNDARY DISPATCH (drift- / NTP- / no-SNTP-robust) — keystone fix ===
     // A higher period finalizes when the unit crosses into a NEW period BUCKET, not on an exact
@@ -1237,7 +1238,7 @@ static void rollup_dispatch_buckets(rbpower_unit_id_t unit_id)
 }
 
 /* Pure period-bucket calculator (unit-tested on 5 TZs in rbpower_logic_test.c).
- * DAY/WEEK/MONTH/YEAR are LOCAL-calendar buckets — the caller passes localtime_r(now) so the TZ
+ * DAY/WEEK/MONTH/YEAR are LOCAL-calendar buckets — the caller passes rbgrid_localtime_r(now) so the TZ
  * (incl. DST) decides where midnight is:
  *   - local day index = (now − local_seconds_of_day) mapped to days (rounded at half-day to absorb
  *     the ±1h DST wobble of local midnight's epoch);
@@ -1268,22 +1269,22 @@ static int64_t local_midnight_of_day(int64_t day_id)
 {
     time_t probe = (time_t)(day_id * 86400 + 43200);
     struct tm lt;
-    localtime_r(&probe, &lt);
+    rbgrid_localtime_r(&probe, &lt);
     lt.tm_hour = 0; lt.tm_min = 0; lt.tm_sec = 0; lt.tm_isdst = -1;
-    time_t mid = mktime(&lt);
+    time_t mid = rbgrid_mktime(&lt);
     for (int guard = 0; guard < 3; guard++) {
         time_t chk_t = mid + 43200;
         struct tm chk;
-        localtime_r(&chk_t, &chk);
+        rbgrid_localtime_r(&chk_t, &chk);
         uint64_t bk[RBSTATS_BK_COUNT];
         rbpower_stats_calc_buckets((int64_t)chk_t, &chk, bk);
         if ((int64_t)bk[RBSTATS_BK_DAY] == day_id) {
             break;
         }
         probe = mid + (((int64_t)bk[RBSTATS_BK_DAY] < day_id) ? 86400 + 43200 : -86400 + 43200);
-        localtime_r(&probe, &lt);
+        rbgrid_localtime_r(&probe, &lt);
         lt.tm_hour = 0; lt.tm_min = 0; lt.tm_sec = 0; lt.tm_isdst = -1;
-        mid = mktime(&lt);
+        mid = rbgrid_mktime(&lt);
     }
     return (int64_t)mid;
 }
@@ -1311,16 +1312,16 @@ bool rbpower_stats_bucket_span(rbstats_bucket_idx_t idx, uint64_t bucket,
             struct tm a = {0}, b = {0};
             a.tm_year = (int)y; a.tm_mon = (int)m; a.tm_mday = 1; a.tm_isdst = -1;
             b.tm_year = (int)(y + (m == 11 ? 1 : 0)); b.tm_mon = (int)((m + 1) % 12); b.tm_mday = 1; b.tm_isdst = -1;
-            start = (int64_t)mktime(&a);
-            end   = (int64_t)mktime(&b);
+            start = (int64_t)rbgrid_mktime(&a);
+            end   = (int64_t)rbgrid_mktime(&b);
             break;
         }
         case RBSTATS_BK_YEAR: {
             struct tm a = {0}, b = {0};
             a.tm_year = (int)bucket; a.tm_mon = 0; a.tm_mday = 1; a.tm_isdst = -1;
             b.tm_year = (int)bucket + 1; b.tm_mon = 0; b.tm_mday = 1; b.tm_isdst = -1;
-            start = (int64_t)mktime(&a);
-            end   = (int64_t)mktime(&b);
+            start = (int64_t)rbgrid_mktime(&a);
+            end   = (int64_t)rbgrid_mktime(&b);
             break;
         }
         default:
@@ -1825,7 +1826,7 @@ static bool child_in_bucket(uint32_t ts, int64_t child_half_span,
     }
     time_t t = (time_t)mid;
     struct tm lt;
-    localtime_r(&t, &lt);
+    rbgrid_localtime_r(&t, &lt);
     uint64_t bk[RBSTATS_BK_COUNT];
     rbpower_stats_calc_buckets(mid, &lt, bk);
     return bk[parent_bk_idx] == parent_bucket;
@@ -2167,7 +2168,7 @@ void rbpower_finalize_period_callback(rbpower_unit_id_t unit_id,
     // dispatcher in rbpower_rollup_after_15min): sum the CURRENT (in-progress) calendar bucket.
     time_t bk_now = rbpower_stats_clock_now();
     struct tm bk_tm;
-    localtime_r(&bk_now, &bk_tm);
+    rbgrid_localtime_r(&bk_now, &bk_tm);
     uint64_t bk[RBSTATS_BK_COUNT];
     rbpower_stats_calc_buckets(bk_now, &bk_tm, bk);
 

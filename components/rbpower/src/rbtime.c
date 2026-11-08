@@ -14,6 +14,7 @@
  * @author RobotBroker
  */
 
+#include "rbgrid_tz.h"
 #include "rbpower.h"
 #include "rbpower_enums.h"
 #include "rbpower_constants.h"
@@ -154,6 +155,7 @@ static bool rbtime_tz_is_valid(const char *tz)
     if (tz == NULL || tz[0] == '\0') {
         return false;
     }
+    if (!rbgrid_tz_parse_ok(tz)) return false;   /* RBgrid evaluates the zone itself (rbgrid_tz) */
     bool claims_utc = (strcmp(tz, "UTC") == 0 || strcmp(tz, "UTC0") == 0 ||
                        strcmp(tz, "UTC+0") == 0 || strcmp(tz, "UTC-0") == 0 ||
                        strcmp(tz, "GMT") == 0 || strcmp(tz, "GMT0") == 0);
@@ -688,14 +690,17 @@ rbpower_err_t rbtime_init(const rbtime_config_t *config)
     if (rbtime_tz_is_valid(config->timezone)) {
         setenv("TZ", config->timezone, 1);
         tzset();
+        if (!rbgrid_tz_set(config->timezone)) rbgrid_tz_set("UTC0");   /* RBgrid's own zone (host-proof) */
         ESP_LOGI("RBTIME", "Timezone applied from config: %s", config->timezone);
     } else if (strlen(config->timezone) == 0) {
         setenv("TZ", "UTC0", 1);
         tzset();
+        rbgrid_tz_set("UTC0");
         ESP_LOGI("RBTIME", "Timezone not configured — running on UTC0");
     } else {
         setenv("TZ", "UTC0", 1);
         tzset();
+        rbgrid_tz_set("UTC0");
         ESP_LOGW("RBTIME", "⚠ Config timezone '%s' is NOT a valid POSIX TZ — running on UTC0 "
                            "(fix via time-sync POST, e.g. 'CET-1CEST,M3.5.0,M10.5.0/3')",
                  config->timezone);
@@ -987,6 +992,7 @@ rbpower_err_t rbtime_set_timezone(const char* timezone)
     // Apply timezone to system
     setenv("TZ", timezone, 1);
     tzset();
+    if (!rbgrid_tz_set(timezone)) rbgrid_tz_set("UTC0");   /* RBgrid's own zone (host-proof) */
 
     rbtime_unlock();
 

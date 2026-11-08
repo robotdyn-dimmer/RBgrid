@@ -8,6 +8,7 @@
  *
  * Moved out of rbwebserver_api.c (HTTP handlers there are thin wrappers over these).
  */
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
 #include "rbgrid_core.h"
 #include "rbgrid_core_priv.h"
 #include "rbstats_migrate.h"
@@ -149,7 +150,7 @@ static void rbapi_base_emit(const rbpower_period_statistics_t *s, void *vctx)
     struct rbapi_base_ctx *c = (struct rbapi_base_ctx *)vctx;
     uint32_t ts = (uint32_t)(s->period_start_us / 1000000LL), dur = s->v4_dur_s ? s->v4_dur_s : 3600;
     if (dur < 3540 || c->n >= 40) return;
-    time_t mid = (time_t)(ts - dur / 2); struct tm lt; localtime_r(&mid, &lt);
+    time_t mid = (time_t)(ts - dur / 2); struct tm lt; rbgrid_localtime_r(&mid, &lt);
     if (lt.tm_hour < 1 || lt.tm_hour >= 5) return;
     c->v[c->n++] = (float)(s->energy_period.consumed_wh * 3600.0 / dur);
     uint8_t day = (uint8_t)lt.tm_yday;   /* distinct nights (yday is enough inside a 7-day window) */

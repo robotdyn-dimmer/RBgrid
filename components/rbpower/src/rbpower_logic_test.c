@@ -15,6 +15,7 @@
  * and an accelerated statistics clock; see documents/development/TEST_MATRIX.md.
  */
 
+#include "rbgrid_tz.h"
 #include "rbpower_logic_test.h"
 #include "rbhome_types.h"       /* rbpower_compute_energy_balance + 4-flow structs */
 #include "rbstats_v4_types.h"   /* suite 3: v3->v4 record converters */
@@ -149,12 +150,12 @@ static void suite_energy_balance(void)
 /* ===== Suite 2: local-calendar period buckets (five-time-zone matrix) =====
  * Pure test of rbpower_stats_calc_buckets under real POSIX TZ strings: the DAY bucket must flip
  * exactly at LOCAL midnight (incl. both DST transition days), WEEK at local Monday 00:00, and the
- * HOUR bucket must stay the UTC hour (visible on the half-hour zone). mktime() under the same TZ
+ * HOUR bucket must stay the UTC hour (visible on the half-hour zone). rbgrid_mktime() under the same TZ
  * builds the probe epochs, so expectations need no hand-computed constants. Saves/restores TZ. */
 static uint64_t bk_of(time_t t, rbstats_bucket_idx_t which)
 {
     struct tm lt;
-    localtime_r(&t, &lt);
+    rbgrid_localtime_r(&t, &lt);
     uint64_t bk[RBSTATS_BK_COUNT];
     rbpower_stats_calc_buckets((int64_t)t, &lt, bk);
     return bk[which];
@@ -165,7 +166,7 @@ static time_t local_epoch(int y, int mon, int d, int h, int mi, int s)
 {
     struct tm lt = { .tm_year = y - 1900, .tm_mon = mon - 1, .tm_mday = d,
                      .tm_hour = h, .tm_min = mi, .tm_sec = s, .tm_isdst = -1 };
-    return mktime(&lt);
+    return rbgrid_mktime(&lt);
 }
 
 static void tz_case(const char *name, const char *tz,
@@ -174,6 +175,7 @@ static void tz_case(const char *name, const char *tz,
 {
     setenv("TZ", tz, 1);
     tzset();
+    rbgrid_tz_set(tz);
     time_t mid = local_epoch(y, mon, d, 0, 0, 0);
     /* 1. DAY bucket flips exactly at local midnight. */
     RBT_CHECK(bk_of(mid - 1, RBSTATS_BK_DAY) + 1 == bk_of(mid, RBSTATS_BK_DAY), name);
@@ -201,7 +203,7 @@ static void suite_local_buckets(void)
     tz_case("Berlin: fall-back day", "CET-1CEST,M3.5.0,M10.5.0/3", 2026, 10, 25, 25);
     /* Monday alignment: 2026-03-30 is a Monday — WEEK bucket flips at ITS local midnight. */
     {
-        setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1); tzset();
+        setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1); tzset(); rbgrid_tz_set("CET-1CEST,M3.5.0,M10.5.0/3");
         time_t mon_mid = local_epoch(2026, 3, 30, 0, 0, 0);
         RBT_CHECK(bk_of(mon_mid - 1, RBSTATS_BK_WEEK) + 1 == bk_of(mon_mid, RBSTATS_BK_WEEK),
                   "Berlin: WEEK flips at local Monday 00:00");
@@ -220,7 +222,7 @@ static void suite_local_buckets(void)
     tz_case("Sydney: spring-fwd day (southern)", "AEST-10AEDT,M10.1.0,M4.1.0/3", 2026, 10, 4, 23);
     /* Asia/Kolkata (+5:30): DAY local, HOUR stays the UTC hour (half-hour offset visible). */
     {
-        setenv("TZ", "IST-5:30", 1); tzset();
+        setenv("TZ", "IST-5:30", 1); tzset(); rbgrid_tz_set("IST-5:30");
         time_t mid = local_epoch(2026, 10, 11, 0, 0, 0);
         RBT_CHECK(bk_of(mid - 1, RBSTATS_BK_DAY) + 1 == bk_of(mid, RBSTATS_BK_DAY),
                   "Kolkata (+5:30): DAY flips at local midnight");
@@ -234,7 +236,7 @@ static void suite_local_buckets(void)
      * attributes it by ts − half_span. The child ending exactly at a boundary — plus worst-case
      * lateness < half_span — must land in the CLOSING bucket, not the new one. */
     {
-        setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1); tzset();
+        setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1); tzset(); rbgrid_tz_set("CET-1CEST,M3.5.0,M10.5.0/3");
         time_t apr1 = local_epoch(2026, 4, 1, 0, 0, 0);
         uint64_t march = bk_of(apr1 - 1, RBSTATS_BK_MONTH);
         /* last HOUR of March 31: ts = midnight (+900s late) − 1800 half-span → March's DAY+ buckets */
@@ -253,7 +255,7 @@ static void suite_local_buckets(void)
     /* bucket spans (calendar-exact PARTIAL reference): DST day 23h, month across the
      * transition 31d−1h, week containing it 7d−1h, Kolkata plain 24h day. */
     {
-        setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1); tzset();
+        setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1); tzset(); rbgrid_tz_set("CET-1CEST,M3.5.0,M10.5.0/3");
         time_t d = local_epoch(2026, 3, 29, 12, 0, 0);   /* spring-fwd day */
         int64_t s = 0, e = 0;
         RBT_CHECK(rbpower_stats_bucket_span(RBSTATS_BK_DAY, bk_of(d, RBSTATS_BK_DAY), &s, &e) &&
@@ -265,7 +267,7 @@ static void suite_local_buckets(void)
         RBT_CHECK(rbpower_stats_bucket_span(RBSTATS_BK_WEEK, bk_of(d, RBSTATS_BK_WEEK), &s, &e) &&
                   (e - s) == 7 * 86400 - 3600,
                   "span: Berlin DST week = 7d - 1h");
-        setenv("TZ", "IST-5:30", 1); tzset();
+        setenv("TZ", "IST-5:30", 1); tzset(); rbgrid_tz_set("IST-5:30");
         time_t k = local_epoch(2026, 10, 11, 12, 0, 0);
         RBT_CHECK(rbpower_stats_bucket_span(RBSTATS_BK_DAY, bk_of(k, RBSTATS_BK_DAY), &s, &e) &&
                   (e - s) == 86400 && s == local_epoch(2026, 10, 11, 0, 0, 0),
@@ -273,6 +275,8 @@ static void suite_local_buckets(void)
     }
 
     if (saved[0]) setenv("TZ", saved, 1); else unsetenv("TZ");
+    tzset();
+    if (!saved[0] || !rbgrid_tz_set(saved)) rbgrid_tz_set("UTC0");   /* back to the configured zone */
     tzset();
 }
 

@@ -10,6 +10,7 @@
  * MQTT Discovery configs) and parses the matching POST bodies back into rbpower structures.
  * JSON keys and values emitted here are part of the public API contract (see the API reference).
  */
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
 #include "rbgrid_core.h"
 #include <string.h>
 #include <stdlib.h>
@@ -3431,10 +3432,10 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
                      * last_reset for the monetary day entities; also lets a client label "today" */
                     time_t nowt = time(NULL);
                     if (nowt > 1600000000) {
-                        struct tm lt; localtime_r(&nowt, &lt);
+                        struct tm lt; rbgrid_localtime_r(&nowt, &lt);
                         lt.tm_hour = 0; lt.tm_min = 0; lt.tm_sec = 0; lt.tm_isdst = -1;
-                        time_t mid = mktime(&lt);
-                        struct tm lm; localtime_r(&mid, &lm);
+                        time_t mid = rbgrid_mktime(&lt);
+                        struct tm lm; rbgrid_localtime_r(&mid, &lm);
                         char iso[32]; strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%S%z", &lm);
                         size_t n = strlen(iso);   /* +0900 -> +09:00 (HA/ISO parsers) */
                         if (n >= 5 && n + 1 < sizeof(iso)) { iso[n + 1] = 0; iso[n] = iso[n - 1]; iso[n - 1] = iso[n - 2]; iso[n - 2] = ':'; }
