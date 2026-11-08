@@ -17,6 +17,16 @@ logger:
 
 api:
   reboot_timeout: 0s
+  actions:
+    # RBgrid configuration from Home Assistant, no YAML change: the RBgrid command format
+    # ({"cmd":"get|set|history","section":...}). The reply comes back as the action's response.
+    - action: rbgrid_cmd
+      variables:
+        command: string
+      then:
+        - api.respond:
+            data: !lambda |-
+              root["reply"] = id(rb).command(command);
 
 ota:
   - platform: esphome
@@ -33,6 +43,8 @@ external_components:
       path: components
 
 rbgrid:
+  id: rb
+  point_slots: 12           # fixed grid; points take free slots at runtime, no YAML change
   power:
     name: "Grid power"
   energy_in:
