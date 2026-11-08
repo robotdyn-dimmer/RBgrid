@@ -269,6 +269,75 @@ static char* cmd_history(const cJSON* root)
     return js;   // flat {status,request,meta,data} — identical to HTTP /api/v1/history
 }
 
+/* Chart series for hosts: energy + money per stored period, joined on the device.
+ *   {"cmd":"series","unit":"0100","period":"hour|day|week|month|year","from":unix,"to":unix,"limit":168}
+ * Reply {"type":"series","unit","period","currency","cols":["ts","dur","wh_in","wh_out","cost","revenue","q"],"rows":[[...],...]}
+ * Rows are the stored periods (hour is the finest in flash; 15-min periods are live only), newest first, filtered to
+ * [from, to). */
+static char* cmd_series(const cJSON* root)
+{
+    const char* us = cJSON_GetStringValue(cJSON_GetObjectItem(root, "unit"));
+    if (!us) return cmd_ack_json("series", "-", "error", "missing 'unit' (hex string)", NULL);
+    rbpower_unit_id_t unit = (rbpower_unit_id_t)strtoul(us, NULL, 16);
+    const char* ps = cJSON_GetStringValue(cJSON_GetObjectItem(root, "period"));
+    if (!ps) ps = "hour";
+    int period = !strcmp(ps,"hour")?0 : !strcmp(ps,"day")?1 : !strcmp(ps,"week")?2 : !strcmp(ps,"month")?3 : !strcmp(ps,"year")?4 : -1;
+    if (period < 0) return cmd_ack_json("series", ps, "error", "period: hour | day | week | month | year", NULL);
+    const cJSON* jf = cJSON_GetObjectItem(root, "from");
+    const cJSON* jt = cJSON_GetObjectItem(root, "to");
+    const cJSON* jl = cJSON_GetObjectItem(root, "limit");
+    double from = cJSON_IsNumber(jf) ? jf->valuedouble : 0, to = cJSON_IsNumber(jt) ? jt->valuedouble : 4e9;
+    uint32_t limit = cJSON_IsNumber(jl) ? (uint32_t)jl->valueint : 168;
+    if (limit == 0 || limit > 720) limit = 168;
+    char* je = rbgrid_history_get_data(unit, (rbpower_period_t)period, (rbpower_data_type_t)1, 0, limit);   /* energy */
+    char* jc = rbgrid_history_get_data(unit, (rbpower_period_t)period, (rbpower_data_type_t)2, 0, limit);   /* economics */
+    cJSON* e = je ? cJSON_Parse(je) : NULL;
+    cJSON* c = jc ? cJSON_Parse(jc) : NULL;
+    free(je); free(jc);
+    if (!e) { cJSON_Delete(c); return cmd_ack_json("series", ps, "error", "history read failed (no records or flash unavailable)", NULL); }
+    cJSON* out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "type", "series");
+    cJSON_AddStringToObject(out, "unit", us);
+    cJSON_AddStringToObject(out, "period", ps);
+    cJSON_AddStringToObject(out, "currency", rbpower_tariff_currency());
+    cJSON* cols = cJSON_AddArrayToObject(out, "cols");
+    static const char* const names[] = { "ts", "dur", "wh_in", "wh_out", "cost", "revenue", "q" };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) cJSON_AddItemToArray(cols, cJSON_CreateString(names[i]));
+    cJSON* rows = cJSON_AddArrayToObject(out, "rows");
+    cJSON* ea = cJSON_GetObjectItem(e, "data");
+    cJSON* ca = c ? cJSON_GetObjectItem(c, "data") : NULL;
+    cJSON* r = NULL;
+    cJSON_ArrayForEach(r, ea) {
+        double ts = cJSON_GetNumberValue(cJSON_GetObjectItem(r, "ts"));
+        if (ts < from || ts >= to) continue;
+        double cost = 0, rev = 0;
+        cJSON* k = NULL;
+        cJSON_ArrayForEach(k, ca) {
+            if (cJSON_GetNumberValue(cJSON_GetObjectItem(k, "ts")) == ts) {
+                cost = cJSON_GetNumberValue(cJSON_GetObjectItem(k, "c"));
+                rev = cJSON_GetNumberValue(cJSON_GetObjectItem(k, "r"));
+                if (isnan(cost)) cost = 0;
+                if (isnan(rev)) rev = 0;
+                break;
+            }
+        }
+        double win = cJSON_GetNumberValue(cJSON_GetObjectItem(r, "ec")), wout = cJSON_GetNumberValue(cJSON_GetObjectItem(r, "es"));
+        cJSON* row = cJSON_CreateArray();
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(ts));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(cJSON_GetNumberValue(cJSON_GetObjectItem(r, "dur"))));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(isnan(win) ? 0 : round(win * 1000) / 1000));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(isnan(wout) ? 0 : round(wout * 1000) / 1000));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(round(cost * 1e6) / 1e6));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(round(rev * 1e6) / 1e6));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(cJSON_GetNumberValue(cJSON_GetObjectItem(r, "q"))));
+        cJSON_AddItemToArray(rows, row);
+    }
+    cJSON_Delete(e); cJSON_Delete(c);
+    char* sres = cJSON_PrintUnformatted(out);
+    cJSON_Delete(out);
+    return sres;
+}
+
 /* Point operations over the command channel (the HTTP /api/v1/units routes, for builds without the web server):
  *   {"cmd":"unit","op":"create","data":{sensor:{iface,...},name,role?,...}}
  *   {"cmd":"unit","op":"patch|rebind|rename","unit":"0006","data":{...}}
@@ -357,8 +426,10 @@ char* rbgrid_command_dispatch(const char* in_json, int in_len)
         out = cmd_history(root);
     } else if (strcmp(cmd_s, "unit") == 0) {
         out = cmd_unit(root, id_s);
+    } else if (strcmp(cmd_s, "series") == 0) {
+        out = cmd_series(root);
     } else {
-        out = cmd_ack_json(cmd_s, sec_s, "error", "unknown cmd (use 'get' / 'set' / 'history' / 'unit')", id_s);
+        out = cmd_ack_json(cmd_s, sec_s, "error", "unknown cmd (use 'get' / 'set' / 'history' / 'series' / 'unit')", id_s);
     }
 
 envelope:

@@ -820,6 +820,8 @@ static void espnow_emit_presence(const uint8_t mac[6], bool online)
              mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], online ? "ONLINE" : "OFFLINE");
     espnow_publish_status(mac, online);
     espnow_publish_event(online ? "node_online" : "node_offline", mac);
+    rbpower_diag_printf("espnow: node %02X:%02X:%02X:%02X:%02X:%02X %s", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                        online ? "online" : "offline");   /* event log + host events (ESPHome → HA) */
 }
 
 /** Publish a HA Discovery config for a node's "Online" connectivity binary_sensor (sub-device under

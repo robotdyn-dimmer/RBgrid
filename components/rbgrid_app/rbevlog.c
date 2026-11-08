@@ -120,6 +120,9 @@ static uint8_t classify(const char *m)
 
 static void log_sink(const char *line) { rbevlog_add(line); }
 
+static void (*s_listener)(const char *msg, bool fail) = NULL;
+void rbevlog_set_listener(void (*fn)(const char *msg, bool fail)) { s_listener = fn; }
+
 void rbevlog_init(void)
 {
     if (s_ring) return;
@@ -149,6 +152,7 @@ void rbevlog_add(const char *msg)
     if (lvl == LVL_FAIL) s_fail_boot++;
     xSemaphoreGive(s_mtx);
     if (lvl == LVL_FAIL && s_writer) xTaskNotifyGive(s_writer);
+    if (s_listener && lvl != LVL_PERIODIC) s_listener(msg, lvl == LVL_FAIL);   /* host copy (ESPHome → HA events) */
 }
 
 /* ---- files ---- */

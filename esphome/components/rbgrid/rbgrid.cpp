@@ -19,7 +19,12 @@ extern "C" {
 #include "rbhome_types.h"   // rbpower_home_lock / unlock
 #include "littlefs_raw.h"   // the slot map lives in the core's config store
 #include "cJSON.h"
+#include "rbevlog.h"    // event lines → HA events
 }
+#include "freertos/queue.h"
+#ifdef USE_API
+#include "esphome/components/api/api_server.h"
+#endif
 
 namespace esphome {
 namespace rbgrid {
@@ -34,6 +39,44 @@ char RBgridComponent::version_buf[9] = {0};
 std::atomic<bool> RBgridComponent::version_ready{false};
 static std::atomic<bool> s_core_up{false};
 static TaskHandle_t s_version_task = nullptr;
+
+// Event log lines → HA events: copied into a queue in the caller's task, fired from loop().
+struct EvItem {
+  char msg[160];
+  bool fail;
+};
+static QueueHandle_t s_ev_q = nullptr;
+static void on_event_line(const char *msg, bool fail) {
+  if (s_ev_q == nullptr) return;
+  EvItem it;
+  strncpy(it.msg, msg, sizeof(it.msg) - 1);
+  it.msg[sizeof(it.msg) - 1] = '\0';
+  it.fail = fail;
+  if (xQueueSend(s_ev_q, &it, 0) == pdTRUE) App.wake_loop_threadsafe();
+}
+
+/// Stable event kinds for automations (blueprints), from the event text. Unknown lines: "fail" / "event".
+static const char *event_kind(const char *m, bool fail) {
+  struct K {
+    const char *needle;
+    const char *kind;
+  };
+  static const K KINDS[] = {
+      {"reverse flow", "reverse_flow"},          {"not found at boot", "module_absent"},
+      {"ABSENT", "module_absent"},               {"no rbAmp modules", "module_absent"},
+      {"joined late", "module_restored"},        {"poll restored", "module_restored"},
+      {" poll:", "module_poll_fail"},            {"held low", "bus_stuck"},
+      {"espnow: node", "node"},                  {"boot: reset", "boot"},
+      {"tariff", "tariff"},                      {"ota", "firmware"},
+  };
+  for (const auto &k : KINDS) {
+    if (strstr(m, k.needle) != nullptr) {
+      if (!strcmp(k.kind, "node")) return strstr(m, " offline") ? "node_offline" : "node_online";
+      return k.kind;
+    }
+  }
+  return fail ? "fail" : "event";
+}
 static constexpr size_t REPLY_INLINE_MAX = 4000;   // ESPHome's JSON builder caps a response at 5119 bytes
 static constexpr size_t PART_RAW = 3072;           // → 4096 base64 characters per part
 
@@ -83,11 +126,13 @@ static void start_task(void *) {
     rbgrid_core_register_3s_cb(on_3s);
     s_core_up.store(true);
   }
+  if (s_ev_q != nullptr) rbevlog_set_listener(on_event_line);
   vTaskDelete(nullptr);
 }
 
 void RBgridComponent::setup() {
   this->started_ms_ = millis();
+  if (this->events_) s_ev_q = xQueueCreate(16, sizeof(EvItem));
   if (xTaskCreatePinnedToCore(start_task, "rbgrid_start", 8192, nullptr, 2, nullptr, 0) != pdPASS) {
     ESP_LOGE(TAG, "could not create the start task");
     this->mark_failed();
@@ -103,6 +148,10 @@ void RBgridComponent::loop() {
     rbgrid_core_image_confirmed();   // releases a deferred stats migration; ESPHome confirms the OTA image itself
   }
   if (frame_ready.exchange(false)) this->publish_frame_();
+  if (s_ev_q != nullptr) {
+    EvItem it;
+    for (int i = 0; i < 4 && xQueueReceive(s_ev_q, &it, 0) == pdTRUE; i++) this->fire_event_(it.msg, it.fail);
+  }
   if (version_ready.load()) {
     std::string v(version_buf);
     version_ready.store(false);
@@ -309,6 +358,29 @@ void RBgridComponent::fill_reply(JsonObject root) {
   }
   this->last_reply_.clear();
   this->last_reply_.shrink_to_fit();
+}
+
+// One HA event "esphome.rbgrid_event" {kind, level, message}. Sent only while HA is connected (the device keeps the
+// line in its own event log either way).
+void RBgridComponent::fire_event_(const char *msg, bool fail) {
+#ifdef USE_API
+  if (api::global_api_server == nullptr || !api::global_api_server->is_connected()) return;
+  api::HomeassistantActionRequest req;
+  req.service = StringRef("esphome.rbgrid_event");
+  req.is_event = true;
+  const char *kind = event_kind(msg, fail);
+  req.data.init(3);
+  auto &k = req.data.emplace_back();
+  k.key = StringRef("kind");
+  k.value = StringRef(kind);
+  auto &l = req.data.emplace_back();
+  l.key = StringRef("level");
+  l.value = StringRef(fail ? "fail" : "event");
+  auto &m = req.data.emplace_back();
+  m.key = StringRef("message");
+  m.value = StringRef(msg);
+  api::global_api_server->send_homeassistant_action(req);
+#endif
 }
 
 void RBgridComponent::dump_config() {

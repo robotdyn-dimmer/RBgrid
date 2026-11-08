@@ -80,7 +80,20 @@ These are the web app's point routes. The reply carries `data.code` (HTTP-style)
 
 Same flat `{status, request, meta, data}` as `/api/v1/history`. `limit` ≤ 720.
 
-The 15-minute period series and a `from`/`to` row format for HA charts (`[t, wh_in, wh_out, cost_in, cost_out, zone]`) are planned. The current call returns the HTTP format.
+### Chart series: `{"cmd":"series","unit":"0100","period":"hour|day|week|month|year","from":unix,"to":unix,"limit":168}`
+
+Energy and money per stored period, joined on the device:
+
+```json
+{"type":"series","unit":"0100","period":"hour","currency":"EUR",
+ "cols":["ts","dur","wh_in","wh_out","cost","revenue","q"],"rows":[[1794124800,3600,12.3,0,0.0048,0,1], ...]}
+```
+
+- `ts` is the period start (unix), `dur` the seconds it covers.
+- `q` holds the quality bits; `get schema` → `quality_bits` names them (ESTIMATED, OUTAGE, restart, …).
+- Rows come newest first, filtered to [`from`, `to`).
+- **Resolution:** the hour is the finest stored period. 15-minute periods are live only and are not kept in flash.
+- About 40 bytes per row; more than ~90 rows arrive in parts.
 
 ## Entities (S3 test YAML, `esphome/rbgrid-hub-s3.yaml`)
 
@@ -102,3 +115,15 @@ Energy in/out **today** also qualify in the Energy dashboard pickers; pick the l
 Energy steps at the 15-minute period boundaries: the module counters are the truth, and a period is booked when it closes. The money unit is fixed at build time (`currency:` in YAML) and must match the tariff plan's currency; the device logs a warning if they differ.
 
 docs: none (internal; user docs when an ESPHome build ships)
+
+## Events: `esphome.rbgrid_event`
+
+Every line of the device's event log, except the periodic trace, is sent to HA as an event while HA is connected (`events: true`, the default). The device keeps the line in its own log either way. Data:
+
+| Field | Value |
+|---|---|
+| `kind` | `reverse_flow`, `module_absent`, `module_restored`, `module_poll_fail`, `bus_stuck`, `node_online`, `node_offline`, `boot`, `tariff`, `firmware`; otherwise `fail` or `event` |
+| `level` | `fail` (an invariant / error line, "FAIL …") or `event` |
+| `message` | The log line as the device wrote it |
+
+Blueprints trigger on `event_type: esphome.rbgrid_event` with `event_data: {kind: …}`. Events from the device are not gated by the integration's "allow service calls" option. The device never calls HA actions.

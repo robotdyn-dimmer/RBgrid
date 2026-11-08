@@ -62,6 +62,7 @@ CONF_TARIFF_ZONE = "tariff_zone"
 CONF_CONFIG_VERSION = "config_version"
 CONF_TIME_VALID = "time_valid"
 CONF_TARIFF_PLACEHOLDER = "tariff_placeholder"
+CONF_EVENTS = "events"
 UNIT_WATT_HOURS = "Wh"
 MAX_SLOTS = 64
 
@@ -187,6 +188,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BUY_PRICE): cv.valid,
             cv.Optional(CONF_SELL_PRICE): cv.valid,
             cv.Optional(CONF_TARIFF_ZONE): text_sensor.text_sensor_schema(),
+            cv.Optional(CONF_EVENTS, default=True): cv.boolean,
             cv.Optional(CONF_CONFIG_VERSION): text_sensor.text_sensor_schema(entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
             cv.Optional(CONF_TIME_VALID): binary_sensor.binary_sensor_schema(entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
             cv.Optional(CONF_TARIFF_PLACEHOLDER): binary_sensor.binary_sensor_schema(
@@ -223,6 +225,9 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     cg.add(var.set_currency(config[CONF_CURRENCY]))
+    if config[CONF_EVENTS]:
+        cg.add_define("USE_API_HOMEASSISTANT_SERVICES")   # send_homeassistant_action (events to HA)
+        cg.add(var.set_events(True))
     for key, setter in ((CONF_POWER, "set_power_sensor"), (CONF_ENERGY_IN, "set_energy_in_sensor"),
                         (CONF_ENERGY_OUT, "set_energy_out_sensor"), (CONF_ENERGY_DAY_IN, "set_energy_day_in_sensor"),
                         (CONF_ENERGY_DAY_OUT, "set_energy_day_out_sensor"), (CONF_COST_TOTAL, "set_cost_total_sensor"),

@@ -40,6 +40,8 @@ class RBgridComponent : public Component {
   void set_time_valid_sensor(binary_sensor::BinarySensor *s) { time_valid_ = s; }
   void set_tariff_placeholder_sensor(binary_sensor::BinarySensor *s) { tariff_placeholder_ = s; }
   void set_currency(const std::string &c) { currency_ = c; }
+  /// Send the device's event log lines to HA as "esphome.rbgrid_event" {kind, level, message}.
+  void set_events(bool on) { events_ = on; }
 
   void add_slot(text_sensor::TextSensor *name, sensor::Sensor *p, sensor::Sensor *ein, sensor::Sensor *eout,
                 sensor::Sensor *cur, sensor::Sensor *volt) {
@@ -77,6 +79,8 @@ class RBgridComponent : public Component {
     bool published_empty{false};
   };
   void publish_frame_();
+  void fire_event_(const char *msg, bool fail);
+  bool events_{false};
   void load_map_();
   void save_map_();
   static void pub_(sensor::Sensor *s, float v) {
