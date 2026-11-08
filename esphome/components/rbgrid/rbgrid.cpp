@@ -333,6 +333,7 @@ void RBgridComponent::fill_reply(JsonObject root) {
     root["rid"] = this->cache_rid_;
     root["parts"] = parts;
     root["part"] = this->part_req_;
+    root["bytes"] = this->cache_.size();
     root["b64"] = b64(this->cache_.data() + off, std::min(PART_RAW, this->cache_.size() - off));
     this->cache_ms_ = millis();
     this->part_req_ = -1;
@@ -348,6 +349,14 @@ void RBgridComponent::fill_reply(JsonObject root) {
     root["parts"] = parts;
     root["part"] = 0;
     root["bytes"] = this->cache_.size();
+    {   // the device reply's type, as a plain reply carries it
+      const char *t = strstr(this->cache_.c_str(), "\"type\":\"");
+      if (t != nullptr && t - this->cache_.c_str() < 256) {
+        t += 8;
+        const char *e = strchr(t, '"');
+        if (e != nullptr && e - t < 40) root["type"] = std::string(t, e - t);
+      }
+    }
     root["b64"] = b64(this->cache_.data(), std::min(PART_RAW, this->cache_.size()));
     return;
   }

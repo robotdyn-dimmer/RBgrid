@@ -345,8 +345,9 @@ void rbgrid_core_system_totals(rbgrid_system_totals_t *t, bool with_energy)
         if (g_home_network.specialized.has_main_supply) {
             rbpower_main_supply_t* ms = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
             if (ms) {
-                e_in     += ms->lifetime_accumulators.total_energy_consumed_wh;
-                e_out    += ms->lifetime_accumulators.total_energy_supplied_wh;
+                /* the exact totalizer path, as the points snapshot (rbgrid_core_points_snapshot) uses */
+                e_in     += lifetime_wh(g_home_network.system.main_supply_unit_id, true,  ms->lifetime_accumulators.total_energy_consumed_wh);
+                e_out    += lifetime_wh(g_home_network.system.main_supply_unit_id, false, ms->lifetime_accumulators.total_energy_supplied_wh);
                 e_day_in += ms->lifetime_accumulators.daily_energy_consumed_wh;
                 e_day_out+= ms->lifetime_accumulators.daily_energy_supplied_wh;
                 cost_total += ms->lifetime_accumulators.total_cost_consumed;
@@ -357,8 +358,8 @@ void rbgrid_core_system_totals(rbgrid_system_totals_t *t, bool with_energy)
         }
         if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
             rbpower_alternative_supply_t* as = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
-            e_in     += as->lifetime_accumulators.total_energy_consumed_wh;
-            e_out    += as->lifetime_accumulators.total_energy_supplied_wh;
+            e_in     += lifetime_wh(g_home_network.system.alternative_supply_unit_id, true,  as->lifetime_accumulators.total_energy_consumed_wh);
+            e_out    += lifetime_wh(g_home_network.system.alternative_supply_unit_id, false, as->lifetime_accumulators.total_energy_supplied_wh);
             e_day_in += as->lifetime_accumulators.daily_energy_consumed_wh;
             e_day_out+= as->lifetime_accumulators.daily_energy_supplied_wh;
             cost_total += as->lifetime_accumulators.total_cost_consumed;

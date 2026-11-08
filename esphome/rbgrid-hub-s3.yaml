@@ -1,37 +1,41 @@
 # RBgrid hub firmware hosted by ESPHome (pilot) on an ESP32-S3 N16R8 (16 MB flash, 8 MB octal PSRAM).
 # rbAmp bus: SDA GPIO8 / SCL GPIO9 (the S3 default in the RBgrid core).
+substitutions:
+  friendly_name: RBgrid Hub
+
 esphome:
   name: rbgrid-hub-s3
-  friendly_name: RBgrid Hub
+  friendly_name: ${friendly_name}
   project:
     name: rbgrid.hub_s3
     version: 1.2.0-dev
-  # one HA device per point slot (rbgrid: slot_devices: true); the user renames them in HA
+  # one HA device per point slot (rbgrid: slot_devices: true); the hub name in each keeps HA's entity ids unique
+  # across hubs (sensor.rbgrid_hub_point_1_power); the user renames the devices in HA
   devices:
     - id: rbgrid_point_1
-      name: "Point 1"
+      name: "${friendly_name} Point 1"
     - id: rbgrid_point_2
-      name: "Point 2"
+      name: "${friendly_name} Point 2"
     - id: rbgrid_point_3
-      name: "Point 3"
+      name: "${friendly_name} Point 3"
     - id: rbgrid_point_4
-      name: "Point 4"
+      name: "${friendly_name} Point 4"
     - id: rbgrid_point_5
-      name: "Point 5"
+      name: "${friendly_name} Point 5"
     - id: rbgrid_point_6
-      name: "Point 6"
+      name: "${friendly_name} Point 6"
     - id: rbgrid_point_7
-      name: "Point 7"
+      name: "${friendly_name} Point 7"
     - id: rbgrid_point_8
-      name: "Point 8"
+      name: "${friendly_name} Point 8"
     - id: rbgrid_point_9
-      name: "Point 9"
+      name: "${friendly_name} Point 9"
     - id: rbgrid_point_10
-      name: "Point 10"
+      name: "${friendly_name} Point 10"
     - id: rbgrid_point_11
-      name: "Point 11"
+      name: "${friendly_name} Point 11"
     - id: rbgrid_point_12
-      name: "Point 12"
+      name: "${friendly_name} Point 12"
 
 esp32:
   board: esp32-s3-devkitc-1

@@ -31,6 +31,8 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
   ```
 
   - Fetch parts 1…parts−1 with `{"cmd":"part","rid":40213,"part":1}`, concatenate the decoded bytes and parse the JSON.
+  - The reassembled JSON is the device reply itself, i.e. what a plain reply carries in `data`. The wrapper fields
+    (`ok`, `schema`, `config_version`, `type`) come with part 0; every part carries `rid`, `parts`, `part`, `bytes`.
   - The device keeps the whole reply until the next other command, or for 120 s after the last part was fetched.
   - A stale or unknown `rid` fails with "no such part … repeat the command".
   - Real sizes: `get schema` is 9.1 KB (3 parts), `get tariff` 2.4 KB, `get units` 1.3 KB per point or so, `history` grows with `limit`.
