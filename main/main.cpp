@@ -2206,18 +2206,17 @@ static void register_espnow_http(void)
     if (!srv) { ESP_LOGW(TAG, "espnow API: no server handle"); return; }
     httpd_uri_t g = { .uri = "/api/v1/espnow", .method = HTTP_GET,  .handler = espnow_http_get,  .user_ctx = NULL };
     httpd_uri_t p = { .uri = "/api/v1/espnow", .method = HTTP_POST, .handler = espnow_http_post, .user_ctx = NULL };
-    httpd_uri_t o = { .uri = "/api/v1/espnow", .method = HTTP_OPTIONS, .handler = espnow_http_post, .user_ctx = NULL };
     /* Register FAILURES must be loud: on a full URI table (max_uri_handlers) these silently fall off and
      * the CORS OPTIONS wildcard turns them into mystery 405s. */
     esp_err_t eg = httpd_register_uri_handler(srv, &g);
     esp_err_t ep = httpd_register_uri_handler(srv, &p);
-    esp_err_t eo = httpd_register_uri_handler(srv, &o);
+    /* CORS preflight: the server's OPTIONS "/*" handler (an exact OPTIONS here was refused as HANDLER_EXISTS) */
     httpd_uri_t prov = { .uri = "/api/system/provisioning", .method = HTTP_GET, .handler = provisioning_http_get, .user_ctx = NULL };
     esp_err_t ev = httpd_register_uri_handler(srv, &prov);
-    if (eg != ESP_OK || ep != ESP_OK || eo != ESP_OK || ev != ESP_OK) {
-        ESP_LOGE(TAG, "espnow/provisioning URI registration FAILED (g=%s p=%s o=%s prov=%s) — "
+    if (eg != ESP_OK || ep != ESP_OK || ev != ESP_OK) {
+        ESP_LOGE(TAG, "espnow/provisioning URI registration FAILED (g=%s p=%s prov=%s) — "
                       "check max_uri_handlers", esp_err_to_name(eg), esp_err_to_name(ep),
-                 esp_err_to_name(eo), esp_err_to_name(ev));
+                 esp_err_to_name(ev));
     }
     rbgrid_register_espnow_status_provider(esp_now_hub_status_json);   // MQTT `cmd get espnow` → status JSON
     rbgrid_register_unit_deleted_hook(esp_now_on_unit_deleted);        // a deleted node point stays deleted
