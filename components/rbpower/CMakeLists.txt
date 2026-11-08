@@ -20,16 +20,6 @@ set(RBPOWER_SRCS
     "src/rbgrid_units.c"                     # point create / change / delete
     "src/rbgrid_config_storage.c"
     "src/rbjson.c"
-    "src/rbtelemetry.c"
-    "src/rbmqtt.c"
-    "src/rbwifi.c"
-    "src/rbwebserver.c"
-    "src/rbwebserver_ota.c"
-    "src/rbwebserver_wifi.c"
-    "src/rbwebserver_api.c"
-    "src/rbwebserver_ui.c"                   # embedded web-UI hosting (storage littlefs)
-    "src/rbwebsocket.c"
-    "src/rbwebsocket_telemetry.c"
     "src/rbpower_inject_test.c"
     "src/rbpower_logic_test.c"
     "src/rbpower_lifetime_accumulators.c"   # lifetime energy accumulators
@@ -59,6 +49,23 @@ set(RBPOWER_SRCS
     "src/otp_external_flash_test.c"
     "src/rbgrid_period_stats_api.c"          # history / DAY+ on-demand aggregation API
 )
+
+# Interfaces, by build key (components/rbpower/Kconfig "RBgrid interfaces"). The core above never calls them
+# directly: they register hooks (rbgrid_core.h); rbmqtt.h has inline stubs when MQTT is off.
+if(CONFIG_RBGRID_IF_WIFI)
+    list(APPEND RBPOWER_SRCS "src/rbwifi.c")
+endif()
+if(CONFIG_RBGRID_IF_HTTP)
+    list(APPEND RBPOWER_SRCS "src/rbwebserver.c" "src/rbwebserver_ota.c" "src/rbwebserver_wifi.c"
+                             "src/rbwebserver_api.c" "src/rbwebserver_ui.c" "src/rbwebsocket.c"
+                             "src/rbwebsocket_telemetry.c")
+endif()
+if(CONFIG_RBGRID_IF_MQTT)
+    list(APPEND RBPOWER_SRCS "src/rbmqtt.c")
+endif()
+if(CONFIG_RBGRID_IF_HTTP OR CONFIG_RBGRID_IF_MQTT)
+    list(APPEND RBPOWER_SRCS "src/rbtelemetry.c")   # 3 s JSON fan-out to WebSocket / MQTT
+endif()
 
 # Component registration
 idf_component_register(

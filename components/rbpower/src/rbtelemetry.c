@@ -12,8 +12,11 @@
 #include "rbhome_types.h"
 #include "rbhome_tariff.h"
 #include "rbtelemetry.h"
+#include "sdkconfig.h"
 #include "rbgrid_core.h"
+#if CONFIG_RBGRID_IF_HTTP
 #include "rbwebsocket.h"
+#endif
 #include "rbmqtt.h"
 #include "esp_log.h"
 #include "esp_err.h"
@@ -76,6 +79,17 @@ static bool g_websocket_telemetry_enabled = false;
  * PROTOCOL-SPECIFIC SEND FUNCTIONS (MQTT and WebSocket are real; HTTP only logs)
  * ================================================================================================ */
 
+/** @brief Whether a WebSocket client asked for the v2 frame (false without the HTTP server). */
+static bool rbtele_ws_has_frame2(void)
+{
+#if CONFIG_RBGRID_IF_HTTP
+    extern bool telemetry_ws_has_frame2(void);
+    return telemetry_ws_has_frame2();
+#else
+    return false;
+#endif
+}
+
 static esp_err_t send_mqtt(const char* json_string) {
     const rbpower_telemetry_channel_t* ch = &g_telemetry_config.channels[RBPOWER_TELEMETRY_MQTT];
     if (!ch->enabled) {
@@ -114,9 +128,14 @@ static esp_err_t send_websocket2(const char* json_string, const char* json_v2) {
         return ESP_ERR_INVALID_STATE;
     }
     
+#if CONFIG_RBGRID_IF_HTTP
     // Use the dedicated telemetry broadcast function
     extern esp_err_t broadcast_to_telemetry_clients2(const char* message, const char* message2);   /* v2 → ?v=2 clients */
     esp_err_t ret = broadcast_to_telemetry_clients2(json_string, json_v2);
+#else
+    (void)json_string; (void)json_v2;
+    esp_err_t ret = ESP_ERR_NOT_SUPPORTED;   /* no WebSocket server in this build */
+#endif
     
     if (ret == ESP_OK) {
         ESP_LOGD(TAG, "WebSocket telemetry broadcast successful");
@@ -543,9 +562,8 @@ void rbpower_telemetry_on_3sec_period_end(uint64_t period_end_time_us) {
         // publish must never hold the lock across the wire.
         rbpower_home_lock();
         char* json_telemetry = rbgrid_json_create_telemetry();
-        extern bool telemetry_ws_has_frame2(void);
         extern char* rbgrid_json_create_telemetry_frame(uint8_t);
-        char* json_v2 = telemetry_ws_has_frame2() ? rbgrid_json_create_telemetry_frame(2) : NULL;   /* v2 frame for ?v=2 WS clients */
+        char* json_v2 = rbtele_ws_has_frame2() ? rbgrid_json_create_telemetry_frame(2) : NULL;   /* v2 frame for ?v=2 WS clients */
         rbpower_home_unlock();
         if (!json_telemetry) {
             ESP_LOGW(TAG, "Failed to create telemetry JSON on 3sec period end");
@@ -685,9 +703,8 @@ esp_err_t rbpower_telemetry_send_websocket_once(void) {
     extern char* rbgrid_json_create_telemetry(void);
     rbpower_home_lock();
     char* json_telemetry = rbgrid_json_create_telemetry();
-    extern bool telemetry_ws_has_frame2(void);
     extern char* rbgrid_json_create_telemetry_frame(uint8_t);
-    char* json_v2 = telemetry_ws_has_frame2() ? rbgrid_json_create_telemetry_frame(2) : NULL;   /* v2 frame for ?v=2 WS clients */
+    char* json_v2 = rbtele_ws_has_frame2() ? rbgrid_json_create_telemetry_frame(2) : NULL;   /* v2 frame for ?v=2 WS clients */
     rbpower_home_unlock();
 
     if (!json_telemetry) {

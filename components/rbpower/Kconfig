@@ -13,6 +13,26 @@ menu "RBPower Configuration"
             enabled when debugging specific Flash or statistics issues.
             This will significantly impact performance.
 
+    menu "RBgrid interfaces (build keys)"
+        config RBGRID_IF_WIFI
+            bool "Wi-Fi (STA + setup access point) owned by RBgrid"
+            default y
+            help
+                Off when a host (e.g. ESPHome) owns Wi-Fi. NVS, netif and the default event loop are then
+                expected from the host (RBgrid tolerates them being initialised already).
+        config RBGRID_IF_HTTP
+            bool "HTTP server: REST API, WebSocket telemetry, web app hosting, OTA upload"
+            depends on RBGRID_IF_WIFI
+            default y
+        config RBGRID_IF_MQTT
+            bool "MQTT client: telemetry, command channel, Home Assistant discovery"
+            default y
+        config RBGRID_IF_MDNS
+            bool "mDNS announcement (rbgrid-xxxx.local, _rbgrid._tcp)"
+            depends on RBGRID_IF_WIFI
+            default y
+    endmenu
+
     config RBGRID_NVS_PARTITION
         string "NVS partition for RBgrid data"
         default "nvs"

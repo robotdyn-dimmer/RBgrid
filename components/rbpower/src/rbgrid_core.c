@@ -13,6 +13,11 @@
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
+#include "esp_ota_ops.h"
+#include "esp_image_format.h"
+#include "esp_rom_md5.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include "sdkconfig.h"
 #include <string.h>
 
@@ -160,4 +165,37 @@ bool rbgrid_core_factory_reset_at_boot(void)
     ESP_LOGW(TAG, "FACTORY RESET done: config %s, nvs %s, history %s", esp_err_to_name(ec), esp_err_to_name(en),
              erase_history ? esp_err_to_name(es) : "kept");
     return true;
+}
+
+/* ---- Running image ---- */
+/* Documented in rbgrid_core.h. Computed once (~1 s of flash reads), then cached. */
+const char *rbgrid_core_running_image_md5(void)
+{
+    static char s_md5[33];
+    static volatile bool s_done;
+    if (s_done) return s_md5;
+    char hex[33] = "";
+    const esp_partition_t* run = esp_ota_get_running_partition();
+    esp_image_metadata_t md;
+    esp_partition_pos_t pos = { .offset = run ? run->address : 0, .size = run ? run->size : 0 };
+    uint8_t* buf = run ? malloc(4096) : NULL;
+    if (buf && esp_image_get_metadata(&pos, &md) == ESP_OK && md.image_len && md.image_len <= run->size) {
+        md5_context_t ctx;
+        esp_rom_md5_init(&ctx);
+        bool ok = true;
+        for (uint32_t off = 0; off < md.image_len && ok; off += 4096) {
+            uint32_t n = md.image_len - off < 4096 ? md.image_len - off : 4096;
+            ok = esp_partition_read(run, off, buf, n) == ESP_OK;
+            if (ok) esp_rom_md5_update(&ctx, buf, n);
+        }
+        if (ok) {
+            uint8_t d[16];
+            esp_rom_md5_final(d, &ctx);
+            for (int i = 0; i < 16; i++) sprintf(&hex[i * 2], "%02x", d[i]);
+        }
+    }
+    free(buf);
+    memcpy(s_md5, hex, sizeof(s_md5));
+    s_done = true;
+    return s_md5;
 }

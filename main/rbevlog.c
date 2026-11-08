@@ -39,7 +39,10 @@
 #include "cJSON.h"
 #include "rbpower.h"
 #include "rbhome_types.h"
+#include "rbgrid_core.h"
+#if CONFIG_RBGRID_IF_HTTP
 #include "rbwebserver.h"
+#endif
 #if CONFIG_RBGRID_BENCH_FULL || CONFIG_RBGRID_DEBUG_BRIDGE
 #include "rbbench.h"
 /** @brief 1 when POST /api/v1/debug/cmd (remote console verbs) is compiled in (debug builds). */
@@ -49,9 +52,11 @@
 #define RBEVLOG_REMOTE_CMD 0
 #endif
 
+#if CONFIG_RBGRID_IF_HTTP
 /*  @brief Add the web server's CORS headers to a response (rbwebserver CORS policy).
  *  @param[in] req  HTTP request. */
 extern void add_cors_headers(httpd_req_t *req);   /* rbwebserver CORS policy */
+#endif
 
 static const char *TAG = "rbevlog";
 
@@ -67,7 +72,7 @@ static const char *TAG = "rbevlog";
 
 /** @brief Line level: periodic reconciliation trace (RAM only), event, or FAIL invariant. */
 enum { LVL_PERIODIC = 0, LVL_EVENT = 1, LVL_FAIL = 2 };
-static const char *const LVL_NAME[] = { "periodic", "event", "fail" };
+static const char *const LVL_NAME[] __attribute__((unused)) = { "periodic", "event", "fail" };
 
 /** @brief One ring line. */
 typedef struct {
@@ -210,7 +215,7 @@ static void writer_task(void *arg)
     (void)arg;
     {   /* which firmware image booted: md5 of the running image (first 8 hex = image id), once per boot */
         const esp_partition_t *run = esp_ota_get_running_partition();
-        const char *md5 = rbwebserver_running_image_md5();
+        const char *md5 = rbgrid_core_running_image_md5();
         char l[96];
         snprintf(l, sizeof(l), "fw: image %.8s (md5 %s) on '%s'", md5[0] ? md5 : "?", md5, run ? run->label : "?");
         rbevlog_add(l);
@@ -284,6 +289,7 @@ void rbevlog_attach_storage(void)
     flush_once(true);
 }
 
+#if CONFIG_RBGRID_IF_HTTP
 /* ---- HTTP: GET /api/v1/system/events ---- */
 /** @brief Chunked JSON output state of one GET /api/v1/system/events response. */
 typedef struct {
@@ -563,3 +569,6 @@ void rbevlog_register_http(void)
         ESP_LOGE(TAG, "URI registration FAILED (events=%s cmd=%s) — check max_uri_handlers",
                  esp_err_to_name(eg), esp_err_to_name(ec));
 }
+#else
+void rbevlog_register_http(void) {}   /* no HTTP server in this build */
+#endif

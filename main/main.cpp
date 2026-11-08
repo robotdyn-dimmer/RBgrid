@@ -103,7 +103,9 @@ extern "C" void esp_task_wdt_isr_user_handler(void)
     esp_task_wdt_print_triggered_tasks(rbgrid_twdt_msg, NULL, &cpus_fail);
 }
 #include "rbpower_lifetime_api.h"  // etstat verb: et totalizers + restore-src
+#if CONFIG_RBGRID_IF_MDNS
 #include "mdns.h"                  // mDNS discovery
+#endif
 #include "esp_mac.h"               // esp_read_mac — mdns hostname rbgrid-<mac4>
 #include "esp_app_desc.h"          // fw version in the _rbgrid._tcp TXT record
 #include "rbtelemetry.h"
@@ -1895,6 +1897,7 @@ static char s_mqtt_resp_topic[56] = {0};
 
 static bool s_mqtt_started = false;
 
+#if CONFIG_RBGRID_IF_MQTT
 /** Effective MQTT broker URI: the runtime-configured value persisted by
  *  POST /api/system/mqtt-config (littlefs /mqtt_broker), else the compile-time default. Apply-on-restart. */
 static const char* rbgrid_effective_mqtt_broker(void)
@@ -1908,6 +1911,7 @@ static const char* rbgrid_effective_mqtt_broker(void)
     }
     return RBGRID_MQTT_BROKER_URI;
 }
+#endif
 
 /** Build the mac-derived MQTT identifiers ONCE. Idempotent + safe to call before WiFi connects
  * (esp_read_mac reads efuse, no link needed) — so start_webserver() can build the telemetry config
@@ -1928,6 +1932,7 @@ static void rbgrid_build_mqtt_ids(void)
     snprintf(s_mqtt_resp_topic, sizeof(s_mqtt_resp_topic), "rbgrid/%s/cmd/resp", dev);
 }
 
+#if CONFIG_RBGRID_IF_MQTT
 static SemaphoreHandle_t s_ha_discovery_sem = NULL;
 
 /** HA Discovery publish runs OFF the MQTT event task — the ~44-publish + cJSON burst in the event
@@ -1961,6 +1966,7 @@ extern "C" void rbgrid_ha_discovery_request(void)
 {
     ha_discovery_on_connect();
 }
+#endif /* CONFIG_RBGRID_IF_MQTT */
 
 #define OTA_CONFIRM_GRACE_S 60   ///< uptime on the network (s) before a fresh OTA image is marked valid
 /** Mark a fresh OTA image valid after OTA_CONFIRM_GRACE_S, then release a deferred stats migration. */
@@ -2002,6 +2008,33 @@ static void ota_report_rollback(void)
     nvs_close(h);
 }
 
+/** Image confirm, once the hub is on the network (Wi-Fi up, or at boot when a host owns the network):
+ *  a fresh OTA image is marked valid after OTA_CONFIRM_GRACE_S; an already valid one releases a deferred
+ *  stats migration at once. */
+static void app_image_confirm_on_network(void)
+{
+    esp_ota_img_states_t ost;
+    bool pending = esp_ota_get_state_partition(esp_ota_get_running_partition(), &ost) == ESP_OK &&
+                   ost == ESP_OTA_IMG_PENDING_VERIFY;
+    if (pending) {
+        /* Fresh OTA image: confirm only after OTA_CONFIRM_GRACE_S of uptime on the network — an image that
+         * reaches Wi-Fi but crashes/reboots within that window still rolls back (OTA-only hubs have no
+         * cable to recover a bad image). One confirm task per boot. */
+        static bool s_confirm_started = false;
+        if (!s_confirm_started) {
+            rbpower_diag_printf("ota: new image on network — confirming in %ds unless it resets", OTA_CONFIRM_GRACE_S);
+            /* a failed create would leave a good image unconfirmed → rolled back at the next reset:
+             * retry on the next Wi-Fi event instead of marking it started */
+            s_confirm_started = xTaskCreate(ota_confirm_task, "ota_confirm", 3072, NULL, 3, NULL) == pdPASS;
+            if (!s_confirm_started) rbpower_diag_printf("FAIL ota: confirm task not created (low RAM) — retry on the next Wi-Fi event");
+        }
+    } else {
+        esp_ota_mark_app_valid_cancel_rollback();   /* no-op unless pending; kept for symmetry */
+        rbgrid_core_image_confirmed();   /* image already valid: release a deferred stats migration */
+    }
+}
+
+#if CONFIG_RBGRID_IF_WIFI
 /**
  * @brief rbwifi status callback: event-log line on link changes, OTA confirm, mDNS, MQTT + HA discovery start.
  * @param[in] status     New Wi-Fi status.
@@ -2023,30 +2056,11 @@ void wifi_event_callback(rbwifi_status_t status, void* user_data)
             rbpower_diag_printf("wifi %s", rbwifi_status_to_string(status));
         }
     }
-    if (status == RBWIFI_STATUS_CONNECTED) {
-        esp_ota_img_states_t ost;
-        bool pending = esp_ota_get_state_partition(esp_ota_get_running_partition(), &ost) == ESP_OK &&
-                       ost == ESP_OTA_IMG_PENDING_VERIFY;
-        if (pending) {
-            /* Fresh OTA image: confirm only after OTA_CONFIRM_GRACE_S of uptime on the network — an image that
-             * reaches Wi-Fi but crashes/reboots within that window still rolls back (OTA-only hubs have no
-             * cable to recover a bad image). One confirm task per boot. */
-            static bool s_confirm_started = false;
-            if (!s_confirm_started) {
-                rbpower_diag_printf("ota: new image on network — confirming in %ds unless it resets", OTA_CONFIRM_GRACE_S);
-                /* a failed create would leave a good image unconfirmed → rolled back at the next reset:
-                 * retry on the next Wi-Fi event instead of marking it started */
-                s_confirm_started = xTaskCreate(ota_confirm_task, "ota_confirm", 3072, NULL, 3, NULL) == pdPASS;
-                if (!s_confirm_started) rbpower_diag_printf("FAIL ota: confirm task not created (low RAM) — retry on the next Wi-Fi event");
-            }
-        } else {
-            esp_ota_mark_app_valid_cancel_rollback();   /* no-op unless pending; kept for symmetry */
-            rbgrid_core_image_confirmed();   /* image already valid: release a deferred stats migration */
-        }
-    }
+    if (status == RBWIFI_STATUS_CONNECTED) app_image_confirm_on_network();
 
     // mDNS discovery: rbgrid-<mac4>.local + _http._tcp +
     // _rbgrid._tcp TXT{fw,api,https} — mobile wrappers and the web app find the hub without a manual IP.
+#if CONFIG_RBGRID_IF_MDNS
     if (status == RBWIFI_STATUS_CONNECTED) {
         static bool s_mdns_started = false;
         if (!s_mdns_started && mdns_init() == ESP_OK) {
@@ -2068,7 +2082,9 @@ void wifi_event_callback(rbwifi_status_t status, void* user_data)
             ESP_LOGI(TAG, "mDNS up: %s.local (_http._tcp + _rbgrid._tcp)", host);
         }
     }
+#endif /* CONFIG_RBGRID_IF_MDNS */
 
+#if CONFIG_RBGRID_IF_MQTT
     // Bring MQTT up once we have STA connectivity (a broker is unreachable in AP-only).
     if (status == RBWIFI_STATUS_CONNECTED && !rbmqtt_is_connected() && !s_mqtt_started) {
         rbgrid_build_mqtt_ids();   // idempotent (start_webserver already built them for the tele config)
@@ -2096,9 +2112,41 @@ void wifi_event_callback(rbwifi_status_t status, void* user_data)
                      s_mqtt_cmd_topic, esp_err_to_name(cerr));
         }
     }
+#endif /* CONFIG_RBGRID_IF_MQTT */
+}
+#endif /* CONFIG_RBGRID_IF_WIFI */
+
+
+/** Auto-start the ESP-NOW hub on boot once WiFi is associated, if the registry has nodes. Fixes the recurring
+ * gotcha where `espnow on` issued before WiFi-ready returned "ok" but left running=0 (no beacons → nodes can't
+ * acquire). A configured hub (≥1 registered node) now brings ESP-NOW up itself — important after an OTA reboot
+ * so remote nodes reconnect without a manual verb. One-shot; a manual `espnow off` later still wins. */
+static void espnow_autostart_task(void *arg)
+{
+    wifi_ap_record_t ap;
+    for (int i = 0; i < 120 && esp_wifi_sta_get_ap_info(&ap) != ESP_OK; i++)
+        vTaskDelay(pdMS_TO_TICKS(500));   /* up to ~60s for STA association (hub channel = router channel) */
+    espnow_registry_t reg;
+    int8_t en = esp_now_hub_enabled_setting();   /* off wins; on starts even without a node (ready to pair) */
+    if (!esp_now_hub_running() && en != 0 && (en == 1 || (esp_now_registry_load(&reg) && reg.node_count > 0))) {
+        esp_err_t e = esp_now_hub_start(0);
+        ESP_LOGW(TAG, "ESP-NOW auto-start (setting %d): %s, running=%d",
+                 (int)en, esp_err_to_name(e), (int)esp_now_hub_running());
+    }
+    vTaskDelete(NULL);
 }
 
+/** ESP-NOW hooks the core calls (MQTT `cmd get/set espnow`, point deletion) and the hub auto-start: every
+ *  build with the hub, whatever the transports. The auto-start waits for STA association (ours or the host's). */
+static void app_espnow_start(void)
+{
+    rbgrid_register_espnow_status_provider(esp_now_hub_status_json);   // MQTT `cmd get espnow` → status JSON
+    rbgrid_register_unit_deleted_hook(esp_now_on_unit_deleted);        // a deleted node point stays deleted
+    rbgrid_register_espnow_action_handler(esp_now_hub_action);         // MQTT `cmd set espnow` → same actions as HTTP
+    xTaskCreate(espnow_autostart_task, "espnow_autostart", 4096, NULL, 4, NULL);
+}
 
+#if CONFIG_RBGRID_IF_HTTP
 /* ===== ESP-NOW management + health transport API (available in the code, not part of the v1.1.0 release) =====
  * The ESP-NOW hub lives in main/ (above rbpower), so its HTTP surface is registered here onto the running
  * server (rbwebserver_core_server). GET /api/v1/espnow = status+health (open). POST /api/v1/espnow =
@@ -2140,24 +2188,6 @@ static esp_err_t espnow_http_post(httpd_req_t *req)
     httpd_resp_send(req, out ? out : "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
     free(out);
     return ESP_OK;
-}
-/** Auto-start the ESP-NOW hub on boot once WiFi is associated, if the registry has nodes. Fixes the recurring
- * gotcha where `espnow on` issued before WiFi-ready returned "ok" but left running=0 (no beacons → nodes can't
- * acquire). A configured hub (≥1 registered node) now brings ESP-NOW up itself — important after an OTA reboot
- * so remote nodes reconnect without a manual verb. One-shot; a manual `espnow off` later still wins. */
-static void espnow_autostart_task(void *arg)
-{
-    wifi_ap_record_t ap;
-    for (int i = 0; i < 120 && esp_wifi_sta_get_ap_info(&ap) != ESP_OK; i++)
-        vTaskDelay(pdMS_TO_TICKS(500));   /* up to ~60s for STA association (hub channel = router channel) */
-    espnow_registry_t reg;
-    int8_t en = esp_now_hub_enabled_setting();   /* off wins; on starts even without a node (ready to pair) */
-    if (!esp_now_hub_running() && en != 0 && (en == 1 || (esp_now_registry_load(&reg) && reg.node_count > 0))) {
-        esp_err_t e = esp_now_hub_start(0);
-        ESP_LOGW(TAG, "ESP-NOW auto-start (setting %d): %s, running=%d",
-                 (int)en, esp_err_to_name(e), (int)esp_now_hub_running());
-    }
-    vTaskDelete(NULL);
 }
 
 /** GET /api/system/provisioning: onboarding/provisioning progress for the web app's resumable
@@ -2219,9 +2249,6 @@ static void register_espnow_http(void)
                       "check max_uri_handlers", esp_err_to_name(eg), esp_err_to_name(ep),
                  esp_err_to_name(eo), esp_err_to_name(ev));
     }
-    rbgrid_register_espnow_status_provider(esp_now_hub_status_json);   // MQTT `cmd get espnow` → status JSON
-    rbgrid_register_unit_deleted_hook(esp_now_on_unit_deleted);        // a deleted node point stays deleted
-    rbgrid_register_espnow_action_handler(esp_now_hub_action);         // MQTT `cmd set espnow` → same actions as HTTP
     ESP_LOGI(TAG, "main-side API registered: GET/POST /api/v1/espnow + GET /api/system/provisioning");
 }
 
@@ -2322,7 +2349,6 @@ static void start_webserver(void)
         rbevlog_register_http();  // GET /api/v1/system/events (+ POST /api/v1/debug/cmd on debug builds)
         modfw_register_http();    // STD module firmware update API (main/modfw.c)
         rbi2c_register_http();    // I2C buses / scan / module address API (main/rbi2c_api.c)
-        xTaskCreate(espnow_autostart_task, "espnow_autostart", 4096, NULL, 4, NULL);  // auto-start hub when WiFi ready
     } else {
         ESP_LOGE(TAG, "Web server start error: %d", err);
     }
@@ -2334,6 +2360,7 @@ static void stop_webserver(void)
     rbwebserver_stop();
     ESP_LOGI(TAG, "Web server stopped");
 }
+#endif /* CONFIG_RBGRID_IF_HTTP */
 
 /**
  * @brief Test of the period-history API (rbgrid_get_period_history()).
@@ -2681,6 +2708,19 @@ static void rbgrid_cjson_free(void *p) { free(p); }
 /** Boot stage 1: Wi-Fi (AP+STA). @return true if Wi-Fi is up (the interface stage needs it). */
 static bool app_net_init(void)
 {
+#if !CONFIG_RBGRID_IF_WIFI
+    /* A host owns Wi-Fi (or there is none). RBgrid still needs NVS, netif and the default event loop;
+     * tolerate a host that created them already. */
+    esp_err_t ne = nvs_flash_init();
+    if (ne == ESP_ERR_NVS_NO_FREE_PAGES || ne == ESP_ERR_NVS_NEW_VERSION_FOUND) { nvs_flash_erase(); ne = nvs_flash_init(); }
+    if (ne != ESP_OK) ESP_LOGE(TAG, "NVS init: %s", esp_err_to_name(ne));
+    esp_err_t ni = esp_netif_init();
+    if (ni != ESP_OK && ni != ESP_ERR_INVALID_STATE) ESP_LOGE(TAG, "netif init: %s", esp_err_to_name(ni));
+    esp_err_t el = esp_event_loop_create_default();
+    if (el != ESP_OK && el != ESP_ERR_INVALID_STATE) ESP_LOGE(TAG, "event loop: %s", esp_err_to_name(el));
+    (void)rbgrid_nvs_init();
+    return false;
+#else
     // WIFI initialization through rbwifi
     ESP_LOGI(TAG, "=== rbpower WiFi AP+STA Test ===");
     
@@ -2785,7 +2825,9 @@ static bool app_net_init(void)
     ESP_LOGW(TAG, "WiFi + webserver DISABLED (debug-bridge build) — RAM headroom");
 #endif
 
+    (void)rbgrid_nvs_init();   /* RBgrid's own NVS partition, when it is not the default one */
     return wifi_initialized;
+#endif /* CONFIG_RBGRID_IF_WIFI */
 }
 
 /** Boot stage 2: core init — config store, hardware/points/time, ESP-NOW node points, telemetry config,
@@ -3315,6 +3357,7 @@ static void app_ifaces_start(rbpower_extended_config_t* extended_config, bool wi
 
 */        
         // start web server if WiFi is initialized
+#if CONFIG_RBGRID_IF_HTTP
         if (wifi_initialized) {
             ESP_LOGI(TAG, "Starting web server");
             start_webserver();
@@ -3325,6 +3368,9 @@ static void app_ifaces_start(rbpower_extended_config_t* extended_config, bool wi
                 ESP_LOGI(TAG, "Test at: http://" IPSTR "/system-config", IP2STR(&wifi_info.ip_info.ip));
             }
         }
+#else
+        (void)wifi_initialized;
+#endif
     }
     
     // ===== TEST 5: Network structure =====
@@ -3470,6 +3516,10 @@ extern "C" void app_main(void) {
     if (!extended_config) return;
     app_ifaces_start(extended_config, wifi_initialized);
     app_core_start();
+    app_espnow_start();
+#if !CONFIG_RBGRID_IF_WIFI
+    app_image_confirm_on_network();   /* no Wi-Fi callback in this build: confirm from boot */
+#endif
 
     /* Event log files (after rbpower storage init — it may own the `logs` mount) + boot forensics in EVERY
      * build: the classification feeds system.boot and the log; debug builds also echo it on the console. */

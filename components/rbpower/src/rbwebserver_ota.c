@@ -28,39 +28,12 @@ extern int rbpower_stats_flush_open_hours(void);   /* rbhome_types.h — open-ho
 #include <stdlib.h>
 #include <stdio.h>
 
+#include "rbgrid_core.h"
+
 static const char *TAG = "RBWEBSERVER_OTA";
 
-/* Documented in rbwebserver.h. Computed once (~1 s of flash reads), then cached. */
-const char* rbwebserver_running_image_md5(void)
-{
-    static char s_md5[33];
-    static volatile bool s_done;
-    if (s_done) return s_md5;
-    char hex[33] = "";
-    const esp_partition_t* run = esp_ota_get_running_partition();
-    esp_image_metadata_t md;
-    esp_partition_pos_t pos = { .offset = run ? run->address : 0, .size = run ? run->size : 0 };
-    uint8_t* buf = run ? malloc(4096) : NULL;
-    if (buf && esp_image_get_metadata(&pos, &md) == ESP_OK && md.image_len && md.image_len <= run->size) {
-        md5_context_t ctx;
-        esp_rom_md5_init(&ctx);
-        bool ok = true;
-        for (uint32_t off = 0; off < md.image_len && ok; off += 4096) {
-            uint32_t n = md.image_len - off < 4096 ? md.image_len - off : 4096;
-            ok = esp_partition_read(run, off, buf, n) == ESP_OK;
-            if (ok) esp_rom_md5_update(&ctx, buf, n);
-        }
-        if (ok) {
-            uint8_t d[16];
-            esp_rom_md5_final(d, &ctx);
-            for (int i = 0; i < 16; i++) sprintf(&hex[i * 2], "%02x", d[i]);
-        }
-    }
-    free(buf);
-    memcpy(s_md5, hex, sizeof(s_md5));
-    s_done = true;
-    return s_md5;
-}
+/* Documented in rbwebserver.h. Moved to the core (rbgrid_core_running_image_md5). */
+const char* rbwebserver_running_image_md5(void) { return rbgrid_core_running_image_md5(); }
 
 /* GET /api/system/version (documented in rbwebserver_internal.h). */
 esp_err_t rbwebserver_api_version_handler(httpd_req_t *req)

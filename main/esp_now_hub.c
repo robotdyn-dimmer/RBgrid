@@ -896,7 +896,11 @@ void esp_now_hub_publish_ha_nodes(void)
 /** Inject task (200 ms loop) — runs OFF the recv callback. Drains REALTIME (200ms inject) + PERIOD (period_result).
  * Units are CONFIG units (rbgrid_config_add_espnow_module) — we only compute the unit_id and feed; the
  * inject_* APIs no-op if the unit isn't configured (i.e. an unpaired/unknown node). No runtime create. */
+#if CONFIG_RBGRID_IF_HTTP
 extern bool rbwebserver_ota_in_progress(void);   /* rbwebserver_ota.c */
+#else
+static inline bool rbwebserver_ota_in_progress(void) { return false; }   /* no HTTP OTA upload in this build */
+#endif
 static void inject_task(void *arg)
 {
     uint32_t sweep_div = 0;

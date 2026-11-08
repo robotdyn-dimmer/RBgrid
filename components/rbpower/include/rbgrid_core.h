@@ -106,6 +106,9 @@ esp_err_t rbgrid_nvs_init(void);
  */
 esp_err_t rbgrid_nvs_open(const char *ns, nvs_open_mode_t mode, nvs_handle_t *handle);
 
+/** @brief MD5 of the running app image (hex, 32 chars; "" if unreadable). Computed once (~1 s), then cached. */
+const char *rbgrid_core_running_image_md5(void);
+
 /* ---- Factory reset ------------------------------------------------------------------------- */
 
 /**

@@ -1,6 +1,10 @@
 # bench_kit is a REQUIRES always (its no-CONFIG variant is zero-footprint, rbbench precedent);
 # the code gate is CONFIG_RBGRID_BENCH_KIT from sdkconfig.bench → RBGRID_BENCH_KIT define below.
-idf_component_register(SRCS "main.cpp" "rbamp_bridge.c" "esp_now_hub.c" "rbevlog.c" "modfw.c" "rbi2c_api.c"
+set(main_srcs "main.cpp" "rbamp_bridge.c" "esp_now_hub.c" "rbevlog.c")
+if(CONFIG_RBGRID_IF_HTTP)
+    list(APPEND main_srcs "modfw.c" "rbi2c_api.c")   # HTTP APIs: module firmware update, I2C buses
+endif()
+idf_component_register(SRCS ${main_srcs}
                     INCLUDE_DIRS "."
                     REQUIRES rbpower
                             esp_psram   # the firmware requires PSRAM; with MINIMAL_BUILD, IDF 5.5 drops it unless asked

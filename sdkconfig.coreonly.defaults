@@ -1,0 +1,7 @@
+# Core-only test image (applied after sdkconfig.defaults): every RBgrid interface compiled out.
+# What a host such as ESPHome builds against. Not a product image: no Wi-Fi, no API, no web app.
+#   idf.py -B build55core -D SDKCONFIG=sdkconfig.v55core -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.coreonly.defaults" build
+# CONFIG_RBGRID_IF_WIFI is not set
+# CONFIG_RBGRID_IF_HTTP is not set
+# CONFIG_RBGRID_IF_MQTT is not set
+# CONFIG_RBGRID_IF_MDNS is not set
