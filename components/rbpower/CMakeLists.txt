@@ -71,7 +71,6 @@ endif()
 idf_component_register(
     SRCS ${RBPOWER_SRCS}
     INCLUDE_DIRS "include"
-    PRIV_INCLUDE_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../managed_components/joltwallet__littlefs/src"
     REQUIRES
         driver
         esp_common
@@ -101,6 +100,13 @@ idf_component_register(
         "certs/rbgrid_dev_cert.pem"
         "certs/rbgrid_dev_key.pem"
 )
+
+# littlefs internals (raw lfs API in littlefs_raw.c): taken from wherever the build placed the managed component,
+# so the same CMake works in this project and inside a host build (ESPHome) whose managed_components dir differs.
+if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+    idf_component_get_property(rb_lfs_dir joltwallet__littlefs COMPONENT_DIR)
+    target_include_directories(${COMPONENT_LIB} PRIVATE "${rb_lfs_dir}/src")
+endif()
 
 # LittleFS configuration define
 target_compile_definitions(${COMPONENT_LIB} PRIVATE

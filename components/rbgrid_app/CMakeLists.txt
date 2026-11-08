@@ -29,4 +29,6 @@ endif()
 
 # Panic forensics (2026-10-17): rbpower wraps esp_panic_handler to keep the crash PC/backtrace in RTC memory
 # for the next boot's event log (console is NONE on bench/OTA-only hubs, no coredump partition).
-target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler")
+if(CONFIG_RBGRID_PANIC_FORENSICS)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler")
+endif()

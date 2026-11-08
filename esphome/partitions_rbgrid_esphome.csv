@@ -1,0 +1,13 @@
+# RBgrid hosted by ESPHome, 16 MB flash. stats / logs / config at the same addresses as the standalone hub;
+# rbnvs = RBgrid's own NVS (CONFIG_RBGRID_NVS_PARTITION), so ESPHome's NVS erase can't take the energy anchors.
+# No `storage` (no web app in this build).
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x6000,
+otadata,  data, ota,     0xF000,   0x2000,
+phy_init, data, phy,     0x11000,  0x1000,
+ota_0,    app,  ota_0,   0x20000,  0x300000,
+ota_1,    app,  ota_1,   0x320000, 0x300000,
+stats,    data, 0x81,    0x620000, 0x400000,
+rbnvs,    data, nvs,     0xA20000, 0x20000,
+logs,     data, spiffs,  0xF20000, 0x80000,
+config,   data, spiffs,  0xFA0000, 0x60000,

@@ -33,6 +33,13 @@ menu "RBPower Configuration"
             default y
     endmenu
 
+    config RBGRID_PANIC_FORENSICS
+        bool "Record the crash PC/backtrace in RTC memory for the next boot's event log"
+        default y
+        help
+            Wraps esp_panic_handler (linker --wrap). Turn off when the host has its own panic wrapper
+            (ESPHome's crash handler); the boot line then shows only the reset reason.
+
     config RBGRID_NVS_PARTITION
         string "NVS partition for RBgrid data"
         default "nvs"
