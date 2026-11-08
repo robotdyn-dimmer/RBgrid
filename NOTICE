@@ -5,8 +5,9 @@ commercial use requires a separate license (see COMMERCIAL.md).
 This product includes third-party software under its own license. Those components are NOT covered by the
 PolyForm Noncommercial License; their own terms apply.
 
-1. components/esp_driver_i2c — a modified copy of the ESP-IDF v5.4.1 I2C driver
-   (components/esp_driver_i2c), Copyright (c) Espressif Systems (Shanghai) CO LTD.
+1. components/esp_driver_i2c — modified copies of i2c_master.c from the ESP-IDF v5.4.1 and v5.5.1 I2C driver
+   (components/esp_driver_i2c; the other driver files are used from ESP-IDF unchanged),
+   Copyright (c) Espressif Systems (Shanghai) CO LTD.
    License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
    Modifications: bounded post-NACK bus wait, ISR guard on non-READ operations, timeout status ordering,
    interrupt masking on NACK/timeout in synchronous mode — each marked "RBGRID PATCH" in i2c_master.c.
