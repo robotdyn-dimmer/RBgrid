@@ -297,6 +297,16 @@ extern "C"
     esp_err_t rbgrid_storage_reapply_tariffs(void);
 
     /**
+     * @brief Re-apply the saved fields of ESP-NOW node points (name, role, nesting, ratings, CT orientation).
+     *
+     * Those points are rebuilt from the node registry at boot with default fields; call this once after
+     * rbpower_init_extended(), before anything saves units.json.
+     * @return ESP_OK, ESP_ERR_NOT_FOUND (no units.json), ESP_ERR_INVALID_STATE, ESP_ERR_NO_MEM, or ESP_FAIL
+     *         (the file did not parse or a point was rejected).
+     */
+    esp_err_t rbgrid_storage_reapply_espnow_units(void);
+
+    /**
      * @brief Save the rbAmp fleet configuration (bus parameters and the per-module
      *        address/entry map) to /rbamp.json, then bump the hardware revision counter.
      * @param[in] cfg Fleet configuration to persist.

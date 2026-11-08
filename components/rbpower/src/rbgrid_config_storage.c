@@ -28,6 +28,7 @@
 #include "rbhome_types.h"   /* rbpower_home_lock/unlock — guard g_home_network read during save */
 #include "esp_app_desc.h"   /* backup slot metadata: fw version stamp */
 #include "cJSON.h"
+#include "rbgrid_core.h"   /* rbgrid_units_mutate (ESP-NOW point edits re-applied at boot) */
 #include "esp_rom_crc.h"   /* restore-point seal */
 
 static const char *TAG = "RBGRID_STORAGE";
@@ -882,6 +883,10 @@ static void restore_persisted_i2c_unit(rbgrid_config_handle_t config_handle, cJS
         jev = cJSON_GetObjectItem(unit, "idle_timeout_min");
         if (cJSON_IsNumber(jev) && jev->valuedouble >= 0 && jev->valuedouble <= 1440) def.ev_idle_timeout_min = (uint16_t)jev->valuedouble;
     }
+    {   /* point nesting (0 = top level) */
+        cJSON* jin = cJSON_GetObjectItem(unit, "inside");
+        if (cJSON_IsNumber(jin) && jin->valuedouble >= 0 && jin->valuedouble <= 0xFFFF) def.inside_unit_id = (uint16_t)jin->valuedouble;
+    }
     cJSON* jth = cJSON_GetObjectItem(unit, "thresholds");
     if (cJSON_IsObject(jth)) {
         cJSON* v;
@@ -1549,6 +1554,69 @@ static bool tariffs_file_is_old_seed(const cJSON *root)
 }
 
 /* Apply the saved tariff plan after the engine init (documented in rbgrid_config_storage.h). */
+/* ESP-NOW node points are rebuilt at boot from the node registry with default fields (the units.json loader skips
+ * them), so the user's edits (name, role, nesting, ratings, CT orientation) are re-applied here from units.json once
+ * the points are live, through the same validated PATCH the API uses. The file is read in full first: each PATCH
+ * re-saves units.json, which must not lose the edits of points not yet re-applied. */
+esp_err_t rbgrid_storage_reapply_espnow_units(void)
+{
+    if (!external_flash_is_config_mounted()) return ESP_ERR_INVALID_STATE;
+    if (!littlefs_raw_exists(CONFIG_FILE_UNITS)) return ESP_ERR_NOT_FOUND;
+    char *buf = heap_caps_malloc(CONFIG_UNITS_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) buf = malloc(CONFIG_UNITS_SIZE);
+    if (!buf) return ESP_ERR_NO_MEM;
+    size_t n = 0;
+    esp_err_t ret = littlefs_raw_read(CONFIG_FILE_UNITS, buf, CONFIG_UNITS_SIZE - 1, &n);
+    if (ret != ESP_OK) { free(buf); return ret; }
+    buf[n] = '\0';
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) return ESP_FAIL;
+    cJSON *data = cJSON_GetObjectItem(root, "data");
+    cJSON *units = cJSON_GetObjectItem(data ? data : root, "units");
+    int applied = 0, failed = 0;
+    for (int pass = 0; pass < 2; pass++) {   /* pass 0: own fields; pass 1: nesting (its parent may be re-applied in pass 0) */
+        cJSON *unit = NULL;
+        cJSON_ArrayForEach(unit, units) {
+            cJSON *src = cJSON_GetArrayItem(cJSON_GetObjectItem(unit, "sources"), 0);
+            cJSON *st = src ? cJSON_GetObjectItem(src, "source_type") : NULL;
+            cJSON *jid = cJSON_GetObjectItem(unit, "unit_id");
+            if (!cJSON_IsString(st) || strcmp(st->valuestring, "ESP_NOW") != 0 || !cJSON_IsNumber(jid)) continue;
+            rbpower_unit_id_t uid = (rbpower_unit_id_t)jid->valuedouble;
+            if (!rbpower_home_get_unit_definition(uid)) continue;   /* node removed from the registry since */
+            cJSON *patch = cJSON_CreateObject();
+            if (!patch) break;
+            if (pass == 0) {
+                static const char *const keys[] = { "name", "short_name", "role", "phase", "rated_power_w", "max_current_a",
+                                                    "group_id", "role_trunk", "charge_threshold_w", "idle_timeout_min" };
+                for (size_t k = 0; k < sizeof(keys) / sizeof(keys[0]); k++) {
+                    cJSON *v = cJSON_GetObjectItem(unit, keys[k]);
+                    if (!v || (cJSON_IsString(v) && !v->valuestring[0] && strcmp(keys[k], "short_name") != 0)) continue;
+                    cJSON_AddItemToObject(patch, keys[k], cJSON_Duplicate(v, 1));
+                }
+                cJSON *inv = cJSON_GetObjectItem(src, "invert_sign");
+                if (cJSON_IsBool(inv)) cJSON_AddBoolToObject(patch, "invert_sign", cJSON_IsTrue(inv));
+            } else {
+                cJSON *in = cJSON_GetObjectItem(unit, "inside");
+                if (!cJSON_IsNumber(in) || in->valuedouble <= 0) { cJSON_Delete(patch); continue; }
+                cJSON_AddNumberToObject(patch, "inside", in->valuedouble);
+            }
+            char *js = cJSON_PrintUnformatted(patch);
+            cJSON_Delete(patch);
+            if (!js) continue;
+            int status = 0;
+            char *reply = rbgrid_units_mutate(uid, "", js, &status);
+            if (status == 200) applied++;
+            else { failed++; ESP_LOGW(TAG, "espnow point 0x%04X: saved fields not re-applied (%d)", (unsigned)uid, status); }
+            free(reply);
+            free(js);
+        }
+    }
+    cJSON_Delete(root);
+    ESP_LOGI(TAG, "ESP-NOW points: saved fields re-applied (%d patch(es), %d failed)", applied, failed);
+    return failed ? ESP_FAIL : ESP_OK;
+}
+
 esp_err_t rbgrid_storage_reapply_tariffs(void)
 {
     if (!external_flash_is_config_mounted()) return ESP_ERR_INVALID_STATE;

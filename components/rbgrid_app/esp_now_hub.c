@@ -532,7 +532,7 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
 
     if (h->msg_type == RBN_MSG_REALTIME && len >= (int)sizeof(rbn_realtime_t)) {
         const rbn_realtime_t *m = (const rbn_realtime_t *)data;
-        int n = m->rec_count; if (n > 3) n = 3;
+        int n = m->rec_count; if (n > ESPNOW_REG_MAX_CH) n = ESPNOW_REG_MAX_CH;
         if (n >= 1 && len >= (int)(sizeof(rbn_realtime_t) + (size_t)n * sizeof(rbn_rt_rec_t))) {
             s_rt_recv++;
             s_last_i0 = m->recs[0].i_rms;
@@ -545,7 +545,7 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
                 const rbn_rt_rec_t *rec = &m->recs[r];
                 enh_unit_t *u = enh_slot(mac, rec->channel_id);
                 if (u) { u->i = rec->i_rms; u->v = rec->v_rms; u->p = rec->p_active;
-                         u->pf = rec->pf_x1000 / 1000.0f; u->has_v = (rec->v_rms > 0.5f);
+                         u->pf = rec->pf_x1000 / 1000.0f; u->has_v = (rec->v_rms > 50.0f);   /* mains on the voltage input; a module without it reads a few volts of noise */
                          u->last_us = now; u->fresh = true; }
             }
             enh_node_t *nd = enh_node_slot(mac);    /* node liveness heartbeat */
