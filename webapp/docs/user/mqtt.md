@@ -10,7 +10,7 @@ In the app, open **Settings → Home Assistant** and fill in the **MQTT broker**
 
 Over the API instead: `POST /api/system/mqtt-config` with `{"broker_uri":"mqtt://user:password@host:1883"}`. Reading it back shows the password masked.
 
-Use a plain `mqtt://` address. Encrypted connections (`mqtts://`) aren't supported yet.
+Use a plain `mqtt://` address, or `mqtts://` **from v1.1.7** when your broker's certificate was issued by a public certificate authority — Let's Encrypt, DigiCert and the like. A **self-signed** certificate is not supported, so a broker using one needs a plain `mqtt://` address on a network you trust.
 
 > **Keep the broker private.** Anyone who can read and write on the broker can read the hub's settings through the command channel, and an admin token sent with a command is visible to every client subscribed to it. Use a broker with its own users and access rules (ACL), on your own network: give the hub its own broker user, and limit access to `rbgrid/<mac>/#` to the hub and the clients you trust. Never use a public broker.
 
