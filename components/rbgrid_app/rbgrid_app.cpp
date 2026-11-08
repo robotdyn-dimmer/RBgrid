@@ -2243,7 +2243,7 @@ static void register_espnow_http(void)
      * the CORS OPTIONS wildcard turns them into mystery 405s. */
     esp_err_t eg = httpd_register_uri_handler(srv, &g);
     esp_err_t ep = httpd_register_uri_handler(srv, &p);
-    /* CORS preflight: the server's OPTIONS "/*" handler (an exact OPTIONS here was refused as HANDLER_EXISTS) */
+    /* CORS preflight: the server's wildcard OPTIONS handler (an exact OPTIONS here was refused as HANDLER_EXISTS) */
     httpd_uri_t prov = { .uri = "/api/system/provisioning", .method = HTTP_GET, .handler = provisioning_http_get, .user_ctx = NULL };
     esp_err_t ev = httpd_register_uri_handler(srv, &prov);
     if (eg != ESP_OK || ep != ESP_OK || ev != ESP_OK) {
