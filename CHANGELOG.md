@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.8 — unreleased
+
+### Security
+- **`mqtts://`: the broker certificate's dates are checked** (valid from / valid to). An expired certificate, or one
+  not valid yet, is refused; v1.1.7 checked the authority and the host name only. Because a clock that isn't set
+  makes every certificate look not valid yet, the hub opens a TLS broker connection only once its clock is set
+  (NTP, or by hand); the event log says "mqtt: TLS broker — waiting for the clock". Plain `mqtt://` is not delayed.
+
 ## v1.1.7 — 2026-11-08
 
 ### Stored data survives faults
