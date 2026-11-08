@@ -63,7 +63,7 @@ rbAmp modules clip onto your existing wiring and measure each circuit. The ESP32
 | **Hub** | An ESP32-WROVER board with PSRAM and 16 MB flash, one you have or any you buy. You flash it once over USB. |
 | **Measurement** | One or more [rbAmp](https://www.rbamp.com/?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) modules, up to eight per hub: **Basic** modules for your own SCT-013 clamps (one to seven channels), or **STD** energy meters for the supply (STD-UI1 single-phase, STD-U3I3 three-phase, with calibrated sensors included). |
 | **Grid** | Single-phase and three-phase supplies. A three-phase supply is measured by one STD-U3I3 (three voltages, three currents), set as the three-phase input in the app: one measurement point with per-phase readings, or from v1.1.5 one point per phase, each with its own import and export. Split-phase (two live legs sharing a neutral) is planned for a future release. |
-| **Wiring** | I²C, four wires. Keep the module cable up to 15 cm (recommended). Pull-ups and longer cables: see the [rbAmp wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection). |
+| **Wiring** | I²C, four wires. Keep the module cable up to 15 cm (recommended). Pull-ups and longer cables: see the [rbAmp wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection?utm_source=github&utm_medium=referral&utm_campaign=rbgrid). |
 
 | | |
 |---|---|
