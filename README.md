@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/robotdyn-dimmer/RBgrid)](https://github.com/robotdyn-dimmer/RBgrid/releases/latest)
 ![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-blue.svg)
 ![Platform: ESP32-WROVER](https://img.shields.io/badge/platform-ESP32--WROVER-orange.svg)
-![ESP-IDF 5.4.1](https://img.shields.io/badge/ESP--IDF-5.4.1-red.svg)
+![ESP-IDF 5.5.1](https://img.shields.io/badge/ESP--IDF-5.5.1-red.svg)
 
 RBgrid is self-hosted firmware for an ESP32-WROVER hub that reads [rbAmp](https://www.rbamp.com/?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) measurement modules and shows what each circuit costs right now, today and this month, on your own tariff zones. The history stays on the hub in your fuse board. No account, no cloud, no subscription, no ads. Free for personal, non-commercial use; source-available.
 
@@ -89,7 +89,7 @@ To keep the hub's settings and history, flash as above; to start clean, run `pyt
 
 A hub already on v1.1.x can simply update over the air from the app (Settings → Hub firmware).
 
-**Option B: build from source.** Requires **ESP-IDF v5.4.1** and `openssl`:
+**Option B: build from source.** Requires **ESP-IDF v5.5.1** (v5.4.1 also builds) and `openssl`:
 
 ```bash
 git clone https://github.com/robotdyn-dimmer/RBgrid.git
