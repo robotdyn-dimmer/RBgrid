@@ -144,7 +144,7 @@ For each measurement point and each reading:
 cost = ( kWh × zone buy price  +  kWh × (grid fee + energy tax + renewable levy) ) × (1 + VAT% / 100)
 ```
 
-The zone buy price is the rate of the zone in effect for that energy. The hub computes cost every 15 minutes at the zone in effect then, and stores it with the hourly records. On modules that count energy on board, such as STD modules, energy is costed once per 15-minute quarter, at the zone in effect for that quarter. Day, month and year costs are the sums of these. Nothing is prorated, and fixed charges aren't added (see *Fixed charges*). Months are calendar months.
+The zone buy price is the rate of the zone in effect for that energy. The hub computes cost every 15 minutes at the zone in effect then, and stores it with the hourly records. On modules that count energy on board, such as STD modules, energy is costed once per 15-minute period, at the zone in effect for that period. Day, month and year costs are the sums of these. Nothing is prorated, and fixed charges aren't added (see *Fixed charges*). Months are calendar months.
 
 ### Example: a day/night plan
 
