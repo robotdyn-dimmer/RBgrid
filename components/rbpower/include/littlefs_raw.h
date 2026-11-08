@@ -118,6 +118,9 @@ extern "C"
      */
     bool littlefs_raw_exists(const char *path);
 
+    /** @brief True once the config store is mounted (false after a failed mount: degraded, nothing formatted). */
+    bool littlefs_raw_is_mounted(void);
+
     /**
      * @brief Create a directory (an existing directory is not an error).
      *

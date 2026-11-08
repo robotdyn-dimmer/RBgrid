@@ -337,6 +337,8 @@ extern "C"
      * @retval ESP_ERR_NOT_FOUND     No usable slot starts at the buffers' base offset.
      */
     esp_err_t rbpower_flash_reattach_unit(rbpower_unit_id_t unit_id);
+/** @brief Give a unit created at runtime its flash history slot now (no restart). No-op if flash is off or it has one. */
+esp_err_t rbpower_flash_attach_unit(rbpower_unit_id_t uid, const char *name, int role);
 
     /**
      * @brief Number of records ACTUALLY written in a ring (not capacity) — for the history API so

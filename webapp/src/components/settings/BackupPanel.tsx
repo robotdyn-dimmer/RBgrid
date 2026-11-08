@@ -28,9 +28,17 @@ export const BackupPanel: React.FC = () => {
   const load = useCallback(async () => setSt(await session.transport.getBackupStatus().catch(() => null)), [session]);
   useEffect(() => { void load(); }, [load]);
 
-  const failText = (e: unknown) => {
-    const s = (e as { response?: { status?: number } })?.response?.status;
-    return s === 401 || s === 403 ? t('common.adminTokenRequired') : t('backup.failed');
+  // fw 1.1.7 (root restore-point-errors): save and restore are all-or-nothing, and say which way they failed.
+  const failText = (e: unknown, op: 'save' | 'restore') => {
+    const r = (e as { response?: { status?: number; data?: { error_code?: string; data?: { error_code?: string } } } })?.response;
+    const s = r?.status;
+    const code = r?.data?.error_code ?? r?.data?.data?.error_code;
+    if (s === 401 || s === 403) return t('common.adminTokenRequired');
+    if (op === 'save' && s === 500) return t('backup.saveFailed');
+    if (op === 'restore' && (code === 'BACKUP_INCOMPLETE' || s === 409)) return t('backup.incomplete');
+    if (op === 'restore' && code === 'RESTORE_FAILED') return t('backup.restoreFailed');
+    if (op === 'restore' && s === 404) return t('backup.none');
+    return t('backup.failed');
   };
 
   const save = async () => {
@@ -40,7 +48,10 @@ export const BackupPanel: React.FC = () => {
       const r = await session.transport.createBackup();
       setMsg({ sev: 'success', text: t('backup.saved', { n: r.filesBackedUp }) });
       await load();
-    } catch (e) { setMsg({ sev: 'error', text: failText(e) }); } finally { setBusy(null); }
+    } catch (e) {
+      setMsg({ sev: 'error', text: failText(e, 'save') });
+      await load(); // a failed save leaves the slot unusable — show what the hub has now
+    } finally { setBusy(null); }
   };
 
   const restore = async () => {
@@ -56,15 +67,16 @@ export const BackupPanel: React.FC = () => {
       setMsg({ sev: 'info', text: t('backup.restored', { n: restored }) });
     } catch (e) {
       // Restored but the restart didn't go: say so — the restart button finishes it.
-      setMsg(restored >= 0 ? { sev: 'warning', text: t('backup.restoredNoReboot', { n: restored }), reboot: true } : { sev: 'error', text: failText(e) });
+      setMsg(restored >= 0 ? { sev: 'warning', text: t('backup.restoredNoReboot', { n: restored }), reboot: true } : { sev: 'error', text: failText(e, 'restore') });
     } finally { setBusy(null); }
   };
 
   const status = st === undefined ? t('common.loading')
     : st === null ? t('backup.unknown')
       : !st.exists ? t('backup.none')
-        : st.meta?.ts ? t('backup.at', { when: when(st.meta.ts), n: st.meta.files ?? st.files })
-          : t('backup.atUnknown', { n: st.files });
+        : st.sealed === false ? t('backup.unsealed')
+          : st.meta?.ts ? t('backup.at', { when: when(st.meta.ts), n: st.meta.files ?? st.files })
+            : t('backup.atUnknown', { n: st.files });
 
   return (
     <PanelCard title={t('backup.title')}>
@@ -75,7 +87,7 @@ export const BackupPanel: React.FC = () => {
           <Button variant="outlined" startIcon={<SaveIcon />} disabled={!!busy || st === null} onClick={save}>
             {busy === 'save' ? t('common.saving') : t('backup.save')}
           </Button>
-          <Button variant="outlined" color="warning" startIcon={<RestoreIcon />} disabled={!!busy || !st?.exists} onClick={restore}>
+          <Button variant="outlined" color="warning" startIcon={<RestoreIcon />} disabled={!!busy || !st?.exists || st.sealed === false} onClick={restore}>
             {busy === 'restore' ? t('backup.restoring') : t('backup.restore')}
           </Button>
         </Stack>

@@ -216,6 +216,22 @@ extern "C"
         const rbstats_v4_meta_t *meta);
 
     /**
+     * @brief Write a record set now, skipping parts already written (no store gate, no queueing).
+     *
+     * @param[in,out] done_mask bit 0 electrical, 1 energy, 2 economics: set parts are skipped; each part
+     *                          written sets its bit. NULL = write all three.
+     * @return ESP_OK when all three parts are on flash; otherwise the first failing write's error.
+     */
+    esp_err_t rbpower_flash_buffer_write_record_set_ex(
+        rbpower_unit_id_t unit_id,
+        rbpower_period_type_t period,
+        const rbpower_electrical_transfer_t* electrical,
+        const rbpower_energy_transfer_t* energy,
+        const rbpower_economics_transfer_t* economics,
+        const rbstats_v4_meta_t* meta,
+        uint8_t* done_mask);
+
+    /**
      * @brief Write extended data set for special units
      *
      * Writes all data types including QUALITY and DIRECTION.

@@ -1,0 +1,12 @@
+RBgrid Node firmware
+Copyright (c) 2025-2026 Zhuhai RobotDyn Technology Co., Ltd. Licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE);
+commercial use requires a separate license (see COMMERCIAL.md).
+
+This product uses third-party software under its own license. Those components are NOT covered by the
+PolyForm Noncommercial License; their own terms apply.
+
+1. ESP-IDF framework (build dependency, not shipped in this tree), Copyright (c) Espressif Systems.
+   License: Apache License 2.0. Includes mbedTLS (Apache License 2.0).
+
+2. rbamp (rbamp-esp-idf metering module client, managed component fetched at build time) — MIT License,
+   Copyright (c) 2025 rbAmp Contributors.

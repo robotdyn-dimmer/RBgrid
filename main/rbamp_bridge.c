@@ -24,6 +24,7 @@
 
 #include "rbamp_bridge.h"
 #include "rbstats_v4_types.h"
+#include "rbfault.h"   /* test builds: simulated long outage */
 
 #include <string.h>
 #include <math.h>
@@ -595,9 +596,9 @@ static bool               s_tail_arm_pending[RBAMP_MAX_MODULES];   /* boot count
 static int64_t            s_probe_us[RBAMP_MAX_MODULES];          /* when the module (re)joined — first-quarter staleness is expected */
 /* Last reboot-gap outcome per module for the `etstat` verb (ESP_LOG is not on the console in these builds). */
 /** @brief Last reboot-gap outcome of one module. */
-typedef struct { uint8_t state; double wh; uint32_t gap_s; uint32_t anchor_ts; } rbamp_gap_diag_t;   /* 0 none 1 armed 2 credited 3 dropped 4 regen 5 noread 6 noanchor */
+typedef struct { uint8_t state; double wh; uint32_t gap_s; uint32_t anchor_ts; } rbamp_gap_diag_t;   /* 0 none 1 armed 2 credited 3 dropped 4 regen 5 noread 6 noanchor 7 outage */
 /** @var rbamp_gap_diag_t::state
- *  0 none, 1 armed, 2 credited, 3 dropped, 4 regen, 5 noread, 6 noanchor.  @var rbamp_gap_diag_t::wh
+ *  0 none, 1 armed, 2 credited, 3 dropped, 4 regen, 5 noread, 6 noanchor, 7 outage (> 24 h, credited).  @var rbamp_gap_diag_t::wh
  *  Net gap energy (Wh).  @var rbamp_gap_diag_t::gap_s
  *  Gap length (s).  @var rbamp_gap_diag_t::anchor_ts
  *  Anchor wall clock (Unix s). */
@@ -606,10 +607,10 @@ static rbamp_gap_diag_t   s_gap_diag[RBAMP_MAX_MODULES];
 int rbamp_bridge_gap_status(uint8_t m, char *buf, size_t len)
 {
     if (m >= RBAMP_MAX_MODULES || !buf || len == 0) return 0;
-    static const char *st[] = { "none", "armed", "credited", "dropped", "regen", "noread", "noanchor" };
+    static const char *st[] = { "none", "armed", "credited", "dropped", "regen", "noread", "noanchor", "outage" };
     const rbamp_gap_diag_t *g = &s_gap_diag[m];
     return snprintf(buf, len, "gap m%u=%s wh=%.3f gap_s=%lu anchor_ts=%lu", (unsigned)m,
-                    st[g->state > 6 ? 0 : g->state], g->wh, (unsigned long)g->gap_s, (unsigned long)g->anchor_ts);
+                    st[g->state > 7 ? 0 : g->state], g->wh, (unsigned long)g->gap_s, (unsigned long)g->anchor_ts);
 }
 
 static bool anchor_load(uint8_t m, rbamp_anchor_t *out);
@@ -3215,6 +3216,7 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
      * and carry no electrical envelope (hour S/PF dragged down). ── */
     double   tail_wh[RBAMP_MAX_ENTRIES] = {0};
     uint32_t tail_gap_s = 0;
+    bool long_outage = false;   /* gap > RBAMP_GAP_MAX_S: credited, priced at the default zone, hour flagged OUTAGE */
     /* Deferred arm (the counter read at boot failed): it runs AFTER this period's snapshot, so its tail
      * (NVS anchor → now) spans the downtime AND this whole first quarter (probe → latch). Added on top of the
      * quarter it would count the quarter twice — use the tail INSTEAD of the quarter. */
@@ -3245,8 +3247,13 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
         rbpower_module_desc_t pdc;
         bool counters = rbpower_get_module_desc(module, &pdc) && pdc.period_src == RBAMP_STD_PERIOD_COUNTERS;
         if (counters && now_ts != 0 && !clock_back && gap_s <= 2) gap_s = 0;
+        if (gap_s && rbfault_hit(RBFAULT_GAP_PLUS_DAY)) gap_s += 25u * 3600u;   /* test builds: a > 24 h outage */
         s_gap_diag[module].gap_s = gap_s;
-        if (now_ts == 0 || gap_s == 0 || gap_s > RBAMP_GAP_MAX_S) {
+        /* A gap longer than a day used to be DROPPED: the counters measured it, but the hub can't place it in time.
+         * It is now credited like a short gap (totals + the current hour) and flagged: hour q OUTAGE, money at the
+         * plan's default zone (review H2, operator option 1). */
+        long_outage = (now_ts != 0 && !clock_back && gap_s > RBAMP_GAP_MAX_S);
+        if (now_ts == 0 || gap_s == 0) {
             ESP_LOGW(TAG, "module %u: reboot-gap tail DROPPED (time_valid=%d gap=%lus)", module, (int)(now_ts != 0), (unsigned long)gap_s);
             s_gap_diag[module].state = 3;
             /* The tail is the module's COUNTER delta since the NVS anchor (measured, not estimated); the
@@ -3264,8 +3271,11 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
                 rbpower_diag_printf("FAIL m%u gap dropped: time_valid=%d clock_back=%d gap=%lus wh=%.3f", module,
                                     (int)(now_ts != 0), (int)clock_back, (unsigned long)gap_s, s_gap_diag[module].wh);
         } else {
-            s_gap_diag[module].state = 2;
+            s_gap_diag[module].state = long_outage ? 7 : 2;
             tail_gap_s = gap_s;
+            if (long_outage)
+                rbpower_diag_printf("m%u outage %lus (> %us): counter delta %.3fWh credited — hour flagged OUTAGE, priced at the default zone",
+                                    module, (unsigned long)gap_s, (unsigned)RBAMP_GAP_MAX_S, s_gap_diag[module].wh);
             for (uint8_t e2 = 0; e2 < mc->entry_count && e2 < RBAMP_MAX_ENTRIES; ++e2) {
                 const rbamp_entry_cfg_t *en = &mc->entries[e2];
                 if (en->source == RBAMP_ENTRY_VOLTAGE || en->unit_id == 0) continue;
@@ -3277,16 +3287,15 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
             }
         }
     }
-    /* Persist the counter reading that corresponds to this consumed period read (the next anchor). */
+    /* Read the counter that corresponds to this consumed period read — the next anchor. It is persisted only
+     * AFTER the quarter was injected (below): moving the anchor first lost the quarter whenever the inject
+     * didn't happen (no usable entry / NaN window), because the next reboot gap then started past it. */
+    rbamp_std_energy_t enow;
+    esp_err_t ee;
     {
-        rbamp_std_energy_t enow;
         bus_take();
-        esp_err_t ee = br_read_energy(module, &enow);
+        ee = br_read_energy(module, &enow);
         bus_give();
-        /* force: this quarter WAS injected, so the anchor must move even without a wall clock (ts 0 = the next
-         * reboot gap is not creditable). Keeping the older anchor while quarters were injected would make the
-         * next tail re-count all of them (no-NTP boot running for hours, then a reboot). */
-        if (ee == ESP_OK) anchor_write(module, &enow, true);
         hourq_restore(module);
         srcid_check(module, "at quarter");
         if (rbpower_diag_enabled()) {                      /* quarter line: counters vs integral vs tail */
@@ -3305,7 +3314,7 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
             else snprintf(dv, sizeof(dv), "%+.2f%%", dev);
             rbpower_diag_printf("%sQTR m%u dt=%lums cnt=%+.3fWh int=%+.3fWh dev=%s tail=%.3fWh gap=%lus anchor=%s",
                                 bad ? "FAIL " : "", module, (unsigned long)snap.master_dt_ms, qcnt, integ, dv,
-                                tail, (unsigned long)tail_gap_s, ee == ESP_OK ? "saved" : esp_err_to_name(ee));
+                                tail, (unsigned long)tail_gap_s, ee == ESP_OK ? "read" : esp_err_to_name(ee));
             if (ee == ESP_OK) diag_ref_reset(module, &enow);
             else if (s_line[module] == 0) { s_diag_int_wh[module] = 0.0; s_diag_ref_us[module] = esp_timer_get_time(); s_diag_holes[module] = 0; }   /* BASIC: no counters → restart the integral per quarter (it ran on forever) */
         }
@@ -3392,6 +3401,10 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
             }
         }
         rbpower_home_set_next_period_end((rbpower_unit_id_t)en->unit_id, s_collect_q_end);
+        if (long_outage && tail_gap_s && e < RBAMP_MAX_ENTRIES && tail_wh[e] != 0.0) {
+            rbpower_home_set_next_outage_energy((rbpower_unit_id_t)en->unit_id, (float)tail_wh[e]);
+            rbpower_stats_flag_open_hour(en->unit_id, RBSTATS_Q_OUTAGE);
+        }
         rbpower_err_t ierr = rbpower_home_inject_period_result(
             (rbpower_unit_id_t)en->unit_id, period, avg_p, max_p, wh, dt_ms,
             v_dev, i_dev, i_dev, i_dev);
@@ -3400,6 +3413,18 @@ esp_err_t rbamp_bridge_collect_period(uint8_t module, rbpower_stat_period_type_t
                  module, ch, (unsigned)en->unit_id, (double)avg_p, (double)max_p,
                  (double)wh, (unsigned long)dt_ms,
                  ierr == RBPOWER_OK ? "ok" : "inject-fail");
+    }
+    /* Move the anchor now that the quarter is in. force: even without a wall clock (ts 0 = the next reboot gap is
+     * not creditable) — keeping an older anchor while quarters were injected would make the next tail re-count
+     * all of them. A quarter that injected nothing although the module has energy points keeps the old anchor,
+     * so the next reboot gap still covers it. */
+    if (ee == ESP_OK) {
+        uint8_t candidates = 0;
+        for (uint8_t e = 0; e < mc->entry_count; ++e)
+            if (mc->entries[e].source != RBAMP_ENTRY_VOLTAGE && mc->entries[e].unit_id != 0) candidates++;
+        if (injected > 0 || candidates == 0) anchor_write(module, &enow, true);
+        else rbpower_diag_printf("FAIL m%u quarter not injected (%u energy point(s)) — anchor kept for the next gap",
+                                 module, (unsigned)candidates);
     }
     ESP_LOGI(TAG, "module %u period collect: %u unit(s) injected (valid=%d)",
              module, injected, (int)snap.valid);

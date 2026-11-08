@@ -157,10 +157,20 @@ esp_err_t rbstats_pending_enqueue(rbpower_unit_id_t unit_id, rbpower_period_type
  */
 size_t    rbstats_pending_count(void);
 /**
+ * @brief Queue a record set whose parts in @p done_mask are already on flash (a failed write's retry).
+ * @return As rbstats_pending_enqueue().
+ */
+esp_err_t rbstats_pending_enqueue_masked(rbpower_unit_id_t unit_id, rbpower_period_type_t period,
+                                         const rbpower_electrical_transfer_t* electrical,
+                                         const rbpower_energy_transfer_t* energy,
+                                         const rbpower_economics_transfer_t* economics,
+                                         const rbstats_v4_meta_t* meta, uint8_t done_mask);
+/**
  * @brief Drain the queue into the (now ready) flash writer.
  *
- * Blocking: writes one record set at a time and yields between writes. Record sets whose write
- * fails are dropped and logged.
+ * Blocking: writes one record set at a time and yields between writes. A set whose write fails stays at
+ * the head of the queue (with the parts already written marked) and the flush stops; the next flush retries.
+ * Only one flush runs at a time (a concurrent call returns 0 at once).
  *
  * @return Number of record sets written.
  */

@@ -84,6 +84,19 @@ function num(value: unknown, fallback: number, min = 0): number {
  */
 /** A socket that closes this soon after opening without a single frame was refused (auth). */
 const AUTH_REJECT_MS = 1500;
+/** How long a reconnect waits for a ws ticket before opening without one (ms). */
+const TICKET_WAIT_MS = 6000;
+
+/**
+ * How the telemetry socket authenticates. A hub with `capabilities.wsTicket` (fw 1.1.7, root
+ * ws-token-handshake) hands out a one-time ticket valid 30 s (POST /api/v1/ws-ticket), so the
+ * long-lived token never goes into a URL (Kimi #7); older hubs take `?token=`. Set per connection
+ * by the device provider; it resolves once the hub's capabilities are known.
+ */
+export type WsAuth = { ticket: string } | 'token';
+let wsAuthSource: (() => Promise<WsAuth>) | null = null;
+export function setWsAuthSource(fn: (() => Promise<WsAuth>) | null): void { wsAuthSource = fn; }
+export function hasWsAuthSource(): boolean { return wsAuthSource !== null; }
 
 export enum WebSocketState {
   CONNECTING = 'CONNECTING',
@@ -212,11 +225,51 @@ export class RBGridWebSocketClient {
   /** Create the socket for the current endpoint and wire its handlers. */
   private openSocket(): void {
     this.state = WebSocketState.CONNECTING;
-    const scheme = this.config.secure ? 'wss' : 'ws';
-    // Read-token gate (root e139ab5e): the hub can't answer 401 before the upgrade, so the token
-    // rides in the query (`?token=`). The app's one token store is used — never logged.
+    const src = wsAuthSource;
+    if (!src) { this.openWith(this.tokenQuery()); return; }
+    // A fresh ticket for every (re)connect — single use. A failed ticket request opens without
+    // credentials: the hub refuses, the reconnect backoff tries again; the token never goes in a URL.
+    const seq = ++this.openSeq;
+    // A ticket request that hangs (a hub mid-restart) must not stall the reconnect: after
+    // TICKET_WAIT_MS the socket opens without credentials and the backoff carries on.
+    const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('ticket timeout')), TICKET_WAIT_MS));
+    Promise.race([src(), timeout])
+      .then((a) => (a === 'token' ? this.tokenQuery() : this.authQuery('ticket', a.ticket)), (e) => {
+        console.info(`WebSocket: no ticket (${e instanceof Error ? e.message : 'error'}), opening without credentials`);
+        return '';
+      })
+      .then((query) => {
+        if (seq !== this.openSeq || this.disposed || this.ws || this.state !== WebSocketState.CONNECTING) return;
+        this.openWith(query);
+      })
+      .catch((e) => {
+        // Never leave the client CONNECTING with no socket and no timer.
+        console.warn('WebSocket: open failed', e);
+        if (seq !== this.openSeq || this.disposed || this.ws) return;
+        this.state = WebSocketState.DISCONNECTED;
+        this.settleConnect(e instanceof Error ? e : new Error(String(e)));
+        if (this.shouldReconnect) this.scheduleReconnect();
+      });
+  }
+
+  /** Bumped by disconnect()/reconnect() so a ticket that arrives late opens nothing. */
+  private openSeq = 0;
+
+  private authQuery(key: string, value: string): string {
+    return `${this.endpoint.includes('?') ? '&' : '?'}${key}=${encodeURIComponent(value)}`;
+  }
+
+  /** Read-token gate (root e139ab5e): the hub can't answer 401 before the upgrade, so on hubs
+   *  without tickets the token rides in the query. The app's token store is used — never logged. */
+  private tokenQuery(): string {
     const token = tokenStore.get();
-    const query = token ? `${this.endpoint.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : '';
+    return token ? this.authQuery('token', token) : '';
+  }
+
+  private openWith(query: string): void {
+    // Which credential the socket carries — never the value (root ws-ticket-app-check).
+    console.info(`WebSocket: opening ${this.endpoint} with ${/[?&]ticket=/.test(query) ? 'a ticket' : /[?&]token=/.test(query) ? 'the token' : 'no credentials'}`);
+    const scheme = this.config.secure ? 'wss' : 'ws';
     const wsUrl = `${scheme}://${this.config.url}:${this.config.port}${this.endpoint}${query}`;
 
     let ws: WebSocket;
@@ -539,6 +592,7 @@ export class RBGridWebSocketClient {
    */
   reconnect(): void {
     if (this.disposed) return;
+    this.openSeq++;
     this.clearReconnectTimer();
     const ws = this.ws;
     if (ws) {
@@ -559,6 +613,7 @@ export class RBGridWebSocketClient {
    * Disconnect from WebSocket server. Stops auto-reconnect until the next connect().
    */
   disconnect(): void {
+    this.openSeq++;
     this.shouldReconnect = false;
     this.clearReconnectTimer();
     this.clearConnectTimer();
@@ -693,16 +748,16 @@ const wsClients: Map<string, { key: string; client: RBGridWebSocketClient }> = n
  * is embedded in firmware) unless an explicit API base is configured (e.g. dev pointing
  * at a device IP via REACT_APP_API_BASE_URL).
  */
-function resolveWsTarget(explicitBase?: string): { host: string; port: number; secure: boolean } {
+export function resolveWsTarget(explicitBase?: string): { host: string; port: number; secure: boolean } {
   const base = explicitBase || getBaseUrl();
   if (base) {
     // The device serves the WS on the SAME host:port as its HTTP server (derive from the base URL).
-    const secure = /^https:\/\//i.test(base);
-    const stripped = base.replace(/^https?:\/\//i, '');
-    const host = stripped.replace(/[/:].*$/, '');
-    const portMatch = stripped.match(/^[^/]*:(\d+)/);
-    const port = portMatch ? Number(portMatch[1]) : (secure ? 443 : 80);
-    return { host, port, secure };
+    // URL keeps an IPv6 literal bracketed ([::1]); the old regex cut it to «[» (Kimi #21).
+    try {
+      const u = new URL(/^https?:\/\//i.test(base) ? base : `http://${base}`);
+      const secure = u.protocol === 'https:';
+      return { host: u.hostname, port: u.port ? Number(u.port) : (secure ? 443 : 80), secure };
+    } catch { /* not a URL — fall through to same-origin */ }
   }
   if (typeof window !== 'undefined' && window.location) {
     const secure = window.location.protocol === 'https:';

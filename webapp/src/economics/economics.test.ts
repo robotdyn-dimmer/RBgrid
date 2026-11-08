@@ -120,3 +120,13 @@ describe('live rate on the day-cost basis (3φ audit L3P-02)', () => {
     expect(r.gross).toBe(true);
   });
 });
+
+describe('monthForecast on the hub calendar (Kimi #16)', () => {
+  it('uses the hub month, not the browser one', () => {
+    // Browser still on 31 Oct 23:30; the hub is on 1 Nov 06:30 → a November forecast (30 days).
+    const f = monthForecast(1, { y: 2026, mo: 11, d: 2, h: 0, mi: 0 })!;
+    expect(f.daysInMonth).toBe(30);
+    expect(f.elapsedDays).toBe(1);
+    expect(monthForecast(1, { y: 2028, mo: 2, d: 11, h: 0, mi: 0 })?.daysInMonth).toBe(29);
+  });
+});

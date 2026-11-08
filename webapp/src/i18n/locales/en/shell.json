@@ -36,5 +36,8 @@
   "unreachableHint1": "Check that the hub is powered (power LED on).",
   "unreachableHint2": "Your phone or computer must be on the same Wi-Fi as the hub.",
   "unreachableHint3": "If the address may have changed, look it up in the router’s device list and choose “Switch device”.",
-  "switchDeviceLong": "Switch device"
+  "switchDeviceLong": "Switch device",
+  "tokenNeededTitle": "{addr} asks for a token",
+  "tokenNeededText": "The hub is on the network, but it shares its readings only with a read or admin token. Enter one in Settings → Security.",
+  "tokenNeededAction": "Enter the token"
 }

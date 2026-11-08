@@ -11,7 +11,7 @@
  *  4. Sync mode: a NACK / timeout / arbitration interrupt masks the master event interrupts — a stuck FSM raises
  *     ACK_ERR endlessly (driver's own note in s_i2c_transaction_start) and the storm on the poll task's core starved
  *     IDLE until the transaction timed out; the next transaction re-enables them.
- * Remove when the hub moves to IDF >= 5.5.
+ * v5.5.1 still needs patches 1, 2 and 4 (see v5.5/i2c_master.c). Re-check on every IDF update.
  */
 /*
  * SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD

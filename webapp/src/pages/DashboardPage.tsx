@@ -62,7 +62,7 @@ import { EvOverview } from '../components/stations/EvOverview';
 import { evThresholds } from '../components/stations/evStatus';
 import {
   buildIndustrialTree, mainUnit, nameOf, fullNameOf, lineUnits, phaseLoads, unmeteredW, offlinePoints,
-  gridPhaseVoltages, pointUnits, isGenerationUnit,
+  gridPhaseVoltages, pointUnits, isGenerationUnit, inputDayTotals, todaySeed,
 } from './overviewData';
 import { unitMetricValue, UnitEntityGroup } from '../entities/model';
 import { EvConfig } from '../types/config';
@@ -149,7 +149,12 @@ export const DashboardPage: React.FC = () => {
   const genHistId = genEarly ? (unitsCfg.forGroup(genEarly)?.hex ?? apiUnitId(genEarly.unitKey)) : null;
   const genLiveOut = genEarly ? unitMetricValue(genEarly, 'energy_out') : null;
   // Month to date — closed days + today by the hub's counters, as Economics «месяц» (HOME-21).
-  const monthTot = usePeriodTotals(inputSeries, 'month', { today: data?.system.totals?.e_day_in != null ? { inWh: Math.round(data.system.totals.e_day_in ?? 0), outWh: Math.round(data.system.totals.e_day_out ?? 0), cost: Math.round((data.system.totals.cost_day ?? 0) * 100) / 100, revenue: Math.round((data.system.totals.rev_day ?? 0) * 100) / 100, n: 1 } : null });
+  // Today by the same rule as the cards below (overviewData.inputDayTotals) — the raw system sums
+  // stay 0 for an rbAmp input on hubs before T12 (Kimi #5).
+  const dayTotals = data ? inputDayTotals(data.system.totals, mainEarly) : undefined;
+  const seed = todaySeed(dayTotals);
+  const monthSeed = useMemo(() => seed, [seed?.inWh, seed?.outWh, seed?.cost, seed?.revenue]); // eslint-disable-line react-hooks/exhaustive-deps
+  const monthTot = usePeriodTotals(inputSeries, 'month', { today: monthSeed });
 
   if (!data || !frame) {
     return (
@@ -184,37 +189,9 @@ export const DashboardPage: React.FC = () => {
   const inputFull = main ? fullPower(main, unitsCfg.forGroup(main)) : null;
   const inputPowerW = inputFull?.w ?? null;
   const inputEstimated = !!inputFull?.estimated && inputPowerW != null;
-  // system{} day/lifetime sums aggregate only the legacy ADC supply blocks; on a current install
-  // (rbAmp input, no native ADC) they stay 0 until firmware T12 (root f451b6a5). There, take the day
-  // energy from the input unit's own counters and show cost as unknown («—»), never a fake 0.
-  const legacyInput = !!main && isMainKey(main.unitKey);
-  const rawTotals = data.system.totals;
-  // Day energy: the input's own counter, the system sum where the input has none (energy and
-  // money of one figure must come from the same place — GEN-04 «+9,36 ₽ · ↑ 0,0 кВт·ч»).
-  const pick = (unitWh: number | null, sysWh: number | null | undefined): number | null =>
-    (unitWh != null && unitWh > 0) || sysWh == null ? unitWh : sysWh;
-  const liveIn = main && !legacyInput ? pick(unitMetricValue(main, 'energy_day_in'), rawTotals?.e_day_in) : rawTotals?.e_day_in ?? null;
-  const liveOut = main && !legacyInput ? pick(unitMetricValue(main, 'energy_day_out'), rawTotals?.e_day_out) : rawTotals?.e_day_out ?? null;
   // «Сегодня» = the hub's day counters, as on every screen (root, joint-hw-testing: they survive
-  // restarts; the midnight-in-downtime fault that made the hours larger is fixed in ed876014).
-  // No «larger of counter and hours» any more — it showed the Overview 1,8 kWh against Economics'
-  // 0,0 after a clock change on .139.
-  const dayIn = liveIn;
-  const dayOut = liveOut;
-  // One rule for «сегодня» money (UX audit T4): the hub's sum counts when it is non-zero or there
-  // was no energy; a 0 next to real energy (hubs before canon 2b3dc1fd never costed rbAmp input)
-  // is UNKNOWN → null, and the lens shows «≈ энергия × ставка» — never a fake «0,00 €».
-  const trusted = (m: number | null | undefined, wh: number | null): number | null =>
-    m != null && (m > 0 || !wh) ? m : null;
-  const totals = rawTotals
-    ? {
-      ...rawTotals,
-      e_day_in: dayIn,
-      e_day_out: dayOut,
-      cost_day: trusted(rawTotals.cost_day, dayIn),
-      rev_day: trusted(rawTotals.rev_day, dayOut),
-    } as typeof rawTotals
-    : rawTotals;
+  // restarts), by one rule for energy and money (overviewData.inputDayTotals).
+  const totals = dayTotals;
   // Live tariff (E1). buy_rate 0 = no active plan → show no zone/rate rather than «0».
   const liveTariff = totals?.tariff;
   const tariffActive = (liveTariff?.buy_rate ?? 0) > 0;

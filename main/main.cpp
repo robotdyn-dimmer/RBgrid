@@ -74,7 +74,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "rbpower.h"
-#include "rbstats_migrate.h"       // deferred stats-format migration: image-valid hook
+#include "rbgrid_core.h"           // core API: lifecycle hooks, factory reset, context
 #include "rbhome_tariff.h"   // rbpower_tariff_get_current_plan — provisioning-status tariff_set
 #include "rbpower_inject_test.h"   // external-source injection self-test (opt-in)
 #include "rbpower_logic_test.h"    // deterministic logic regression suite (selftest verb)
@@ -1975,7 +1975,7 @@ static void ota_confirm_task(void *arg)
     } else {
         rbpower_diag_printf("FAIL ota: confirm failed: %s", esp_err_to_name(mv));
     }
-    rbstats_migrate_notify_image_valid();
+    rbgrid_core_image_confirmed();   /* releases a deferred stats migration */
     vTaskDelete(NULL);
 }
 
@@ -2041,9 +2041,7 @@ void wifi_event_callback(rbwifi_status_t status, void* user_data)
             }
         } else {
             esp_ota_mark_app_valid_cancel_rollback();   /* no-op unless pending; kept for symmetry */
-            // A deferred stats-format migration waits for exactly this confirmation (never touch
-            // the old-format data while a rollback to the old fw is still possible).
-            rbstats_migrate_notify_image_valid();
+            rbgrid_core_image_confirmed();   /* image already valid: release a deferred stats migration */
         }
     }
 
@@ -2117,11 +2115,6 @@ static esp_err_t espnow_http_get(httpd_req_t *req)
     return ESP_OK;
 }
 /** Parse a MAC given as 12 hex digits or colon-separated. */
-static bool espnow_http_parse_mac(const char *s, uint8_t mac[6])
-{
-    return s && (sscanf(s, "%2hhx%2hhx%2hhx%2hhx%2hhx%2hhx", &mac[0],&mac[1],&mac[2],&mac[3],&mac[4],&mac[5]) == 6 ||
-                 sscanf(s, "%2hhx:%2hhx:%2hhx:%2hhx:%2hhx:%2hhx", &mac[0],&mac[1],&mac[2],&mac[3],&mac[4],&mac[5]) == 6);
-}
 /** POST /api/v1/espnow {action: pair|latch|add|remove|disable|enable, mac, seconds, channels} (token-guarded). */
 static esp_err_t espnow_http_post(httpd_req_t *req)
 {
@@ -2135,48 +2128,17 @@ static esp_err_t espnow_http_post(httpd_req_t *req)
     if (rl > 0 && httpd_req_recv(req, body, rl) <= 0) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body"); return ESP_FAIL; }
     cJSON *j = cJSON_Parse(body);
     if (!j) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "json"); return ESP_FAIL; }
-    const cJSON *ja = cJSON_GetObjectItem(j, "action");
-    const cJSON *jm = cJSON_GetObjectItem(j, "mac");
-    const char *action = cJSON_IsString(ja) ? ja->valuestring : "";
-    char resp[160]; resp[0] = 0; bool ok = true; uint8_t mac[6];
-    httpd_resp_set_type(req, "application/json");
-    if (!strcmp(action, "pair")) {
-        const cJSON *js2 = cJSON_GetObjectItem(j, "seconds");
-        uint32_t sec = cJSON_IsNumber(js2) ? (uint32_t)js2->valuedouble : 120;
-        /* First node: ESP-NOW auto-starts only when the registry already has nodes — on a fresh hub
-         * `pair` would answer {"error":"espnow off"} and the FIRST node could never be paired over
-         * HTTP. Start the hub on demand here instead. */
-        if (!esp_now_hub_running()) {
-            esp_err_t se = esp_now_hub_start(0);
-            if (se != ESP_OK) { ok = false; snprintf(resp, sizeof(resp), "{\"error\":\"espnow start failed: %s\"}", esp_err_to_name(se)); }
-        }
-        if (ok) { esp_now_hub_open_pairing(sec); snprintf(resp, sizeof(resp), "{\"ok\":true,\"pairing_open_s\":%u}", (unsigned)sec); }
-    } else if (!strcmp(action, "latch")) {
-        if (!esp_now_hub_running()) { ok = false; snprintf(resp, sizeof(resp), "{\"error\":\"espnow off\"}"); }
-        else { uint32_t n = esp_now_hub_latch_all(0); snprintf(resp, sizeof(resp), "{\"ok\":true,\"latched\":%u}", (unsigned)n); }
-    } else if (!strcmp(action, "remove") && cJSON_IsString(jm) && espnow_http_parse_mac(jm->valuestring, mac)) {
-        uint32_t rm = esp_now_hub_delnode_cascade(mac);
-        snprintf(resp, sizeof(resp), "{\"ok\":true,\"removed_units\":%u}", (unsigned)rm);
-    } else if ((!strcmp(action, "disable") || !strcmp(action, "enable")) && cJSON_IsString(jm) && espnow_http_parse_mac(jm->valuestring, mac)) {
-        esp_now_hub_set_node_disabled(mac, !strcmp(action, "disable"));
-        snprintf(resp, sizeof(resp), "{\"ok\":true,\"disabled\":%s}", !strcmp(action, "disable") ? "true" : "false");
-    } else if (!strcmp(action, "add") && cJSON_IsString(jm) && espnow_http_parse_mac(jm->valuestring, mac)) {
-        espnow_reg_chan_t ch[ESPNOW_REG_MAX_CH]; uint8_t n = 0;
-        const cJSON *jch = cJSON_GetObjectItem(j, "channels"), *e = NULL;
-        if (cJSON_IsArray(jch)) cJSON_ArrayForEach(e, jch) {
-            if (n >= ESPNOW_REG_MAX_CH) break;
-            const cJSON *cc = cJSON_GetObjectItem(e, "ch"), *ct = cJSON_GetObjectItem(e, "ct_code");
-            if (cJSON_IsNumber(cc) && cJSON_IsNumber(ct)) { ch[n].ch = (uint8_t)cc->valuedouble; ch[n].ct_code = (uint8_t)ct->valuedouble; n++; }
-        }
-        if (n == 0) { ok = false; snprintf(resp, sizeof(resp), "{\"error\":\"channels[] required\"}"); }
-        else { esp_err_t e2 = esp_now_registry_add_node(mac, ch, n);
-               ok = (e2 == ESP_OK); snprintf(resp, sizeof(resp), "{\"ok\":%s,\"reboot_to_register\":true,\"channels\":%u}", ok?"true":"false", n); }
-    } else {
-        ok = false; snprintf(resp, sizeof(resp), "{\"error\":\"action=pair|latch|add|remove|disable|enable + mac\"}");
-    }
+    int st = 200;
+    char *out = esp_now_hub_action(j, &st);   /* shared with MQTT `cmd set espnow` */
     cJSON_Delete(j);
-    if (!ok) httpd_resp_set_status(req, "400 Bad Request");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_set_type(req, "application/json");
+    if (st != 200) {
+        char sl[40];
+        snprintf(sl, sizeof(sl), "%d %s", st, st == 400 ? "Bad Request" : st == 404 ? "Not Found" : st == 409 ? "Conflict" : st == 503 ? "Service Unavailable" : "Internal Server Error");
+        httpd_resp_set_status(req, sl);
+    }
+    httpd_resp_send(req, out ? out : "{\"ok\":false}", HTTPD_RESP_USE_STRLEN);
+    free(out);
     return ESP_OK;
 }
 /** Auto-start the ESP-NOW hub on boot once WiFi is associated, if the registry has nodes. Fixes the recurring
@@ -2189,10 +2151,11 @@ static void espnow_autostart_task(void *arg)
     for (int i = 0; i < 120 && esp_wifi_sta_get_ap_info(&ap) != ESP_OK; i++)
         vTaskDelay(pdMS_TO_TICKS(500));   /* up to ~60s for STA association (hub channel = router channel) */
     espnow_registry_t reg;
-    if (!esp_now_hub_running() && esp_now_registry_load(&reg) && reg.node_count > 0) {
+    int8_t en = esp_now_hub_enabled_setting();   /* off wins; on starts even without a node (ready to pair) */
+    if (!esp_now_hub_running() && en != 0 && (en == 1 || (esp_now_registry_load(&reg) && reg.node_count > 0))) {
         esp_err_t e = esp_now_hub_start(0);
-        ESP_LOGW(TAG, "ESP-NOW auto-start (registry %d node(s)): %s, running=%d",
-                 reg.node_count, esp_err_to_name(e), (int)esp_now_hub_running());
+        ESP_LOGW(TAG, "ESP-NOW auto-start (setting %d): %s, running=%d",
+                 (int)en, esp_err_to_name(e), (int)esp_now_hub_running());
     }
     vTaskDelete(NULL);
 }
@@ -2257,6 +2220,8 @@ static void register_espnow_http(void)
                  esp_err_to_name(eo), esp_err_to_name(ev));
     }
     rbgrid_register_espnow_status_provider(esp_now_hub_status_json);   // MQTT `cmd get espnow` → status JSON
+    rbgrid_register_unit_deleted_hook(esp_now_on_unit_deleted);        // a deleted node point stays deleted
+    rbgrid_register_espnow_action_handler(esp_now_hub_action);         // MQTT `cmd set espnow` → same actions as HTTP
     ESP_LOGI(TAG, "main-side API registered: GET/POST /api/v1/espnow + GET /api/system/provisioning");
 }
 
@@ -2708,38 +2673,14 @@ static void rbgrid_cjson_free(void *p) { free(p); }
  * forensics → debug console verbs. In debug builds rbbench owns
  * UART0; otherwise the IDF console/ESP_LOG serves UART0.
  */
-extern "C" void app_main(void) {
-    { cJSON_Hooks h = { rbgrid_cjson_malloc, rbgrid_cjson_free }; cJSON_InitHooks(&h); }   /* before any JSON */
-    /* factory reset (POST /api/system/factory-reset) runs here, before NVS and the config file system open */
-    const bool factory_reset_done = rbwebserver_factory_reset_at_boot();
-    rbevlog_init();   /* event log ring + diag log sink: before the first diag line */
-    if (factory_reset_done) rbpower_diag_printf("factory reset carried out at boot — starting as on first boot");
+/* ==== Boot stages. app_main() runs them in this order: network (Wi-Fi), core init (storage, config, points,
+ * tariffs, statistics engine), interfaces (web server, WebSocket, telemetry; MQTT/mDNS start from the Wi-Fi
+ * callback), core start (rbAmp bridge = metering source + period collection). A host other than this
+ * application (e.g. ESPHome) would skip the network and interface stages and run the two core stages. ==== */
 
-#if defined(RBGRID_BENCH_RELAY_FAILSAFE)
-    // SAFETY FIRST: drive the test-rig load-bank relays OFF before anything else (see above).
-    bench_relays_failsafe_off();
-#endif
-
-#if RBGRID_RBBENCH && !RBGRID_WIFI
-    /* System deps that normally run inside rbwifi_init() — which the debug-bridge build gates
-     * out. NVS is required by config/storage/console paths; the default event loop by
-     * component event handlers. Without these the boot cascades (storage disables,
-     * console RX dies). The non-debug build keeps them in rbwifi_init. */
-    {
-        esp_err_t nvs_ret = nvs_flash_init();
-        if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-            nvs_flash_erase();
-            nvs_ret = nvs_flash_init();
-        }
-        ESP_LOGI("MAIN", "NVS init (debug-bridge build): %s", esp_err_to_name(nvs_ret));
-        esp_err_t evt_ret = esp_event_loop_create_default();
-        ESP_LOGI("MAIN", "default event loop (debug-bridge build): %s", esp_err_to_name(evt_ret));
-    }
-#endif
-
-    // NOTE: the flash module tests run after rbgrid_config_create(), after the flash init and before
-    // rbgrid_init_system() (see the flash test block further down).
-
+/** Boot stage 1: Wi-Fi (AP+STA). @return true if Wi-Fi is up (the interface stage needs it). */
+static bool app_net_init(void)
+{
     // WIFI initialization through rbwifi
     ESP_LOGI(TAG, "=== rbpower WiFi AP+STA Test ===");
     
@@ -2844,6 +2785,13 @@ extern "C" void app_main(void) {
     ESP_LOGW(TAG, "WiFi + webserver DISABLED (debug-bridge build) — RAM headroom");
 #endif
 
+    return wifi_initialized;
+}
+
+/** Boot stage 2: core init — config store, hardware/points/time, ESP-NOW node points, telemetry config,
+ *  flash statistics, rbgrid_init_system + rbpower_init_extended, tariffs. @return extended config, or NULL. */
+static rbpower_extended_config_t* app_core_init(void)
+{
 #if !RBGRID_RBBENCH
     printf("\n=== RBgrid ===\n");
 #endif
@@ -2862,7 +2810,7 @@ extern "C" void app_main(void) {
     rbgrid_config_handle_t config_handle = rbgrid_config_create("Test House", "HongKong");
     if (!config_handle) {
         ESP_LOGE(TAG, "Failed to create config via rbgrid_config_api");
-        return;
+        return NULL;
     }
     
     // Get pointers to internal structures for additional configuration
@@ -3251,6 +3199,7 @@ extern "C" void app_main(void) {
     
     // Set global pointer
     g_extended_config = extended_config;
+    rbgrid_core_set_context(extended_config, g_json_ctx);   /* the core's builders (dispatcher, units) use these */
     size_t extflash_total = 0, extflash_used = 0;
     if (rbgrid_storage_get_stats(&extflash_total, &extflash_used) == ESP_OK) {
             ESP_LOGI(TAG, "Storage: %zu KB used of %zu KB total", extflash_used/1024, extflash_total/1024);
@@ -3338,6 +3287,12 @@ extern "C" void app_main(void) {
     }
 
     // JSON context already initialized earlier
+    return extended_config;
+}
+
+/** Boot stage 3: interfaces (web server + WebSocket + telemetry + ESP-NOW HTTP), only with Wi-Fi up. */
+static void app_ifaces_start(rbpower_extended_config_t* extended_config, bool wifi_initialized)
+{
     if (extended_config->rbhome_JSON_settings.enable_json_api) {
         // Update JSON context if needed for production use
         ESP_LOGI(TAG, "JSON module already initialized, updating for production use");
@@ -3373,6 +3328,11 @@ extern "C" void app_main(void) {
     }
     
     // ===== TEST 5: Network structure =====
+}
+
+/** Boot stage 4: core start — the rbAmp bridge (metering source) and the 15-min period collection. */
+static void app_core_start(void)
+{
     rbpower_home_print_network_structure();
 
     // ===== TEST 6 (opt-in): external-source injection API self-test =====
@@ -3470,6 +3430,46 @@ extern "C" void app_main(void) {
         ESP_LOGI("MAIN", "rbAmp auto 15-min period collection armed");
     }
 #endif
+
+}
+
+extern "C" void app_main(void) {
+    { cJSON_Hooks h = { rbgrid_cjson_malloc, rbgrid_cjson_free }; cJSON_InitHooks(&h); }   /* before any JSON */
+    /* factory reset (POST /api/system/factory-reset) runs here, before NVS and the config file system open */
+    const bool factory_reset_done = rbgrid_core_factory_reset_at_boot();
+    rbevlog_init();   /* event log ring + diag log sink: before the first diag line */
+    if (factory_reset_done) rbpower_diag_printf("factory reset carried out at boot — starting as on first boot");
+
+#if defined(RBGRID_BENCH_RELAY_FAILSAFE)
+    // SAFETY FIRST: drive the test-rig load-bank relays OFF before anything else (see above).
+    bench_relays_failsafe_off();
+#endif
+
+#if RBGRID_RBBENCH && !RBGRID_WIFI
+    /* System deps that normally run inside rbwifi_init() — which the debug-bridge build gates
+     * out. NVS is required by config/storage/console paths; the default event loop by
+     * component event handlers. Without these the boot cascades (storage disables,
+     * console RX dies). The non-debug build keeps them in rbwifi_init. */
+    {
+        esp_err_t nvs_ret = nvs_flash_init();
+        if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            nvs_flash_erase();
+            nvs_ret = nvs_flash_init();
+        }
+        ESP_LOGI("MAIN", "NVS init (debug-bridge build): %s", esp_err_to_name(nvs_ret));
+        esp_err_t evt_ret = esp_event_loop_create_default();
+        ESP_LOGI("MAIN", "default event loop (debug-bridge build): %s", esp_err_to_name(evt_ret));
+    }
+#endif
+
+    // NOTE: the flash module tests run after rbgrid_config_create(), after the flash init and before
+    // rbgrid_init_system() (see the flash test block further down).
+
+    const bool wifi_initialized = app_net_init();
+    rbpower_extended_config_t* extended_config = app_core_init();
+    if (!extended_config) return;
+    app_ifaces_start(extended_config, wifi_initialized);
+    app_core_start();
 
     /* Event log files (after rbpower storage init — it may own the `logs` mount) + boot forensics in EVERY
      * build: the classification feeds system.boot and the log; debug builds also echo it on the console. */

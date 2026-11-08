@@ -14,6 +14,10 @@ set(RBPOWER_SRCS
     "src/rbhome_alt_supply.c"
     "src/rbgrid.c"
     "src/rbgrid_config_api.c"
+    "src/rbgrid_core.c"                      # core context, lifecycle hooks, factory reset
+    "src/rbgrid_core_cmd.c"                  # transport-neutral command dispatcher + API tokens
+    "src/rbgrid_core_reads.c"                # economics / summary / schema / base_w builders
+    "src/rbgrid_units.c"                     # point create / change / delete
     "src/rbgrid_config_storage.c"
     "src/rbjson.c"
     "src/rbtelemetry.c"
@@ -35,6 +39,7 @@ set(RBPOWER_SRCS
     "src/external_flash_manager.c"           # SPI NOR chip driver (CONFIG partition too)
     "src/rbstorage_media.c"                  # internal-first media routing (stats partition shims)
     "src/littlefs_raw.c"                     # raw littlefs IO for config/token/registry
+    "src/rbfault.c"                          # fault injection (empty unless RBGRID_FAULT_INJECT test builds)
     "src/rbhome_tariff.c"                    # tariff/economics/billing engine (also #include'd by rbpower.c)
     # --- flash statistics data layer (history/summary/DAY+ aggregation persistence) ---
     "src/rbstorage.c"
@@ -94,3 +99,8 @@ idf_component_register(
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     LFS_CONFIG=lfs_config.h
 )
+
+# Test builds only: idf.py -B build_fault -DRBGRID_FAULT_INJECT=ON build → rbfault points + POST /api/debug/fault.
+if(RBGRID_FAULT_INJECT)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC RBGRID_FAULT_INJECT=1)
+endif()

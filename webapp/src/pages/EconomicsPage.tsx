@@ -24,7 +24,7 @@ import { t, tCode } from '../i18n';
 import { useUnitsConfig } from '../hooks/useUnitsConfig';
 import { usePeriodTotals, PeriodTotals, TotalsPeriod, isPastPeriod } from '../hooks/usePeriodTotals';
 import { UnitEntityGroup } from '../entities/model';
-import { roleLabel, mainUnit } from './overviewData';
+import { roleLabel, mainUnit, inputDayTotals, todaySeed } from './overviewData';
 import { fullDisplayName, isGenerationRole, hexKey, apiUnitId } from '../entities/siteModel';
 import { useInputSeries } from '../hooks/useInputSeries';
 import { useHardware } from '../hooks/useHardware';
@@ -104,15 +104,19 @@ export const EconomicsPage: React.FC = () => {
   const eco = useEconomics(seriesOf(unitId));
   // The net-metering credit means nothing while the plan has net metering off; the progressive block
   // has no setting in Tariffs — shown only when the hub runs one (docs review 04.11).
-  const { plan: tariffPlan } = useTariffPlan();
-  const netMeteringOn = tariffPlan?.net_metering_enabled !== false;
+  // Only once the plan is read and says so (Kimi #19: the card flashed while loading). A plan that
+  // can't be read leaves it to the hub's own figures: a credit on record means it's in use.
+  const { plan: tariffPlan, loaded: planLoaded } = useTariffPlan();
+  const netMeteringOn = planLoaded && (tariffPlan ? tariffPlan.net_metering_enabled === true
+    : (eco.data?.net_metering?.credit_balance_kwh ?? 0) !== 0);
   // The period from the hub's closed records by its clock (hooks/usePeriodTotals): the hub's
   // /summary without from/to sums its whole ring, and a running month has no record yet.
   // «Сегодня» of the INPUT = the hub's day counters (the Overview's figure); other points and
   // the hours before today come from closed records.
-  const sysT = telem.data?.system.totals;
+  // Today by the Overview's rule (overviewData.inputDayTotals, Kimi #5).
+  const sysT = inputDayTotals(telem.data?.system.totals, hubMain);
   const todayLive = useMemo(() => (sysT && unitId != null && unitId === mainId && sysT.e_day_in != null
-    ? { inWh: Math.round(sysT.e_day_in ?? 0), outWh: Math.round(sysT.e_day_out ?? 0), cost: Math.round((sysT.cost_day ?? 0) * 100) / 100, revenue: Math.round((sysT.rev_day ?? 0) * 100) / 100, n: 1 }
+    ? todaySeed(sysT)
     : null), [Math.round(sysT?.e_day_in ?? -1), Math.round(sysT?.e_day_out ?? -1), sysT?.cost_day, sysT?.rev_day, unitId, mainId]); // eslint-disable-line react-hooks/exhaustive-deps
   const totals = usePeriodTotals(seriesOf(unitId), period, { today: period === 'hour' || isPastPeriod(period) ? null : todayLive });
   // Generation points (RENEWABLE_SOURCE) — the «Генерация» section (UX audit W2-4).

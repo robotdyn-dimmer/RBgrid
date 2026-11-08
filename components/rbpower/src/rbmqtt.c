@@ -11,12 +11,18 @@
  * on connect we publish "online" (retained). No secrets here — Wi-Fi creds are provisioned
  * separately; the broker URI is passed in from config.
  */
+#include "rbgrid_core.h"
 #include "rbmqtt.h"
 
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "mqtt_client.h"
+#include "esp_crt_bundle.h"
+#include "mbedtls/ssl.h"
+#include "mbedtls/x509_crt.h"
+#include "rbhome_types.h"   /* rbpower_diag_printf */
 
 static const char *TAG = "RBMQTT";
 
@@ -32,6 +38,29 @@ static char s_lwt_topic[96] = {0};
 static char s_cmd_topic[96]  = {0};
 static char s_resp_topic[96] = {0};
 static rbmqtt_cmd_handler_t s_cmd_handler = NULL;
+
+/* TLS verify trace: the bundle's verify callback, wrapped so a rejected certificate leaves a line in the
+ * event log (release builds have no console). Records the last failing depth / issuer / flags. */
+static char s_vrfy_note[160];
+int esp_crt_verify_callback(void *buf, mbedtls_x509_crt *const crt, const int depth, uint32_t *const flags);  /* esp_crt_bundle.c (not in its header) */
+static int rbmqtt_verify_cb(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags)
+{
+    uint32_t in = *flags;
+    int r = esp_crt_verify_callback(ctx, crt, depth, flags);
+    if (r != 0 || *flags != 0) {
+        char iss[96] = {0};
+        mbedtls_x509_dn_gets(iss, sizeof(iss), &crt->issuer);
+        snprintf(s_vrfy_note, sizeof(s_vrfy_note), "depth=%d flags_in=0x%x out=0x%x ret=-0x%x issuer=%.80s",
+                 depth, (unsigned)in, (unsigned)*flags, (unsigned)(-r), iss);
+    }
+    return r;
+}
+static esp_err_t rbmqtt_crt_bundle_attach(void *conf)
+{
+    esp_err_t e = esp_crt_bundle_attach(conf);
+    if (e == ESP_OK && conf) mbedtls_ssl_conf_verify((mbedtls_ssl_config *)conf, rbmqtt_verify_cb, NULL);
+    return e;
+}
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                                int32_t event_id, void *event_data)
@@ -94,6 +123,21 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             break;
         case MQTT_EVENT_ERROR:
             ESP_LOGW(TAG, "mqtt error event");
+            /* Release builds have no console: put the cause in the event log, at most once a minute
+             * (esp-mqtt retries every few seconds). TLS failures carry the mbedTLS code + X.509 flags. */
+            if (event && event->error_handle) {
+                static int64_t s_last_err_us = 0;
+                int64_t now = esp_timer_get_time();
+                if (s_last_err_us == 0 || now - s_last_err_us > 60000000LL) {
+                    s_last_err_us = now;
+                    const esp_mqtt_error_codes_t *e = event->error_handle;
+                    rbpower_diag_printf("mqtt: connect failed: type=%d tls_err=0x%x tls_stack=-0x%x cert_flags=0x%x sock_errno=%d refused=%d",
+                                        (int)e->error_type, (unsigned)e->esp_tls_last_esp_err,
+                                        (unsigned)(-e->esp_tls_stack_err), (unsigned)e->esp_tls_cert_verify_flags,
+                                        e->esp_transport_sock_errno, (int)e->connect_return_code);
+                    if (s_vrfy_note[0]) { rbpower_diag_printf("mqtt: tls verify: %s", s_vrfy_note); s_vrfy_note[0] = 0; }
+                }
+            }
             break;
         default:
             break;
@@ -102,6 +146,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
 
 static char s_broker_uri[160];
 const char *rbmqtt_broker_uri(void) { return s_broker_uri; }
+/* Planned reboot: publish the retained "offline" first (the core runs its reboot notifiers). */
+static void rbmqtt_reboot_notify(void) { (void)rbmqtt_publish_offline(); }
 esp_err_t rbmqtt_init(const char *broker_uri, const char *client_id, const char *lwt_topic)
 {
     strlcpy(s_broker_uri, broker_uri ? broker_uri : "", sizeof(s_broker_uri));
@@ -140,11 +186,19 @@ esp_err_t rbmqtt_init(const char *broker_uri, const char *client_id, const char 
         cfg.session.last_will.retain = true;
     }
 
+    /* mqtts:// / wss://: verify the broker against the ESP-IDF CA bundle (public CAs). Without it esp-mqtt
+     * had no CA at all and every TLS connect failed. A broker with a self-signed / private-CA certificate
+     * still fails verification — that needs a user-supplied CA (not in this release). */
+    if (strncmp(broker_uri, "mqtts://", 8) == 0 || strncmp(broker_uri, "wss://", 6) == 0) {
+        cfg.broker.verification.crt_bundle_attach = rbmqtt_crt_bundle_attach;
+        ESP_LOGI(TAG, "TLS broker: verifying against the CA bundle");
+    }
     s_client = esp_mqtt_client_init(&cfg);
     if (!s_client) {
         ESP_LOGE(TAG, "esp_mqtt_client_init failed");
         return ESP_FAIL;
     }
+    (void)rbgrid_core_register_reboot_notify(rbmqtt_reboot_notify);
     esp_err_t err = esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID,
                                                    mqtt_event_handler, NULL);
     if (err == ESP_OK) err = esp_mqtt_client_start(s_client);

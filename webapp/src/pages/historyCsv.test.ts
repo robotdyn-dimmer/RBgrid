@@ -39,3 +39,17 @@ describe('history CSV for people (W2-2)', () => {
     expect(text).toContain('Сумма записей за период;Ввод;0,800;0,000;0,800');
   });
 });
+
+import { csvText, buildSummaryCsv } from './historyCsv';
+
+describe('CSV names never run as formulas (Kimi #8)', () => {
+  it.each([['=HYPERLINK("x")', `'=HYPERLINK("x")`], ['+1', "'+1"], ['-cmd', "'-cmd"], ['@SUM(A1)', "'@SUM(A1)"], [' \t=1', "' \t=1"], ['Kitchen', 'Kitchen'], ['L1 − kitchen', 'L1 − kitchen']])('%s', (a, b) => {
+    expect(csvText(a)).toBe(b);
+  });
+  it('a hub name in both files is neutralised, a negative number keeps its minus', () => {
+    const { text } = buildHistoryCsv([{ name: '=cmd', records: [rec({ ec: 0, es: 1500 })] }], 'energy', clock, 'RUB', { from: ts - 10, to: ts + 10 });
+    const row = text.slice(1).trim().split('\r\n')[1];
+    expect(row).toBe("2026-10-15 12:00;'=cmd;0,000;1,500;-1,500;;");
+    expect(buildSummaryCsv([{ name: '@x', inWh: 1000, outWh: 0, cost: 1, revenue: 0, input: false }], 'RUB', 'p')).toContain("'@x;");
+  });
+});

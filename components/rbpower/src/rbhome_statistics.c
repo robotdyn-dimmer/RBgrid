@@ -23,6 +23,7 @@
 #include "rbhome_alt_supply.h"
 #include "rbpower_lifetime_api.h"
 #include "rbextflash_buffer_write.h"
+#include "rbstats_migrate.h"   /* pending queue: retry of failed / gated record sets */
 #include "rbextflash_operations.h"
 #include "rbstorage_transfer_types.h"  // For rbpower_electrical_transfer_t, rbpower_energy_transfer_t, etc.
 #include <string.h>
@@ -162,8 +163,8 @@ bool rbpower_rollup_after_15min(rbpower_unit_id_t unit_id,
                                 const rbpower_period_statistics_t* stats_15min);
 
 // Period storage write function (synchronous - for internal use)
-static void store_period_to_flash_sync(rbpower_unit_id_t unit_id, rbpower_stat_period_type_t period_type,
-                                       const rbpower_period_statistics_t* period_stats);
+static esp_err_t store_period_to_flash_sync(rbpower_unit_id_t unit_id, rbpower_stat_period_type_t period_type,
+                                            const rbpower_period_statistics_t* period_stats);
 
 // LEGACY: Asynchronous system for LittleFS (NO LONGER USED)
 // static void flash_write_task(void* pvParameters);
@@ -1108,6 +1109,10 @@ bool rbpower_rollup_after_15min_at(rbpower_unit_id_t unit_id,
     if (unit_id >= RBPOWER_MAX_HOME_UNITS || !stats_15min) {
         return false;
     }
+    /* A record set whose flash write failed waits in the RAM queue: retry every quarter, BEFORE this quarter's
+     * hour image overwrites the NVS slot that still holds the failed hour as its recovery copy. */
+    if (rbstats_pending_count() > 0 && rbstats_migrate_state() == RBSTATS_STORE_READY && !rbstats_time_unsynced_gate())
+        (void)rbstats_pending_flush();
 
     // Reflect the unit's CONFIGURED period depth (stat_class) onto the 1HOUR accumulator enable, here
     // in the SHARED rollup — the one point guaranteed to run for EVERY unit on EVERY 15-min finalize,
@@ -1512,7 +1517,7 @@ static void finalize_1hour_period(rbpower_unit_id_t unit_id)
     // Unlike 15MIN, the HOUR result IS persisted (it seeds the DAY/WEEK/... flash-recompute path).
     rbpower_unit_id_t real_unit_id = g_home_network.units[unit_id].definition.unit_id;
     ESP_LOGI("RBHOME-AGG", "Unit[%d/0x%04X]: Writing 1hour period to Flash buffers", unit_id, real_unit_id);
-    store_period_to_flash_sync(real_unit_id, RBPOWER_STAT_PERIOD_1HOUR, stats_1hour);
+    esp_err_t hour_wr = store_period_to_flash_sync(real_unit_id, RBPOWER_STAT_PERIOD_1HOUR, stats_1hour);
 
     // Flow diagnostics: one hour finalized, carrying this many quarters.
     s_flow_hour_finalized[unit_id]++;
@@ -1520,7 +1525,16 @@ static void finalize_1hour_period(rbpower_unit_id_t unit_id)
 
     // Deactivate accumulator
     acc_1hour->is_active = false;
-    hour_persist_erase((uint8_t)unit_id);              /* the hour is on flash now */
+    if (hour_wr == ESP_OK) {
+        hour_persist_erase((uint8_t)unit_id);          /* the hour is on flash now */
+    } else {
+        /* Not on flash: queued for retry in RAM (ESP_ERR_NOT_FINISHED) or lost. Keep the NVS hour image as the
+         * recovery copy — a reboot before the next quarter overwrites the slot restores it as a PARTIAL hour. */
+        ESP_LOGE("RBHOME-AGG", "Unit[%d]: hour write %s — NVS hour image kept", unit_id, esp_err_to_name(hour_wr));
+    }
+    /* Retry queued sets (an earlier failed write, or the backlog of a gate that has since opened). */
+    if (rbstats_pending_count() > 0 && rbstats_migrate_state() == RBSTATS_STORE_READY && !rbstats_time_unsynced_gate())
+        (void)rbstats_pending_flush();
 
     ESP_LOGI("RBHOME-AGG", "Unit[%d]: Hourly period completed - U=%.1fV I=%.2fA P=%.0fW E=%.1fWh (%u%%)",
              unit_id, stats_1hour->voltage_rms, stats_1hour->current_rms,
@@ -2570,13 +2584,15 @@ static inline uint32_t enc_u32(float v, float scale)
  * Called after each persisted period is finalized (HOUR and longer) to append the
  * record set to the corresponding flash ring buffers.
  */
-static void store_period_to_flash_sync(rbpower_unit_id_t unit_id, rbpower_stat_period_type_t period_type,
-                                       const rbpower_period_statistics_t* period_stats)
+/* Returns ESP_OK when the set is on flash (or deliberately not persisted: 3SEC/15MIN), ESP_ERR_NOT_FINISHED when
+ * it is queued in RAM (store gated, or the write failed and will be retried), another error when it is lost. */
+static esp_err_t store_period_to_flash_sync(rbpower_unit_id_t unit_id, rbpower_stat_period_type_t period_type,
+                                            const rbpower_period_statistics_t* period_stats)
 {
     // Only the NULL pointer is checked here; unit_id is validated by the flash writer
     if (period_stats == NULL) {
         ESP_LOGW("RBSTORAGE_SAVE", "Invalid parameters: period_stats == NULL");
-        return;
+        return ESP_ERR_INVALID_ARG;
     }
 
     // The watchdog is fed by the calling task context
@@ -2587,11 +2603,11 @@ static void store_period_to_flash_sync(rbpower_unit_id_t unit_id, rbpower_stat_p
         case RBPOWER_STAT_PERIOD_3SEC:
             // 3-second data is not stored in flash
             ESP_LOGD("FLASH_WRITE", "Period 3SEC unit 0x%04X not saved to Flash (RAM only)", unit_id);
-            return;
+            return ESP_OK;
         case RBPOWER_STAT_PERIOD_15MIN:
             // The 15MIN period is not stored in flash (RAM only)
             ESP_LOGV("FLASH_WRITE", "Period 15MIN unit 0x%04X not saved to Flash (RAM only)", unit_id);
-            return;
+            return ESP_OK;
         case RBPOWER_STAT_PERIOD_1HOUR:
             storage_period = RBPOWER_PERIOD_HOUR;
             break;
@@ -2609,7 +2625,7 @@ static void store_period_to_flash_sync(rbpower_unit_id_t unit_id, rbpower_stat_p
             break;
         default:
             ESP_LOGW("FLASH_WRITE", "Unsupported period for write: %d", period_type);
-            return;
+            return ESP_ERR_INVALID_ARG;
     }
 
     uint32_t start_time_us = esp_timer_get_time();
@@ -2803,6 +2819,7 @@ static void store_period_to_flash_sync(rbpower_unit_id_t unit_id, rbpower_stat_p
         ESP_LOGW("FLASH_WRITE", "Unit 0x%04X: Slow write detected (%lums)",
                  unit_id, (unsigned long)(total_duration_us / 1000));
     }
+    return ret;
 }
 
 /* Persist a FINISHED period from an EXTERNAL source (e.g. an ESP-NOW node that latched the period

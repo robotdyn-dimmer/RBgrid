@@ -125,6 +125,8 @@ export type CapabilityFlag =
   | 'configBackup'
   /** `unit=input` on /history + /economics: the grid input summed over its supply points (fw 1.1.6). */
   | 'inputAggregate'
+  /** POST /api/v1/ws-ticket: a one-time 30 s ticket for the telemetry socket (fw 1.1.7). */
+  | 'wsTicket'
   | 'schema';
 
 export type TelemetryProfile = 'lean' | 'full' | 'unknown';
@@ -193,7 +195,7 @@ function limitsOf(schema: RawSchema): DeviceLimits {
 const ALL_FLAGS: CapabilityFlag[] = [
   'espnow', 'economics', 'summary', 'exportCsv', 'telemetryConfigPost',
   'mqttConfig', 'historyTimeRange', 'auth', 'https',
-  'provisioning', 'configBackup', 'inputAggregate', 'schema',
+  'provisioning', 'configBackup', 'inputAggregate', 'wsTicket', 'schema',
 ];
 
 /** The pre-schema baseline: none of the new surfaces, telemetry-config GET-only. */
@@ -304,8 +306,9 @@ export function deriveCapabilities(schema: RawSchema | null): DeviceCapabilities
     limits: limitsOf(schema),
     flags: {
       schema: true,
-      // Not in the v1.1.0 release: the code stays, the UI is hidden in a release build.
-      espnow: !RELEASE_HIDDEN.espnow && flag('espnow', has(eps, '/api/v1/espnow')),
+      // The endpoint only. Whether this image can run ESP-NOW is the answer's `keys` (fw 1.1.7);
+      // NodesPanel decides from it (and hides on an older hub in a release build).
+      espnow: flag('espnow', has(eps, '/api/v1/espnow')),
       economics: flag('economics', has(eps, '/api/v1/economics')),
       summary: flag('summary', has(eps, '/api/v1/summary')),
       exportCsv: flag('exportCsv', has(eps, '/api/v1/export.csv')),
@@ -318,6 +321,7 @@ export function deriveCapabilities(schema: RawSchema | null): DeviceCapabilities
       configBackup: flag('configBackup', has(eps, '/api/system/backup')),
       // Explicit only — the endpoints are the same; older hubs answer `unit=input` with 400.
       inputAggregate: flag('inputAggregate', false),
+      wsTicket: flag('wsTicket', false),
     },
   };
 }

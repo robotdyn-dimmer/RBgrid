@@ -84,3 +84,49 @@ describe('MqttTransport (over the cmd channel)', () => {
     await expect(t.getProvisioning()).resolves.toBeNull();
   });
 });
+
+describe('MqttTransport.getConfig — the HTTP envelope shapes (Kimi #12)', () => {
+  it('a section-keyed body {system:{…}} is the system config, not {}', async () => {
+    // The hub sends the section builder's body verbatim + the echoed id (rbgrid_command_dispatch).
+    const subs: Array<(t: string, p: string) => void> = [];
+    const raw: MqttLike = {
+      publish: (_topic, payload) => {
+        const { id } = JSON.parse(payload);
+        Promise.resolve().then(() => subs.forEach((h) => h('rbgrid/aabbcc/cmd/resp', JSON.stringify({ system: { home_name: 'Flat', site_profile: 'home' }, id }))));
+      },
+      subscribe: (_t, h) => { subs.push(h); return () => subs.splice(subs.indexOf(h), 1); },
+    };
+    const t = new MqttTransport(new CmdChannel(raw, 'rbgrid/aabbcc'));
+    expect(await t.getConfig('system')).toEqual({ home_name: 'Flat', site_profile: 'home' });
+  });
+});
+
+describe('MqttTransport.espnowAction (fw 1.1.7 `set espnow`, root espnow-nodes-ui)', () => {
+  /** Answers every cmd with a fixed ack, and records what went out. */
+  const ackBroker = (ack: unknown) => {
+    const sent: Array<Record<string, unknown>> = [];
+    const handlers = new Set<(t: string, p: string) => void>();
+    const broker: MqttLike = {
+      publish(_topic, payload) {
+        const msg = JSON.parse(payload);
+        sent.push(msg);
+        Promise.resolve().then(() => handlers.forEach((h) => h('x', JSON.stringify({ id: msg.id, type: 'cmd_ack', data: ack }))));
+      },
+      subscribe(_topic, h) { handlers.add(h); return () => handlers.delete(h); },
+    };
+    return { sent, broker };
+  };
+
+  it('sends the HTTP body plus the hub token, and returns data.reply', async () => {
+    const { sent, broker } = ackBroker({ result: 'ok', reply: { ok: true, pairing_open_s: 60 } });
+    const t = new MqttTransport(new CmdChannel(broker, 'rbgrid/aabbcc'), () => 'adm');
+    expect(await t.espnowAction('pair', { seconds: 60 })).toEqual({ ok: true, pairing_open_s: 60 });
+    expect(sent[0]).toMatchObject({ cmd: 'set', section: 'espnow', data: { action: 'pair', seconds: 60 }, token: 'adm' });
+  });
+
+  it('an error ack is a refusal with the reply\'s code, not a throw', async () => {
+    const { broker } = ackBroker({ result: 'error', message: 'off', reply: { ok: false, error: 'ESPNOW_DISABLED', message: 'off' } });
+    const t = new MqttTransport(new CmdChannel(broker, 'rbgrid/aabbcc'));
+    expect(await t.espnowAction('pair', { seconds: 60 })).toMatchObject({ ok: false, error: 'ESPNOW_DISABLED' });
+  });
+});

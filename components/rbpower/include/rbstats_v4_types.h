@@ -37,6 +37,7 @@ extern "C" {
 #define RBSTATS_Q_SRC_RESTART  (1u << 9)  ///< Metering module restarted inside the period (firmware update / reset)
 #define RBSTATS_Q_SRC_FW       (1u << 10) ///< Metering module firmware version changed inside the period (implies SRC_RESTART)
 #define RBSTATS_Q_REVERSE_LOST (1u << 11) ///< Reverse flow seen on a direction-less (BASIC) source, not in the energy (CT reversed?)
+#define RBSTATS_Q_OUTAGE       (1u << 12) ///< Holds energy the module counted while the hub was off > 24 h: credited here, its time inside the outage unknown
 
 /* ---- electrical present-mask (which JSON keys this record carries; fields_by_source) ---- */
 #define RBSTATS_EL_V      (1u << 0)   ///< Voltage present

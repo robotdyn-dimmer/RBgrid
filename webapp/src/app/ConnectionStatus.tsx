@@ -10,6 +10,8 @@ import React, { useEffect, useState } from 'react';
 import { Box, Typography, Button, Stack } from '@mui/material';
 import { visuallyHidden } from '@mui/utils';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
+import LockIcon from '@mui/icons-material/Lock';
+import { Link as RouterLink } from 'react-router-dom';
 import { Card } from '@rbgrid/design-system';
 import { TelemetryConnState } from '../hooks/useTelemetryEntities';
 import { connectDemo, disconnect, getBaseUrl, connectDevice, connectBroker, getBrokerUrl, getDeviceMac, getTransportKind } from '../services/connection';
@@ -68,6 +70,32 @@ export const LinkStatus: React.FC<{ state: LinkState; lastUpdate: number | null;
         {demo ? t('shell.linkDemo') : state === 'live' ? t('shell.linkLiveShort') : state === 'stale' ? t('shell.linkNone') : t('shell.linkConnecting')}
       </Box>
     </Stack>
+  );
+};
+
+/** The hub answers but withholds data without a read token (REST 401, the socket refused after
+ *  its 101) — a token is missing or wrong, not «no connection» (root ws-ticket-app-check, step 3). */
+export const DeviceNeedsToken: React.FC = () => {
+  const ds = useDsTokens();
+  const addr = getBaseUrl().replace(/^https?:\/\//, '') || t('shell.thisDevice');
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'center', py: { xs: 4, md: 8 } }}>
+      <Box sx={{ maxWidth: 520, width: '100%' }}>
+        <Card>
+          <Stack spacing={2}>
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <LockIcon sx={{ color: ds.sevWarning }} />
+              <Typography variant="h6" fontWeight={700}>{t('shell.tokenNeededTitle', { addr })}</Typography>
+            </Stack>
+            <Typography color="text.secondary">{t('shell.tokenNeededText')}</Typography>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+              <Button variant="contained" component={RouterLink} to="/config#security">{t('shell.tokenNeededAction')}</Button>
+              <Button variant="outlined" onClick={disconnect}>{t('shell.switchDeviceLong')}</Button>
+            </Stack>
+          </Stack>
+        </Card>
+      </Box>
+    </Box>
   );
 };
 

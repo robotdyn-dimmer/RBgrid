@@ -28,11 +28,18 @@ export function baseLoadMonthly(minW: number | null, avgRate: number | null): { 
   return { w: minW, money: (minW / 1000) * HOURS_PER_MONTH * avgRate };
 }
 
-/** Linear month-end forecast from the month-to-date cost. */
-export function monthForecast(costMtd: number | null, now: Date, coveredDays?: number | null): { forecast: number; elapsedDays: number; daysInMonth: number; partial: boolean } | null {
+/** Calendar parts of a moment (DeviceClock.parts — the hub's clock). */
+export interface CalendarParts { y: number; mo: number; d: number; h: number; mi: number }
+
+/** Linear month-end forecast from the month-to-date cost. `now` = the HUB's calendar parts: the
+ *  month-to-date is the hub's month, so its length and the elapsed part are too (Kimi #16: a browser
+ *  on the other side of a month boundary forecast with the wrong month). A Date reads local time. */
+export function monthForecast(costMtd: number | null, now: CalendarParts | Date, coveredDays?: number | null): { forecast: number; elapsedDays: number; daysInMonth: number; partial: boolean } | null {
   if (costMtd == null || costMtd < 0) return null;
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const calendar = now.getDate() - 1 + (now.getHours() * 60 + now.getMinutes()) / 1440;
+  const p: CalendarParts = now instanceof Date
+    ? { y: now.getFullYear(), mo: now.getMonth() + 1, d: now.getDate(), h: now.getHours(), mi: now.getMinutes() } : now;
+  const daysInMonth = new Date(Date.UTC(p.y, p.mo, 0)).getUTCDate();
+  const calendar = p.d - 1 + (p.h * 60 + p.mi) / 1440;
   // The hub's records may start mid-month (a new install, a wiped archive): the pace is the days
   // WITH data, not the calendar days (3φ audit H3P-01: 1,5 days of data over 15,7 calendar days
   // forecast a bill ≈ 9 × too low).

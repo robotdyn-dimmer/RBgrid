@@ -30,7 +30,7 @@ import { useUnsavedChanges } from '../../app/unsavedGuard';
 import { savedText } from '../../services/savedText';
 import { evThresholds } from '../stations/evStatus';
 import { useHardware, refreshHardware, markModuleRestart } from '../../hooks/useHardware';
-import { pointHardware, ctRatingA, ctRatingOf, channelRange, ctSettable, ctName, sensorClassOf } from '../../entities/moduleLine';
+import { pointHardware, ctOptions, ctRatingA, ctRatingOf, channelRange, ctSettable, ctName, sensorClassOf } from '../../entities/moduleLine';
 import type { EvConfig } from '../../types/config';
 
 const MAX_FULL_BODY = 8000; // hub body cap for the full units-config POST (~8 KB) — fallback path
@@ -51,13 +51,6 @@ interface Draft { name: string; short_name: string; role: string; phase: number;
 
 /** Roles that export (BASIC can't: consumption only). */
 const EXPORT_ROLES = new Set(['RENEWABLE_SOURCE', 'STORAGE_SYSTEM']);
-
-/** The CT list by rating; a channel's current model stays listed even if the hub dropped it. */
-function ctOptions(models: Record<number, string>, current: number): [number, string][] {
-  const list = Object.entries(models).map(([k, v]) => [Number(k), v] as [number, string]);
-  if (!list.some(([k]) => k === current)) list.push([current, `#${current}`]);
-  return list.sort((a, b) => (ctRatingA(a[0], models) ?? 999) - (ctRatingA(b[0], models) ?? 999));
-}
 
 export const UnitParamsPanel: React.FC<{ apiId: string | null }> = ({ apiId }) => {
   const caps = useCapabilities();

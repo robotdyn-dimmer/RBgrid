@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useCapabilities, useDeviceSession } from '../core';
 import { isOssBuild } from '../core/schema/capabilities';
+import { espnowAvailable } from '../core/espnow/available';
 import { useConnection } from '../hooks/useConnection';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { getApiClient } from '../services/api';
@@ -91,6 +92,7 @@ export function useOnboarding(): OnboardingState {
   // How far the user has been: an optional step is ✓ once passed, not before.
   const [reached, setReached] = useLocalStorage<number>('rbgrid.onboarding.reached', 0);
   const [loaded, setLoaded] = useState(false);
+  const [espnowOk, setEspnowOk] = useState(false);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
@@ -102,7 +104,8 @@ export function useOnboarding(): OnboardingState {
       api.getLatestTelemetry().catch(() => null),
       api.getSystemSettings().catch(() => null),
       api.getTimeSettings().catch(() => null),
-    ]).then(([roles, unitsCfg, frame, sys, time]) => {
+      caps.flags.espnow ? session.transport.getEspnow().catch(() => null) : Promise.resolve(null),
+    ]).then(([roles, unitsCfg, frame, sys, time, espnow]) => {
       if (!on) return;
       if (roles.status === 'fulfilled') setAdminTokenSet(roles.value.adminSet);
       if (unitsCfg.status === 'fulfilled' && unitsCfg.value) {
@@ -124,17 +127,19 @@ export function useOnboarding(): OnboardingState {
         const tz = (time.value as { config?: { timezone?: unknown } }).config?.timezone;
         setTimezone(typeof tz === 'string' ? tz : undefined);
       }
+      // The Nodes step only where the hub can run nodes (fw 1.1.7 `keys`).
+      setEspnowOk(espnow.status === 'fulfilled' && !!espnow.value && espnowAvailable(espnow.value.keys));
       setLoaded(true);
     });
     return () => { on = false; };
-  }, [session, nonce]);
+  }, [session, nonce, caps.flags.espnow]);
 
   const ctx: OnboardingContext = {
     connected,
     adminTokenSet,
     pointCount,
     timeSynced,
-    hasEspnow: caps.flags.espnow,
+    hasEspnow: caps.flags.espnow && espnowOk,
     isFull: !isOssBuild(caps),
     tariffSet,
     siteNamed,

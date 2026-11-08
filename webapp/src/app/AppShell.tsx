@@ -21,7 +21,7 @@ import { disconnect, DEMO_ONLY } from '../services/connection';
 import { ThemeSwitch } from '../theme/ThemeSwitch';
 import { t } from '../i18n';
 import { useTelemetryEntities } from '../hooks/useTelemetryEntities';
-import { LinkStatus, DeviceUnreachable, linkStateOf, LinkState } from './ConnectionStatus';
+import { LinkStatus, DeviceUnreachable, DeviceNeedsToken, linkStateOf, LinkState } from './ConnectionStatus';
 import { confirmLeave, setLeaveAsker } from './unsavedGuard';
 import { useConfirm } from '../components/common/ConfirmDialog';
 import { demoVariant, demoVariantIds, setDemoVariant, DemoVariantId } from '../mock/demoVariant';
@@ -92,6 +92,8 @@ export const AppShell: React.FC = () => {
   const tel = useTelemetryEntities();
   const state = linkStateOf(tel.conn, !!tel.data);
   const unreachable = !demo && !tel.data && tel.conn === 'error';
+  // Refused for want of a read token: say so, and keep Settings open to enter it.
+  const needsToken = unreachable && tel.authRejected;
 
   const nav: NavItem[] = NAV.map((item) => ({
     label: t(item.label),
@@ -124,7 +126,7 @@ export const AppShell: React.FC = () => {
         </>
       }
     >
-      {unreachable ? <DeviceUnreachable /> : <Outlet />}
+      {needsToken ? (pathname.startsWith('/config') ? <Outlet /> : <DeviceNeedsToken />) : unreachable ? <DeviceUnreachable /> : <Outlet />}
     </DSAppShell>
   );
 };

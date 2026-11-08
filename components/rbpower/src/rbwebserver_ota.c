@@ -83,7 +83,22 @@ esp_err_t rbwebserver_api_version_handler(httpd_req_t *req)
 /* POST /api/system/ota — stream a firmware .bin into the OTA slot, validate, set boot, reboot.
  * Safe: esp_ota_end validates (magic/SHA) and the boot partition is only switched on success, so a
  * truncated/bad upload leaves the running image intact (factory stays as cable-free recovery). */
+static esp_err_t ota_upload(httpd_req_t *req);
+
+/* True while a firmware image is being received and written. Background writers that would contend with the
+ * OTA flash writes under a shared lock (the ESP-NOW period inject: home lock → hour image NVS commit) hold off. */
+static volatile bool s_ota_busy = false;
+bool rbwebserver_ota_in_progress(void) { return s_ota_busy; }
+
 esp_err_t rbwebserver_api_ota_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_POST) s_ota_busy = true;
+    esp_err_t r = ota_upload(req);
+    s_ota_busy = false;   /* a successful upload restarts inside ota_upload; this runs on every failure path */
+    return r;
+}
+
+static esp_err_t ota_upload(httpd_req_t *req)
 {
     add_cors_headers(req);
     if (!rbapi_require_auth(req)) return ESP_FAIL;   // OTA flash requires the admin token (when provisioned)

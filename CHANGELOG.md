@@ -1,5 +1,92 @@
 # Changelog
 
+## v1.1.7 — 2026-11-08
+
+### Stored data survives faults
+An independent code review of v1.1.6/1.1.7-dev looked for ways a fault could lose or double energy, or reset the hub's
+settings. These are the fixes; each one was reproduced on the bench with injected faults before and after.
+- **A failed flash write no longer loses the hour.** The hourly record is kept for a retry (every quarter) instead
+  of being dropped, together with the hour's recovery copy in NVS. A set that failed half-way is completed without
+  writing its first part twice.
+- **A storage read error at boot no longer erases the settings.** The configuration store was formatted on any
+  mount error, which also removed the API tokens and left the hub open. It is now formatted only when it is
+  really damaged (or blank); on any other error the hub keeps the data and stays locked until the next restart.
+- **Saving settings reports a failed write** instead of OK, and the old value stays in place.
+- **Restore point is all-or-nothing.** A restore point is sealed when saved. Restore refuses an incomplete one
+  (`409 BACKUP_INCOMPLETE`, nothing changed), puts the previous settings back if a file fails part-way
+  (`500 RESTORE_FAILED`), and `GET /api/system/backup` reports `sealed`. Saving the hub's settings no longer
+  changes the restore point (it overwrote the point's system settings file).
+- **Energy measured while the hub was off for more than a day is kept.** It used to be dropped. It is now added to
+  the totals and to the current hour, which is flagged `outage` (new history quality bit 12), and priced at the
+  plan's default zone.
+- **A quarter that wasn't recorded keeps its energy for the next restart** (the module's counter reference used
+  to move on before the quarter was in).
+- **Quarter prices use the quarter's own time**, also when it is processed late, and a new tariff plan is applied
+  in one step: the costing never sees a half-loaded plan. A plan with more zones than the hub holds is refused
+  (it read past the zone table over MQTT).
+
+### Tariffs and net metering
+- **Clock not set yet** (power-up without internet): quarters are priced at the plan's default zone instead of
+  whatever zone the unset clock fell into.
+- **Net metering switched off** no longer collects the month's import and export, so the first month-end after
+  switching it back on settles only that month.
+- A zone condition that is switched off no longer stops the whole zone from applying.
+
+### Security
+- **MQTT reads need the read token** when the hub has read and admin tokens, like HTTP reads (`cmd get` / `history`
+  with `"token"` in the message).
+- **`mqtts://` works with brokers whose certificate comes from a public authority** (Let's Encrypt, DigiCert, …).
+  A broker with a self-signed certificate still can't be used. A failed broker connection is written to the event
+  log with the reason.
+- **Live data without the token in the URL:** `POST /api/v1/ws-ticket` returns a single-use ticket (30 s) for
+  `/ws-telemetry?ticket=`; `capabilities.wsTicket`. `?token=` still works.
+
+### Remote nodes (ESP-NOW)
+Release images now run the ESP-NOW hub. Each hub makes its own key the first time ESP-NOW starts; no key is built
+into the image. `GET /api/v1/espnow` reports `keys:true` and where the key came from.
+- **Pairing by key exchange.** In the pairing window the node and the hub exchange keys (X25519); the hub sends its
+  key to the node wrapped (AES-CCM). The node's points appear at once with history from the first hour, no restart.
+  `pair` takes 10–600 s; `pair_cancel` ends the window.
+- **Node settings from the hub:** `POST /api/v1/espnow {action:"configure", mac, config:{channels:[{ch, enabled,
+  ct_code}]}}` switches node inputs on or off and sets the clamp model. The status shows `config_state`
+  (`pending` / `applied` / `failed`) and the node's own `period_s` and firmware. Periods are fixed at 15 min
+  (`period_s` 900; any other value is refused with `PERIOD_UNSUPPORTED`).
+- **Radio switch:** `hub_on` / `hub_off` (kept across restarts; `enabled: auto|on|off`). Switching the radio off
+  marks every node offline and its points `present:false` at once.
+- **One action API for HTTP and MQTT:** `POST /api/v1/espnow` and MQTT `cmd set espnow` run the same code; the MQTT
+  answer carries the HTTP reply. The status adds `max_nodes`, `max_channels_per_node`, `pairing_left_s`.
+- **Node health:** signal (`rssi_dbm`), link loss over the last minute (`loss_pct`), last heard. Over MQTT: a retained
+  status topic per node and events (`paired`, `removed`, `node_online`, `node_offline`); in Home Assistant a
+  signal sensor per node. A node not heard since the hub started reads "no data", not 0.
+- **Energy by the node's own quarter.** A node period is priced and filed by the quarter the node closed, not by when
+  it arrived, so a period held through a radio gap or a hub restart lands in the right hour and zone. A period
+  stamped more than 2 minutes ahead of the hub clock is filed by its arrival, with a FAIL event.
+- Node periods are acknowledged only after they are recorded, and a period the node sends again (lost
+  acknowledgement, hub restart) is recognized and not counted twice. `GET /api/v1/espnow` reports
+  `periods_recv`, `periods_injected`, `periods_dropped`, `periods_dup`; they now count over the whole boot.
+- A deleted node point stays deleted after a restart, and data the node still sends for it is ignored.
+- An update over the air while nodes are connected no longer restarts the hub by its watchdog.
+- **Node firmware is published** in `node/` (ESP32, 4 MB flash, no PSRAM; rbAmp modules on I2C). Build, flash and
+  pairing: `node/README.md`. It needs no key file: the node gets its key when paired.
+
+### Platform
+- **ESP-IDF 5.5.1** (was 5.4.1). An update over the air from earlier versions works with the boot loader already on
+  the hub; rollback and going back to v1.1.6 were tested. The hub's own I2C driver fixes (watchdog resets and a
+  crash under bus faults) are carried over: 5.5.1 does not have them yet.
+- The metering core is now separate from the web server and MQTT code (the same functions serve HTTP, MQTT and
+  later other hosts). The API does not change.
+
+### Web app 1.1.7
+Source in `webapp/` (`rbgrid-ui_v1.1.7.zip` is the built app). Nodes section on the Points page, the live-stream
+ticket, restore-point messages, the hub token kept per hub, and many fixes. Full list: `webapp/CHANGELOG.md`.
+
+### Smaller fixes
+- The SNTP sync callback no longer skips the clock-step check and the flush of records kept before the first sync
+  when the sync task was busy.
+- A point deleted while MQTT is offline is removed from Home Assistant at the next connection.
+- An interrupted web-app update brings back the previous app at the next boot.
+- The tariff zone cache refreshed on every call (wrong time units).
+
 ## v1.1.6 — 2026-11-06
 
 ### Three-phase input metered per phase

@@ -571,13 +571,15 @@ export function demoTariffConfig(): BaseResponse<TariffPlanConfigData> {
     plan_type: 'TWO_ZONE', vat_percent: tp.vat, energy_tax_per_kwh: 0,
     net_metering_enabled: tp.sell != null, net_metering_default_ratio: tp.sell != null ? Math.round((tp.sell / tp.day) * 100) / 100 : 0, default_selling_rate_per_kwh: tp.sell ?? 0,
     is_active: true, is_default: true, active_zones_count: 2, default_zone_id: 'NIGHT',
+    // Every zone carries its sell price, 0 included, as the hub always reports it; the exporting
+    // site prices its export per zone — the order the solar guide teaches (content demo-live-116).
     zones: [
       {
-        zone_id: 'DAY', zone_name: '', rate_buying_per_kwh: tp.day, is_enabled: true, is_currently_active: demoDayNow(),
+        zone_id: 'DAY', zone_name: '', rate_buying_per_kwh: tp.day, rate_selling_per_kwh: tp.sell ?? 0, is_enabled: true, is_currently_active: demoDayNow(),
         conditions: [{ condition_type: 'TIME_RANGE', is_active: true, priority: 1, params: { start_hour: tp.dayFrom, start_minute: 0, end_hour: tp.dayTo, end_minute: 0, spans_midnight: false } }],
       },
       {
-        zone_id: 'NIGHT', zone_name: '', rate_buying_per_kwh: tp.night, is_enabled: true, is_currently_active: !demoDayNow(),
+        zone_id: 'NIGHT', zone_name: '', rate_buying_per_kwh: tp.night, rate_selling_per_kwh: tp.sell ?? 0, is_enabled: true, is_currently_active: !demoDayNow(),
         conditions: [{ condition_type: 'TIME_RANGE', is_active: true, priority: 1, params: { start_hour: tp.dayTo, start_minute: 0, end_hour: tp.dayFrom, end_minute: 0, spans_midnight: true } }],
       },
     ],

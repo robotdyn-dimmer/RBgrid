@@ -18,6 +18,7 @@ import { LoadSegment } from '../components/stations/LoadBalanceBar';
 import { deriveStationStatus, EvThresholds, stationThresholds } from '../components/stations/evStatus';
 import { t, tCode } from '../i18n';
 import type { UnitRole } from '../types/device';
+import type { TelemetrySystemTotals } from '../types/telemetry-units';
 import { currentOnlyUnitKeys } from '../hooks/useHardware';
 
 const W_PER_KW = 1000;
@@ -26,6 +27,33 @@ const W_PER_KW = 1000;
 export function mainUnit(groups: UnitEntityGroup[], join: UnitsConfigJoin): UnitEntityGroup | undefined {
   return groups.find((g) => isMainKey(g.unitKey))
     ?? groups.find((g) => (join.forGroup(g)?.role ?? g.role) === 'MAIN_SUPPLY' && !isPseudoKey(g.unitKey));
+}
+
+/**
+ * The input's «today» — the one rule every running-period total uses (Overview cards, month to
+ * date, Economics, History, the summary CSV; Kimi #5).
+ * system{} day sums aggregate only the legacy ADC supply blocks on hubs before T12 (root f451b6a5):
+ * there, with an rbAmp input, they stay 0. So the day energy is the input's own counter, the system
+ * sum where the input has none — energy and money of one figure from the same place (GEN-04).
+ * Money: the hub's sum counts when non-zero or there was no energy; a 0 next to real energy (hubs
+ * before canon 2b3dc1fd never costed an rbAmp input) is UNKNOWN → null, never a fake «0,00 €».
+ */
+export function inputDayTotals(raw: TelemetrySystemTotals | undefined, main: UnitEntityGroup | undefined): TelemetrySystemTotals | undefined {
+  if (!raw) return raw;
+  const legacyInput = !!main && isMainKey(main.unitKey);
+  const pick = (unitWh: number | null, sysWh: number | null | undefined): number | null =>
+    (unitWh != null && unitWh > 0) || sysWh == null ? unitWh : sysWh;
+  const dayIn = main && !legacyInput ? pick(unitMetricValue(main, 'energy_day_in'), raw.e_day_in) : raw.e_day_in ?? null;
+  const dayOut = main && !legacyInput ? pick(unitMetricValue(main, 'energy_day_out'), raw.e_day_out) : raw.e_day_out ?? null;
+  const trusted = (m: number | null | undefined, wh: number | null): number | null =>
+    m != null && (m > 0 || !wh) ? m : null;
+  return { ...raw, e_day_in: dayIn, e_day_out: dayOut, cost_day: trusted(raw.cost_day, dayIn), rev_day: trusted(raw.rev_day, dayOut) } as TelemetrySystemTotals;
+}
+
+/** The input's today as a period-totals seed (usePeriodTotals `today`); null without a day counter. */
+export function todaySeed(tot: TelemetrySystemTotals | undefined | null): { inWh: number; outWh: number; cost: number; revenue: number; n: number } | null {
+  if (tot?.e_day_in == null) return null;
+  return { inWh: Math.round(tot.e_day_in ?? 0), outWh: Math.round(tot.e_day_out ?? 0), cost: Math.round((tot.cost_day ?? 0) * 100) / 100, revenue: Math.round((tot.rev_day ?? 0) * 100) / 100, n: 1 };
 }
 
 /** A line unit = not a supply (main/alt), not a pseudo unit (bus voltage). */

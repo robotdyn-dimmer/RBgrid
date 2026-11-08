@@ -156,6 +156,12 @@ extern "C"
     int rbgrid_storage_backup_count(void);
 
     /**
+     * @brief Whether the restore point would be accepted by rbgrid_storage_restore_all().
+     * @return 1 sealed and intact; 0 incomplete (a save failed part-way) or changed; -1 no seal (saved before 1.1.7).
+     */
+    int rbgrid_storage_backup_sealed(void);
+
+    /**
      * @brief Read the slot metadata JSON written by rbgrid_storage_backup_all().
      *
      * The metadata is an object {"ts": wall-clock epoch s, "fw": firmware version, "files": count}.

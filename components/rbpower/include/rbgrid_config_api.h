@@ -1285,6 +1285,13 @@ extern "C"
         rbpower_period_statistics_t *stats_out,
         uint32_t *actual_count_out);
 
+/**
+ * @brief Create the points of a newly paired ESP-NOW node now (no restart); each gets its history slot at once.
+ * @param node_mac Node MAC. @param ch_ids Node flat channel ids. @param ct_codes rbAmp CT codes. @param n Count.
+ * @return Number of points created (existing ones are skipped).
+ */
+int rbgrid_config_espnow_node_live(const uint8_t node_mac[6], const uint8_t* ch_ids, const uint8_t* ct_codes, uint8_t n);
+
 #ifdef __cplusplus
 }
 #endif

@@ -25,6 +25,8 @@
 #include "rbwebserver.h"
 #include "rbjson.h"
 #include "rbpower.h"
+#include "rbgrid_core.h"
+#include "rbgrid_core_priv.h"
 
 /**
  * @brief Read a request body COMPLETELY.
@@ -344,6 +346,11 @@ esp_err_t rbwebserver_api_backup_handler(httpd_req_t *req);
  *         (4xx/5xx, including 401/403/429 from the token guard).
  */
 esp_err_t rbwebserver_api_restore_handler(httpd_req_t *req);
+/** POST /api/v1/ws-ticket: one-time 30 s ticket for the /ws-telemetry handshake (?ticket=). */
+esp_err_t rbwebserver_api_ws_ticket_handler(httpd_req_t *req);
+#ifdef RBGRID_FAULT_INJECT
+esp_err_t rbwebserver_api_fault_handler(httpd_req_t *req);   /* test builds only */
+#endif
 
 /* Unified command dispatcher (MQTT command channel) — documented in rbwebserver.h. */
 char *rbgrid_command_dispatch(const char* in_json, int in_len);
@@ -402,7 +409,7 @@ bool rbwebserver_security_cfg_get(bool *dev_cors, char origins[][64], int max, i
 esp_err_t rbwebserver_api_security_handler(httpd_req_t *req);
 
 /** @brief API contract version (reported by /api/v1/schema; checked by the ui-commit api_version guard). */
-#define RBGRID_API_VERSION 1
+/* RBGRID_API_VERSION: rbgrid_core.h */
 
 /* Embedded web-UI hosting (rbwebserver_ui.c) */
 

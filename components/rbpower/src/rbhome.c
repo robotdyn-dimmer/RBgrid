@@ -10,6 +10,7 @@
  * through the inject API (rbAmp I2C bridge, ESP-NOW hub); the native ESP32-ADC engine has been
  * removed. Finished 15-minute results are rolled up by rbhome_statistics.c.
  */
+#include "rbgrid_core.h"   /* 3 s callbacks (telemetry publish point) */
 #include "rbpower_enums.h"
 #include "rbpower_constants.h"
 #include "rbhome_types.h"
@@ -2152,7 +2153,7 @@ void rbpower_home_end_3sec_period_callback(uint64_t period_end_time_us)
 
        // === NEW: TELEMETRY AFTER CYCLE ===
     // Send summary telemetry data in one packet for all units
-    rbpower_telemetry_on_3sec_period_end(period_end_time_us);
+    rbgrid_core_run_3s_cbs(period_end_time_us);   /* telemetry (WS/MQTT) and other hosts register here */
 
 }
 
@@ -2978,6 +2979,10 @@ rbpower_err_t rbpower_home_create_unit(const rbpower_unit_definition_t* def)
     /* Same id as a unit removed in this boot → its runtime flash buffers still exist; re-occupy their
      * (erased) slot so the records written from now on survive the next boot. No-op otherwise. */
     rbpower_flash_reattach_unit(def->unit_id);
+    /* A brand-new id created after boot (a node paired, a sensor bound in the app): its history slot now, not at the
+     * next restart. No-op at boot (flash init comes later and allocates every configured unit). */
+    if (def->type != RBPOWER_METRIC_VOLTAGE_BUS)
+        (void)rbpower_flash_attach_unit(def->unit_id, def->name, (int)def->role);
 
     /* Bind at the source layer (rbAmp bridge sets the fleet entry unit_id + persists /rbamp.json so
      * the source starts injecting + the unit survives reboot). No-op for sources with no binding. */
@@ -3622,6 +3627,16 @@ void rbpower_home_set_next_power_min(rbpower_unit_id_t unit_id, float p_min_w)
     if (ix != 0xFF && ix < RBPOWER_MAX_HOME_UNITS) s_next_pmin[ix] = p_min_w;
 }
 
+/* One-shot: the part of the NEXT period result's energy that the module counted during a hub outage longer than
+ * the creditable reboot gap (> 24 h). It stays in the totals and the history, but its time inside the outage is
+ * unknown, so it is priced at the plan's default zone instead of the quarter's zone. */
+static float s_next_outage_wh[RBPOWER_MAX_HOME_UNITS];
+void rbpower_home_set_next_outage_energy(rbpower_unit_id_t unit_id, float wh)
+{
+    uint8_t ix = find_unit_index_by_id(unit_id);
+    if (ix != 0xFF && ix < RBPOWER_MAX_HOME_UNITS) s_next_outage_wh[ix] = wh;
+}
+
 /* One-shot window end (quarter boundary) for the NEXT period result of a unit (see rbhome_types.h). */
 static uint32_t s_next_qend[RBPOWER_MAX_HOME_UNITS];
 void rbpower_home_set_next_period_end(rbpower_unit_id_t unit_id, uint32_t end_ts)
@@ -3852,13 +3867,20 @@ rbpower_err_t rbpower_home_inject_period_result(rbpower_unit_id_t unit_id,
          * economics (cost_consumed/revenue_supplied) propagate up the hierarchy. The 3-sec finalize
          * path does its own costing; the inject path bypasses it, so without this the economics are 0.
          * Zone-aware buying/selling rate applied at the inject instant. */
-        rbpower_tariff_cost_injected_period(unit_index, energy_wh, &ps->result_base);
+        uint32_t q_end = s_next_qend[unit_index];   /* the boundary this quarter was collected for (0 = unknown) */
+        s_next_qend[unit_index] = 0;
+        float outage_wh = s_next_outage_wh[unit_index];
+        s_next_outage_wh[unit_index] = 0.0f;
+        if (outage_wh != 0.0f) {
+            rbpower_tariff_cost_injected_period(unit_index, energy_wh - outage_wh, &ps->result_base, q_end);
+            rbpower_tariff_cost_at_default_zone(unit_index, outage_wh, &ps->result_base);
+        } else {
+            rbpower_tariff_cost_injected_period(unit_index, energy_wh, &ps->result_base, q_end);
+        }
 
         /* The unit's period accumulators are enabled per its configured depth (stat_class) at creation
          * time in rbpower_home_create_unit — no force-enable needed here. should_aggregate_to_period()
          * inside the rollup now correctly reflects the configured depth. */
-        uint32_t q_end = s_next_qend[unit_index];   /* the boundary this quarter was collected for (0 = unknown) */
-        s_next_qend[unit_index] = 0;
         rbpower_rollup_after_15min_at(unit_index, ps, q_end);
     }
 

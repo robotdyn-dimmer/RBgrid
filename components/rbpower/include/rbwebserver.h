@@ -184,25 +184,17 @@ extern "C"
      * @param[in] fn  Builder returning a malloc'd JSON string (caller frees), or NULL to unregister.
      */
     void rbgrid_register_espnow_status_provider(char *(*fn)(void));
+    /** @brief Register a callback run after a point is deleted over the API (ESP-NOW: drop the node channel). */
+    void rbgrid_register_unit_deleted_hook(void (*fn)(uint16_t unit_id));
+    /** @brief Register the ESP-NOW node-action handler (MQTT `cmd set espnow` → same as POST /api/v1/espnow). */
+    struct cJSON;
+    void rbgrid_register_espnow_action_handler(char *(*fn)(const struct cJSON *req, int *status));
 
     /**
      * @brief Read the persisted HTTPS flag (/https_enabled in littlefs) into RAM. Call at boot before
      *        rbwebserver_start().
      */
     void rbwebserver_load_https_flag(void);
-
-    /**
-     * @brief Carry out a factory reset requested by POST /api/system/factory-reset, if one is pending.
-     *
-     * The request only arms an RTC (no-init) marker and restarts the hub; the erase runs here, at the very
-     * start of the next boot, before NVS and the config file system are opened. Erases the "config"
-     * partition (settings, points, tariff, module layout, restore point) and the default NVS (Wi-Fi,
-     * tokens, AP password, counter anchors), and the internal "stats" partition when history erase was
-     * asked. The hub then starts as on first boot (setup access point + portal). Call first in app_main.
-     *
-     * @return true if a factory reset was carried out on this boot.
-     */
-    bool rbwebserver_factory_reset_at_boot(void);
 
     /**
      * @brief GET/POST /api/system/system-config and /api/system/config — system configuration.

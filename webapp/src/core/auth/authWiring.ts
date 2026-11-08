@@ -6,10 +6,12 @@
  */
 import { AxiosRequestConfig } from 'axios';
 import { getApiClient } from '../../services/api';
-import { TokenStore, createBrowserTokenStore } from './TokenStore';
+import { TokenStore, createBrowserTokenStore, tokenScopeOf } from './TokenStore';
+import { getBaseUrl } from '../../services/connection';
 
-/** App-wide token custody (localStorage-backed). */
-export const tokenStore: TokenStore = createBrowserTokenStore();
+/** App-wide token custody (localStorage-backed), kept per hub origin (Kimi #1). */
+export const tokenStore: TokenStore = createBrowserTokenStore(() =>
+  tokenScopeOf(getBaseUrl(), typeof window !== 'undefined' ? window.location?.href : undefined));
 
 let installed = false;
 

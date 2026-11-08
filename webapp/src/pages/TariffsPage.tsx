@@ -316,21 +316,16 @@ export const TariffsPage: React.FC = () => {
             {plan.net_metering_enabled && (
               <>
                 {/* The hub prices an export by the zone's own selling price; only a zone WITHOUT one uses
-                    buy × this ratio (root, TAR-R05). With every zone priced the ratio does nothing —
-                    say so instead of an editable knob that changes nothing (TAR-07/TAR-R06). */}
-                {(plan.zones ?? []).some((z) => z.is_enabled && z.rate_selling_per_kwh == null) ? (
-                  <Grid item xs={6} sm={4}>
-                    <DecimalField
-                      label={t('tariffs.sellRatio')} value={plan.net_metering_default_ratio} min={0} max={1} decimals={4} required={false}
-                      helper={<>{t('tariffs.ratioHint')}<HelpTip topic="sellRatio" /></>}
-                      onChange={(v, e) => { setErr('ratio', e); if (v !== null) updatePlan({ net_metering_default_ratio: v }); }}
-                    />
-                  </Grid>
-                ) : (
-                  <Grid item xs={12} sm={8}>
-                    <Typography variant="body2" color="text.secondary">{t('tariffs.ratioUnused')}</Typography>
-                  </Grid>
-                )}
+                    buy × this ratio (root, TAR-R05). The ratio also scales every surplus month banked into the
+                    kWh credit (≤ 0 → 1; root net-metering-ratio-hidden), so it stays visible while net metering
+                    is on — with every zone priced, that is its only job. */}
+                <Grid item xs={12} sm={8}>
+                  <DecimalField
+                    label={t('tariffs.sellRatio')} value={plan.net_metering_default_ratio} min={0} max={1} decimals={4} required={false}
+                    helper={<>{t((plan.zones ?? []).some((z) => z.is_enabled && z.rate_selling_per_kwh == null) ? 'tariffs.ratioHint' : 'tariffs.ratioCreditOnly')}<HelpTip topic="sellRatio" /></>}
+                    onChange={(v, e) => { setErr('ratio', e); if (v !== null) updatePlan({ net_metering_default_ratio: v }); }}
+                  />
+                </Grid>
                 {!(plan.zones ?? []).some((z) => z.rate_selling_per_kwh !== undefined) && plan.default_selling_rate_per_kwh != null && (
                   <Grid item xs={6} sm={4}><InfoField label={t('tariffs.sellPriceComputed')}
                     value={`${Number(plan.default_selling_rate_per_kwh).toLocaleString(intlLocale(), { maximumFractionDigits: rateDecimals })} ${plan.currency_code ?? ''}/${t('units.kWh')}`} /></Grid>
@@ -445,7 +440,11 @@ export const TariffsPage: React.FC = () => {
                   // The name follows the type while it is the type's own name (TAR-R02: a zone switched to
                   // «Вечерний пик» was saved as «Утренний пик»); a name the user typed stays.
                   onChange={(v) => updateZone(i, { zone_id: v as TariffZoneId, ...(!z.zone_name || zoneDisplayName(z.zone_id, z.zone_name) === tCode('zone', String(z.zone_id)) ? { zone_name: tCode('zone', v) } : {}) })}
-                  options={ZONE_TYPES_OFFERED.concat(TARIFF_ZONE_ID_NAMES.filter((zid) => zid === z.zone_id && !ZONE_TYPES_OFFERED.includes(zid))).map((zid) => ({ value: zid, label: tCode('zone', zid) }))}
+                  // A type another zone already has isn't offered: the hub keys zones by type (it only logs a
+                  // DUPLICATE zone_id and keeps both), so two «Night» zones would mix their hours and money.
+                  options={ZONE_TYPES_OFFERED.concat(TARIFF_ZONE_ID_NAMES.filter((zid) => zid === z.zone_id && !ZONE_TYPES_OFFERED.includes(zid)))
+                    .filter((zid) => zid === z.zone_id || !(plan.zones ?? []).some((o, j) => j !== i && o.zone_id === zid))
+                    .map((zid) => ({ value: zid, label: tCode('zone', zid) }))}
                 />
               </Box>
               {/* The zone's hours — editable (was a caption). Across midnight is fine: 23:00 → 07:00. */}

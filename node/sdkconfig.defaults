@@ -1,0 +1,6 @@
+# RBgrid Node — ESP32, 4 MB flash, NO PSRAM.
+CONFIG_IDF_TARGET="esp32"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+# console/log on UART0 (default). Keep ESP-NOW long-range off for now.
+CONFIG_ESP_TASK_WDT_INIT=y

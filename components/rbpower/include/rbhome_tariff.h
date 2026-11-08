@@ -2278,9 +2278,10 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
  * @param[in]     unit_id     Unit index in the home network (not the unit's definition ID).
  * @param[in]     energy_wh   Signed period energy (Wh): + import, − export.
  * @param[in,out] result_base Period result to update; ignored if NULL.
+  * @param[in] q_end_ts End (epoch s) of the quarter being costed; its midpoint picks the zone. 0 = unknown (now).
  */
 void rbpower_tariff_cost_injected_period(rbpower_unit_id_t unit_id, float energy_wh,
-                                         rbgrid_snapshot_base_t *result_base);
+                                         rbgrid_snapshot_base_t* result_base, uint32_t q_end_ts);
 
 /**
  * @brief Tariff diagnostic snapshot for the `tariffdiag` diagnostic console command.
@@ -2419,5 +2420,17 @@ extern rbpower_tariff_plan_t g_current_tariff_plan;
 extern "C"
 #endif
 bool rbpower_tariff_plan_is_placeholder(const char* plan_name, const char* provider_name);
+
+/** @brief Drop the cached active zone (a new tariff plan was published). */
+#ifdef __cplusplus
+extern "C"
+#endif
+void rbpower_tariff_invalidate_zone_cache(void);
+
+/** @brief Cost energy of unknown time (a > 24 h hub outage) at the plan's default zone, adding to @p result_base. */
+#ifdef __cplusplus
+extern "C"
+#endif
+void rbpower_tariff_cost_at_default_zone(rbpower_unit_id_t unit_id, float energy_wh, rbgrid_snapshot_base_t* result_base);
 
 #endif // RBHOME_TARIFF_H

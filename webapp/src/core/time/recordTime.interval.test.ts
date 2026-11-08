@@ -35,3 +35,41 @@ describe('demo hub zone', () => {
     expect(tz?.stdOffsetSec).toBe(-new Date().getTimezoneOffset() * 60);
   });
 });
+
+import { makeDeviceClock } from '../deviceTime';
+
+/** Kimi #3: calendar buckets start on the hub's calendar, not at ts − a fixed length. */
+describe('calendar buckets start on the hub calendar', () => {
+  const berlin = makeDeviceClock('CET-1CEST,M3.5.0,M10.5.0/3');
+  const at = (iso: string) => Date.parse(iso) / 1000;
+  it.each([
+    ['January (31 d)', '2026-01-01T00:00:00+01:00', '2026-02-01T00:00:00+01:00'],
+    ['February (28 d)', '2026-02-01T00:00:00+01:00', '2026-03-01T00:00:00+01:00'],
+    ['February 2028 (29 d)', '2028-02-01T00:00:00+01:00', '2028-03-01T00:00:00+01:00'],
+    ['March, clocks forward', '2026-03-01T00:00:00+01:00', '2026-04-01T00:00:00+02:00'],
+    ['April (30 d)', '2026-04-01T00:00:00+02:00', '2026-05-01T00:00:00+02:00'],
+  ])('month: %s', (_n, from, to) => {
+    const dur = at(to) - at(from);
+    expect(intervalStart({ ts: at(to), dur }, 'month', berlin)).toBe(at(from));
+    expect(intervalStart({ ts: at(to) }, 'month', berlin)).toBe(at(from)); // no dur
+    expect(intervalStart({ ts: at(to) + 4, dur }, 'month', berlin)).toBe(at(from)); // closed late
+  });
+  it('a 31-day month starts on the 1st, so a year filter from 1 January keeps it', () => {
+    const [r] = toIntervalStarts([{ ts: at('2026-02-01T00:00:00+01:00'), dur: 31 * 86400 }], 'month', berlin);
+    expect(r.ts).toBe(at('2026-01-01T00:00:00+01:00'));
+  });
+  it.each([
+    ['23 h (clocks forward)', '2026-03-29T00:00:00+01:00', '2026-03-30T00:00:00+02:00'],
+    ['25 h (clocks back)', '2026-10-25T00:00:00+02:00', '2026-10-26T00:00:00+01:00'],
+    ['24 h', '2026-06-10T00:00:00+02:00', '2026-06-11T00:00:00+02:00'],
+  ])('day: %s', (_n, from, to) => {
+    expect(intervalStart({ ts: at(to), dur: at(to) - at(from) }, 'day', berlin)).toBe(at(from));
+  });
+  it('a partial day (restart at 15:00) still belongs to its day', () => {
+    const end = at('2026-06-11T00:00:00+02:00');
+    expect(intervalStart({ ts: end, dur: 9 * 3600 }, 'day', berlin)).toBe(at('2026-06-10T00:00:00+02:00'));
+  });
+  it('year: a leap year starts on 1 January', () => {
+    expect(intervalStart({ ts: at('2029-01-01T00:00:00+01:00'), dur: 366 * 86400 }, 'year', berlin)).toBe(at('2028-01-01T00:00:00+01:00'));
+  });
+});

@@ -226,3 +226,73 @@ describe('client cache — B-6 device switch', () => {
     expect(getTelemetryClient()).toBe(getTelemetryClient());
   });
 });
+
+import { resolveWsTarget } from './websocket';
+
+describe('resolveWsTarget — host/port from the hub address (Kimi #21)', () => {
+  it.each([
+    ['http://192.168.1.139', { host: '192.168.1.139', port: 80, secure: false }],
+    ['http://192.168.1.139:8080/', { host: '192.168.1.139', port: 8080, secure: false }],
+    ['https://hub.example', { host: 'hub.example', port: 443, secure: true }],
+    ['http://rbgrid-1a2b.local', { host: 'rbgrid-1a2b.local', port: 80, secure: false }],
+    ['http://[::1]:8080', { host: '[::1]', port: 8080, secure: false }],
+    ['http://[fe80::1]', { host: '[fe80::1]', port: 80, secure: false }],
+  ])('%s', (base, want) => {
+    expect(resolveWsTarget(base)).toEqual(want);
+  });
+});
+
+import { setWsAuthSource } from './websocket';
+import { tokenStore } from '../core/auth/authWiring';
+
+/** Kimi #7 / root ws-token-handshake: on a hub with tickets the token never goes into the URL. */
+describe('telemetry socket auth', () => {
+  const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+  afterEach(() => { setWsAuthSource(null); tokenStore.clear(); });
+
+  it('a hub with tickets: ?ticket=, a fresh one per connect, no token', async () => {
+    connectDevice('192.168.1.139');
+    tokenStore.set('secret');
+    let n = 0;
+    setWsAuthSource(async () => ({ ticket: `t${++n}` }));
+    const c = new RBGridWebSocketClient({ url: 'h', port: 80 });
+    c.connect('/ws-telemetry').catch(() => undefined);
+    await flush();
+    expect(FakeWebSocket.instances[0].url).toBe('ws://h:80/ws-telemetry?ticket=t1');
+    c.reconnect();
+    await flush();
+    expect(FakeWebSocket.instances.map((w) => w.url).some((u) => u.includes('secret'))).toBe(false);
+    expect(FakeWebSocket.instances[FakeWebSocket.instances.length - 1].url).toContain('ticket=t2');
+  });
+
+  it('an older hub: ?token= as before', async () => {
+    connectDevice('192.168.1.139');
+    tokenStore.set('secret');
+    setWsAuthSource(async () => 'token');
+    const c = new RBGridWebSocketClient({ url: 'h', port: 80 });
+    c.connect('/ws-telemetry').catch(() => undefined);
+    await flush();
+    expect(FakeWebSocket.instances[0].url).toBe('ws://h:80/ws-telemetry?token=secret');
+  });
+
+  it('a ticket that arrives after disconnect() opens nothing', async () => {
+    let give: (v: { ticket: string }) => void = () => undefined;
+    setWsAuthSource(() => new Promise((r) => { give = r; }));
+    const c = new RBGridWebSocketClient({ url: 'h', port: 80 });
+    c.connect('/ws-telemetry').catch(() => undefined);
+    c.disconnect();
+    give({ ticket: 'late' });
+    await flush();
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
+  it('a failed ticket request opens without credentials (never falls back to the token)', async () => {
+    connectDevice('192.168.1.139');
+    tokenStore.set('secret');
+    setWsAuthSource(async () => { throw new Error('401'); });
+    const c = new RBGridWebSocketClient({ url: 'h', port: 80 });
+    c.connect('/ws-telemetry').catch(() => undefined);
+    await flush();
+    expect(FakeWebSocket.instances[0].url).toBe('ws://h:80/ws-telemetry');
+  });
+});

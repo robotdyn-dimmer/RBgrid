@@ -68,16 +68,8 @@ extern const unsigned char rbgrid_dev_key_pem_end[]    asm("_binary_rbgrid_dev_k
 #define RBWEB_HTTPS_KEY_FILE   "/https_key.pem"   ///< littlefs file: production private key (PEM)
 #define RBWEB_HTTPS_PORT       443                ///< HTTPS listening port
 
-/* ==== Factory reset ==========================================================================
- * POST /api/system/factory-reset {"history":"erase"|"keep"} arms a marker in RTC no-init memory (it survives
- * esp_restart, not a power cut) and restarts the hub. The erase runs at the very start of the next boot
- * (rbwebserver_factory_reset_at_boot, first thing in app_main), before NVS and the config file system are
- * opened, so nothing is erased under a mounted file system. A power cut between the request and the restart
- * cancels the reset (the marker is lost) — the hub then just boots as it was. */
-#define RBWEB_FRESET_MAGIC 0x46525354u   ///< 'FRST'
-static RTC_NOINIT_ATTR uint32_t s_freset_magic;   ///< RBWEB_FRESET_MAGIC when armed
-static RTC_NOINIT_ATTR uint32_t s_freset_check;   ///< ~RBWEB_FRESET_MAGIC (power-on garbage guard)
-static RTC_NOINIT_ATTR uint32_t s_freset_flags;   ///< bit 0: erase the stats (history) partition too
+/* ==== Factory reset ====
+ * POST /api/system/factory-reset arms the core's boot-time erase (rbgrid_core_factory_reset_arm) and restarts. */
 
 static bool g_https_enabled = false;   /* desired mode (persisted, read at boot) */
 static bool g_https_active  = false;   /* what the running server actually started as */
@@ -107,8 +99,8 @@ static void* g_ws_message_user_data = NULL;
 /* Accessors for the split handler TUs (_ota/_wifi/_api). The globals stay static here — notably
  * g_json_context, which is a SEPARATE static in rbjson.c and would collide at link if de-static'd. */
 httpd_handle_t             rbwebserver_core_server(void)   { return g_server_handle; }
-rbpower_extended_config_t *rbwebserver_core_ext_cfg(void)  { return g_extended_config; }
-rbgrid_json_context_t     *rbwebserver_core_json_ctx(void) { return g_json_context; }
+rbpower_extended_config_t *rbwebserver_core_ext_cfg(void)  { return rbgrid_core_ext_cfg() ? rbgrid_core_ext_cfg() : g_extended_config; }
+rbgrid_json_context_t     *rbwebserver_core_json_ctx(void) { return rbgrid_core_json_ctx() ? rbgrid_core_json_ctx() : g_json_context; }
 
 // Forward declarations (is_request_from_ap_network / add_cors_headers → rbwebserver_internal.h)
 static esp_err_t universal_root_handler(httpd_req_t *req);
@@ -1015,6 +1007,13 @@ static esp_err_t register_uri_handlers(wifi_mode_t wifi_mode)
     httpd_register_uri_handler(g_server_handle, &api_backup_opt);
     httpd_register_uri_handler(g_server_handle, &api_restore_post);
     httpd_register_uri_handler(g_server_handle, &api_restore_opt);
+    httpd_uri_t api_ws_ticket = { .uri = "/api/v1/ws-ticket", .method = HTTP_POST, .handler = rbwebserver_api_ws_ticket_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(g_server_handle, &api_ws_ticket);
+#ifdef RBGRID_FAULT_INJECT
+    httpd_uri_t api_fault = { .uri = "/api/debug/fault", .method = HTTP_POST, .handler = rbwebserver_api_fault_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(g_server_handle, &api_fault);
+    ESP_LOGW(TAG, "FAULT-INJECTION BUILD: /api/debug/fault is live (test only)");
+#endif
 
     // Unit deletion — REST DELETE /api/v1/units/{hexid} (wildcard path param).
     httpd_uri_t api_unit_delete_uri = {
@@ -1841,7 +1840,7 @@ static esp_err_t rbwebserver_restore_system_config_handler(httpd_req_t *req)
 
 /* POST /api/system/factory-reset {"history":"erase"|"keep"} (admin token): arm the boot-time erase and restart.
  * history defaults to "erase". 200 {"status":"ok","history":"…","rebooting":true}; the hub then comes up as on first
- * boot (setup access point rbgrid-xxxx + portal). See rbwebserver_factory_reset_at_boot. */
+ * boot (setup access point rbgrid-xxxx + portal). See rbgrid_core_factory_reset_at_boot. */
 static esp_err_t rbwebserver_factory_reset_handler(httpd_req_t *req)
 {
     add_cors_headers(req);
@@ -1867,9 +1866,7 @@ static esp_err_t rbwebserver_factory_reset_handler(httpd_req_t *req)
             return httpd_resp_sendstr(req, "{\"status\":\"error\",\"message\":\"history must be \\\"erase\\\" or \\\"keep\\\"\"}");
         }
     }
-    s_freset_flags = erase_history ? 1u : 0u;
-    s_freset_check = ~RBWEB_FRESET_MAGIC;
-    s_freset_magic = RBWEB_FRESET_MAGIC;
+    rbgrid_core_factory_reset_arm(erase_history);
     rbpower_diag_printf("factory reset requested (history: %s) — the hub restarts and erases its settings at boot",
                         erase_history ? "erase" : "keep");
     httpd_resp_set_type(req, "application/json");
@@ -1877,30 +1874,6 @@ static esp_err_t rbwebserver_factory_reset_handler(httpd_req_t *req)
                                           : "{\"status\":\"ok\",\"history\":\"keep\",\"rebooting\":true}");
     (void)rbgrid_system_reboot(1000);
     return ESP_OK;
-}
-
-bool rbwebserver_factory_reset_at_boot(void)
-{
-    if (s_freset_magic != RBWEB_FRESET_MAGIC || s_freset_check != ~RBWEB_FRESET_MAGIC) return false;
-    const bool erase_history = (s_freset_flags & 1u) != 0;
-    s_freset_magic = 0; s_freset_check = 0; s_freset_flags = 0;   /* one shot, even if an erase below fails */
-    if (esp_reset_reason() != ESP_RST_SW) {
-        ESP_LOGW(TAG, "factory reset marker found after a non-software reset — ignored");
-        return false;
-    }
-    ESP_LOGW(TAG, "FACTORY RESET: erasing settings%s", erase_history ? " and history" : " (history kept)");
-    const esp_partition_t *cfg = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "config");
-    esp_err_t ec = cfg ? esp_partition_erase_range(cfg, 0, cfg->size) : ESP_ERR_NOT_FOUND;
-    esp_err_t en = nvs_flash_erase();
-    esp_err_t es = ESP_OK;
-    if (erase_history) {
-        /* internal stats partition (internal-first media); an old partition table without it keeps its history */
-        const esp_partition_t *st = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "stats");
-        es = st ? esp_partition_erase_range(st, 0, st->size) : ESP_ERR_NOT_FOUND;
-    }
-    ESP_LOGW(TAG, "FACTORY RESET done: config %s, nvs %s, history %s", esp_err_to_name(ec), esp_err_to_name(en),
-             erase_history ? esp_err_to_name(es) : "kept");
-    return true;
 }
 
 static esp_err_t rbwebserver_system_reboot_handler(httpd_req_t *req)
@@ -1989,8 +1962,7 @@ static esp_err_t rbwebserver_system_reboot_handler(httpd_req_t *req)
                  * (cheap), give the response a moment to flush, then hard-restart from here. */
                 ESP_LOGE(TAG, "Failed to create reboot task (internal heap %u) — hard restart from the HTTP task",
                          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-                extern esp_err_t rbmqtt_publish_offline(void);
-                (void)rbmqtt_publish_offline();
+                rbgrid_core_notify_reboot();   /* MQTT: retained "offline" */
                 vTaskDelay(pdMS_TO_TICKS(delay_ms > 3000 ? 3000 : delay_ms) + pdMS_TO_TICKS(300));
                 { rbpower_mark_planned_restart(); esp_restart(); }
             }

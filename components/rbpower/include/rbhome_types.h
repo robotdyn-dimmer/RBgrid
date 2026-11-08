@@ -1919,6 +1919,8 @@ void rbpower_home_set_next_power_min(rbpower_unit_id_t unit_id, float p_min_w); 
  * @param[in] end_ts  Window end, epoch s; 0 = unknown (on-demand collect, flush): attribution by collect time.
  */
 void rbpower_home_set_next_period_end(rbpower_unit_id_t unit_id, uint32_t end_ts);
+/** @brief One-shot: Wh of the NEXT period result counted during a hub outage > 24 h (priced at the default zone). */
+void rbpower_home_set_next_outage_energy(rbpower_unit_id_t unit_id, float wh);
 /**
  * @brief Whether a unit is fed by finished external period results.
  *

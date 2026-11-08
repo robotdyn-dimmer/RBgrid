@@ -52,6 +52,8 @@ export interface SecurityConfig {
 export interface BackupStatus {
   exists: boolean;
   files: number;
+  /** fw 1.1.7 (f965cd2): false ⇒ restore refuses it (409 BACKUP_INCOMPLETE). Absent ⇒ no seal (older hub or point) — usable. */
+  sealed?: boolean;
   meta?: { ts: number; fw: string; files: number };
 }
 
@@ -116,6 +118,8 @@ export interface DeviceTransport {
   setTelemetryProfile(profile: 'lean' | 'full'): Promise<void>;
   /** Whether an (admin) API token is set (GET /api/system/token → {token_set}). */
   getTokenStatus(): Promise<boolean>;
+  /** A one-time ticket for the telemetry socket (hub capabilities.wsTicket); Direct only. */
+  getWsTicket?(): Promise<string>;
   /** Which roles have a token set (GET /api/system/token → {token_set, read_token_set}) — T10. */
   getTokenRoles(): Promise<TokenRoles>;
   /**

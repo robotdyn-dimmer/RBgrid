@@ -19,6 +19,11 @@ const num = (r: HistoryRecord, k: string): number | null => {
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
+/** A point name is the hub's text: one starting like a formula (=, +, -, @, after blanks or control
+ *  characters) gets a leading apostrophe so a spreadsheet shows it rather than runs it (Kimi #8).
+ *  Only names — numbers stay numbers, a negative value keeps its minus. */
+export const csvText = (s: string): string => (/^[\s\x00-\x1f]*[=+\-@]/.test(s) ? `'${s}` : s);
+
 export function buildHistoryCsv(
   series: CsvSeries[], metric: CsvMetric, clock: DeviceClock, currency: string,
   span: { from: number; to: number },
@@ -65,12 +70,12 @@ export function buildHistoryCsv(
       }
       const dur = num(r, 'dur');
       const partial = nominalS != null && dur != null && dur < nominalS - 60;
-      lines.push([when(r.ts), s.name, ...vals, dur != null ? nf(dur / 60, 0) : '', partial ? t('csv.partial') : ''].map(cell).join(sep));
+      lines.push([when(r.ts), csvText(s.name), ...vals, dur != null ? nf(dur / 60, 0) : '', partial ? t('csv.partial') : ''].map(cell).join(sep));
       rows += 1;
     }
     if ((metric === 'energy' || metric === 'money') && recs.length) {
       const d = metric === 'energy' ? 3 : 2;
-      lines.push([t('csv.total'), s.name, nf(a, d), nf(b, d), nf(a - b, d)].map(cell).join(sep));
+      lines.push([t('csv.total'), csvText(s.name), nf(a, d), nf(b, d), nf(a - b, d)].map(cell).join(sep));
     }
   }
   return { text: (comma ? '﻿' : '') + lines.join('\r\n') + '\r\n', rows };
@@ -98,7 +103,7 @@ export function buildSummaryCsv(rows: SummaryRow[], currency: string, periodText
   const sumOf = lines_.length ? lines_ : rows;
   const tot = { inWh: 0, outWh: 0, cost: 0, revenue: 0 };
   for (const r of rows) {
-    lines.push([r.input ? `${r.name} (${t('csv.inputRow')})` : r.name, nf(r.inWh / 1000, 3), nf(r.cost, 2), nf(r.outWh / 1000, 3), nf(r.revenue, 2)].map(cell).join(sep));
+    lines.push([csvText(r.input ? `${r.name} (${t('csv.inputRow')})` : r.name), nf(r.inWh / 1000, 3), nf(r.cost, 2), nf(r.outWh / 1000, 3), nf(r.revenue, 2)].map(cell).join(sep));
   }
   for (const r of sumOf) { tot.inWh += r.inWh; tot.outWh += r.outWh; tot.cost += r.cost; tot.revenue += r.revenue; }
   lines.push([lines_.length && lines_.length < rows.length ? t('csv.totalLines') : t('csv.total'), nf(tot.inWh / 1000, 3), nf(tot.cost, 2), nf(tot.outWh / 1000, 3), nf(tot.revenue, 2)].map(cell).join(sep));

@@ -23,7 +23,8 @@ import {
   DeviceTransport, TransportKind, NotImplementedError, UnsupportedDomainError,
   TokenRole, TokenRoles, SecurityConfig, ApStatus, BackupStatus, RestoreResult, OtaResult, OtaOptions,
 } from './types';
-import { CmdChannel } from './mqtt/CmdChannel';
+import { CmdChannel, CmdRejectedError } from './mqtt/CmdChannel';
+import { extractConfigPayload } from './envelope';
 
 /** ConfigDomain → MQTT cmd section (only the sections the device exposes over cmd). */
 const GET_SECTION: Partial<Record<ConfigDomain, string>> = {
@@ -43,7 +44,11 @@ interface Envelope { data?: unknown; [k: string]: unknown; }
 export class MqttTransport implements DeviceTransport {
   readonly kind: TransportKind = 'mqtt';
 
-  constructor(private readonly cmd: CmdChannel) {}
+  constructor(
+    private readonly cmd: CmdChannel,
+    /** The hub's admin token, for the cmd sets that need one (espnow actions). */
+    private readonly hubToken: () => string | null = () => null,
+  ) {}
 
   private async getSection<T>(section: string, extra: Record<string, unknown> = {}): Promise<T | null> {
     const resp = await this.cmd.request('get', { section, ...extra });
@@ -58,8 +63,11 @@ export class MqttTransport implements DeviceTransport {
   async getConfig(domain: ConfigDomain): Promise<JsonObject> {
     const section = GET_SECTION[domain];
     if (!section) throw new UnsupportedDomainError(domain, this.kind);
-    const resp = await this.cmd.get(section);
-    return ((resp as Envelope).data ?? {}) as JsonObject;
+    // The same three envelope shapes as the HTTP GET (the hub sends the section builder's body
+    // verbatim): {type,…,data} · {system:{…}} · bare — one parser for both transports (Kimi #12).
+    // `id` is the cmd channel's correlation echo, not config.
+    const { id: _id, ...body } = (await this.cmd.get(section)) as Envelope;
+    return extractConfigPayload(body);
   }
 
   async setConfig(domain: ConfigDomain, doc: JsonObject): Promise<void> {
@@ -125,8 +133,20 @@ export class MqttTransport implements DeviceTransport {
   async postOta(_image: ArrayBuffer | Blob, _opts?: OtaOptions): Promise<OtaResult> {
     throw new NotImplementedError('postOta', this.kind);
   }
-  async espnowAction(_action: EspnowAction, _params?: EspnowActionParams): Promise<EspnowActionResult> {
-    throw new NotImplementedError('espnowAction (POST not over cmd)', this.kind);
+  /** fw 1.1.7: `set espnow` with the HTTP body; the ack's `data.reply` is the HTTP reply. */
+  async espnowAction(action: EspnowAction, params: EspnowActionParams = {}): Promise<EspnowActionResult> {
+    const token = this.hubToken();
+    try {
+      const resp = await this.cmd.request('set', { section: 'espnow', data: { action, ...params }, ...(token ? { token } : {}) });
+      const reply = (resp.data as { reply?: EspnowActionResult } | undefined)?.reply;
+      return reply ?? { ok: true };
+    } catch (err) {
+      if (err instanceof CmdRejectedError) {
+        const reply = (err.detail as { reply?: EspnowActionResult } | undefined)?.reply;
+        return reply && typeof reply === 'object' ? { ...reply, ok: false } : { ok: false, message: err.reason };
+      }
+      throw err;
+    }
   }
   async exportCsv(): Promise<Blob | null> {
     throw new NotImplementedError('exportCsv (HTTP-only)', this.kind);
