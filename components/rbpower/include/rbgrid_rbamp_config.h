@@ -79,13 +79,24 @@ typedef struct {
     rbamp_module_cfg_t modules[RBAMP_MAX_MODULES]; ///< Per-module configuration
 } rbamp_bridge_config_t;
 
+#include "sdkconfig.h"
+/** @brief Default rbAmp bus pins: ESP32 SDA 25 / SCL 26; ESP32-S3 has no GPIO25 and its GPIO26 belongs to the
+ *  flash/PSRAM bus, so SDA 8 / SCL 9 there. Changeable in the hub's settings. */
+#if CONFIG_IDF_TARGET_ESP32S3
+#define RBAMP_DEFAULT_SDA_GPIO 8
+#define RBAMP_DEFAULT_SCL_GPIO 9
+#else
+#define RBAMP_DEFAULT_SDA_GPIO 25
+#define RBAMP_DEFAULT_SCL_GPIO 26
+#endif
+
 /**
  * @brief Default fleet config: one single-voltage module at 0x50 — voltage -> unit 0x0007 (voltage bus),
- *        current ch0 (SCT-013-10A, CT code 2) -> unit 0x0006 (main supply); SDA 25 / SCL 26, 1000 ms poll,
+ *        current ch0 (SCT-013-10A, CT code 2) -> unit 0x0006 (main supply); default bus pins, 1000 ms poll,
  *        injection disabled.
  */
 #define RBAMP_BRIDGE_DEFAULT_CONFIG() (rbamp_bridge_config_t){              \
-    .i2c_port = 0, .sda_gpio = 25, .scl_gpio = 26, .internal_pullup = true, \
+    .i2c_port = 0, .sda_gpio = RBAMP_DEFAULT_SDA_GPIO, .scl_gpio = RBAMP_DEFAULT_SCL_GPIO, .internal_pullup = true, \
     .poll_period_ms = 1000, .log_readings = true, .inject_enabled = false,  \
     .current_gain = 1.0f, .voltage_gain = 1.0f, .ct_persist = false,        \
     .drdy_gpio_p1 = 0, .bus1_sda_p1 = 0, .bus1_scl_p1 = 0,                    \

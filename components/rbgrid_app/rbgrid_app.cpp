@@ -1830,7 +1830,8 @@ typedef struct rbgrid_config_context_s rbgrid_config_context_t;   ///< see rbgri
 // build has no rbbench. Drive both banks to 0x00 (relays OFF) as the FIRST thing at boot, before
 // anything else can matter. PCF8574 latches the written value, so it stays OFF after we close the
 // bus. Gated to the no-rbbench build; the debug-bridge build's rbbench already fail-safes the bank.
-#if RBGRID_RBAMP_FLEET && !defined(CONFIG_RBGRID_DEBUG_BRIDGE)
+/* not on ESP32-S3: no GPIO23 and GPIO19 is its USB D-; the load bank is wired to the ESP32 bench hub only */
+#if RBGRID_RBAMP_FLEET && !defined(CONFIG_RBGRID_DEBUG_BRIDGE) && !CONFIG_IDF_TARGET_ESP32S3
 #define RBGRID_BENCH_RELAY_FAILSAFE 1   ///< 1 = drive the test-rig load-bank relays OFF at boot
 /** Drive both PCF8574 load-bank expanders to 0x00 (relays OFF) at boot (see the SAFETY note above). */
 static void bench_relays_failsafe_off(void) {
@@ -2238,18 +2239,17 @@ static void register_espnow_http(void)
     if (!srv) { ESP_LOGW(TAG, "espnow API: no server handle"); return; }
     httpd_uri_t g = { .uri = "/api/v1/espnow", .method = HTTP_GET,  .handler = espnow_http_get,  .user_ctx = NULL };
     httpd_uri_t p = { .uri = "/api/v1/espnow", .method = HTTP_POST, .handler = espnow_http_post, .user_ctx = NULL };
-    httpd_uri_t o = { .uri = "/api/v1/espnow", .method = HTTP_OPTIONS, .handler = espnow_http_post, .user_ctx = NULL };
     /* Register FAILURES must be loud: on a full URI table (max_uri_handlers) these silently fall off and
      * the CORS OPTIONS wildcard turns them into mystery 405s. */
     esp_err_t eg = httpd_register_uri_handler(srv, &g);
     esp_err_t ep = httpd_register_uri_handler(srv, &p);
-    esp_err_t eo = httpd_register_uri_handler(srv, &o);
+    /* CORS preflight: the server's OPTIONS "/*" handler (an exact OPTIONS here was refused as HANDLER_EXISTS) */
     httpd_uri_t prov = { .uri = "/api/system/provisioning", .method = HTTP_GET, .handler = provisioning_http_get, .user_ctx = NULL };
     esp_err_t ev = httpd_register_uri_handler(srv, &prov);
-    if (eg != ESP_OK || ep != ESP_OK || eo != ESP_OK || ev != ESP_OK) {
-        ESP_LOGE(TAG, "espnow/provisioning URI registration FAILED (g=%s p=%s o=%s prov=%s) — "
+    if (eg != ESP_OK || ep != ESP_OK || ev != ESP_OK) {
+        ESP_LOGE(TAG, "espnow/provisioning URI registration FAILED (g=%s p=%s prov=%s) — "
                       "check max_uri_handlers", esp_err_to_name(eg), esp_err_to_name(ep),
-                 esp_err_to_name(eo), esp_err_to_name(ev));
+                 esp_err_to_name(ev));
     }
     ESP_LOGI(TAG, "main-side API registered: GET/POST /api/v1/espnow + GET /api/system/provisioning");
 }

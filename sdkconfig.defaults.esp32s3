@@ -1,0 +1,7 @@
+# ESP32-S3 (module N16R8: 16 MB quad flash + 8 MB octal PSRAM). Loaded on top of sdkconfig.defaults for this target.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+# Dev board: IDF logs on UART0 (GPIO43/44, the board's UART-USB port) for debugging.
+# CONFIG_ESP_CONSOLE_NONE is not set
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
