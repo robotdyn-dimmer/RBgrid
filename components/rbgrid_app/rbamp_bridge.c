@@ -2473,8 +2473,12 @@ esp_err_t rbamp_bridge_start(const rbamp_bridge_config_t *cfg)
     const BaseType_t rbamp_poll_core = 1;  /* core 1 free → dedicate to metering */
     s_running = true;
     rbpower_set_pre_restart_hook(bridge_pre_restart_flush);
+#ifndef CONFIG_RBGRID_POLL_TASK_PRIORITY
+#define CONFIG_RBGRID_POLL_TASK_PRIORITY 1
+#endif
+    /* priority: 1 above idle standalone; a host with its own loop on core 1 (ESPHome) sets it higher */
     if (xTaskCreatePinnedToCore(rbamp_bridge_poll_task, "rbamp_poll", 8192, NULL,
-                                tskIDLE_PRIORITY + 1, &s_task, rbamp_poll_core) != pdPASS) {
+                                tskIDLE_PRIORITY + CONFIG_RBGRID_POLL_TASK_PRIORITY, &s_task, rbamp_poll_core) != pdPASS) {
         ESP_LOGE(TAG, "failed to create poll task");
         s_running = false; err = ESP_ERR_NO_MEM; goto fail_dev;
     }

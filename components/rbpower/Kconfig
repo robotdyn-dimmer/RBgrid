@@ -33,6 +33,15 @@ menu "RBPower Configuration"
             default y
     endmenu
 
+    config RBGRID_POLL_TASK_PRIORITY
+        int "rbAmp poll task priority (above idle)"
+        range 1 10
+        default 1
+        help
+            FreeRTOS priority of the rbAmp metering poll task (core 1), counted above idle. 1 in the standalone
+            firmware, where core 1 is otherwise free. A host that runs its own loop on core 1 (ESPHome: loopTask,
+            priority 1) sets it higher (5), so the poll cadence and the energy timestamps don't wait for the host.
+
     config RBGRID_PANIC_FORENSICS
         bool "Record the crash PC/backtrace in RTC memory for the next boot's event log"
         default y

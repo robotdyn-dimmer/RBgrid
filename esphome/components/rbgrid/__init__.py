@@ -112,6 +112,8 @@ async def to_code(config):
         esp32.add_idf_sdkconfig_option(f"CONFIG_{key}", False)
     esp32.add_idf_sdkconfig_option("CONFIG_RBGRID_NVS_PARTITION", config[CONF_NVS_PARTITION])
     esp32.add_idf_sdkconfig_option("CONFIG_RBGRID_PANIC_FORENSICS", False)   # ESPHome wraps esp_panic_handler itself
+    # rbAmp poll above ESPHome's loopTask (core 1, priority 1): metering cadence never waits for publishing
+    esp32.add_idf_sdkconfig_option("CONFIG_RBGRID_POLL_TASK_PRIORITY", 5)
     # PSRAM is required by the core (big tables live there); the `psram:` component turns it on, these are
     # the allocation rules the standalone firmware uses.
     esp32.add_idf_sdkconfig_option("CONFIG_SPIRAM_USE_MALLOC", True)
