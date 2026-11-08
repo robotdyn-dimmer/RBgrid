@@ -221,15 +221,16 @@ char *rbgrid_units_mutate(rbpower_unit_id_t uid, const char *op, const char *jso
             unsigned v = 0; bool ok = true;
             if (cJSON_IsNull(j)) v = 0;
             else if (cJSON_IsNumber(j) && j->valuedouble >= 0 && j->valuedouble <= 0xFFFF) v = (unsigned)j->valueint;
-            else if (cJSON_IsString(j)) { if (j->valuestring[0] && sscanf(j->valuestring, "%x", &v) != 1) ok = false; }
+            else if (cJSON_IsString(j)) { if (j->valuestring[0] && (sscanf(j->valuestring, "%x", &v) != 1 || v > 0xFFFF)) ok = false; }
             else ok = false;
             const rbpower_unit_definition_t *pd = v ? rbpower_home_get_unit_definition((rbpower_unit_id_t)v) : NULL;
             if (ok && v) {
                 if (v == uid || !pd) ok = false;
+                else if (def->role == RBPOWER_ROLE_MAIN_SUPPLY || def->role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY) ok = false;   /* the input is never inside another point */
                 else if (pd->role == RBPOWER_ROLE_MAIN_SUPPLY || pd->role == RBPOWER_ROLE_ALTERNATIVE_SUPPLY) ok = false;
                 else {   /* walk up from the new parent: reaching this point would make a loop */
                     rbpower_unit_id_t cur = (rbpower_unit_id_t)v;
-                    for (int depth = 0; depth < 16 && cur; depth++) {
+                    for (int depth = 0; depth < 64 && cur; depth++) {
                         if (cur == uid) { ok = false; break; }
                         const rbpower_unit_definition_t *cd = rbpower_home_get_unit_definition(cur);
                         cur = cd ? cd->inside_unit_id : 0;

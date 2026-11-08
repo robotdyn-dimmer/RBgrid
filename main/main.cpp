@@ -3273,6 +3273,10 @@ static rbpower_extended_config_t* app_core_init(void)
         esp_err_t tr = rbgrid_storage_reapply_tariffs();
         ESP_LOGI("MAIN", "Saved tariff plan: %s", tr == ESP_OK ? "applied" : esp_err_to_name(tr));
     }
+    if (have_saved_hw_units) {   /* ESP-NOW node points come back from the registry with default fields */
+        esp_err_t er = rbgrid_storage_reapply_espnow_units();
+        ESP_LOGI("MAIN", "ESP-NOW point edits: %s", esp_err_to_name(er));
+    }
 
     // Persist the DEFAULT sensor+unit config on FIRST boot (no saved files) so it reloads next boot
     // and the web app can edit from it. If config was LOADED from flash, do NOT re-save (preserve user

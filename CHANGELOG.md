@@ -14,11 +14,15 @@
   Needs node firmware 1.5 (older nodes send no records without a voltage module).
 - **A node period longer than 15 minutes** (energy the node counted before it had the hub's clock, e.g. it started
   while the hub was out of reach) is kept: it goes into that period's hour, flagged `OUTAGE`.
+- **Live values from all 4 inputs of a node** (was 3).
+- **Node point edits survive a restart.** Node points are rebuilt from the node list at boot; their name, role,
+  ratings, clamp orientation and `inside` were reset to defaults. They are now re-applied from the saved settings.
 
 ### Points measured inside other points
 - A point can be marked as measured **inside** another one (a charger inside a metered sub-panel):
   `PATCH /api/v1/units/{id}` `{"inside": <point id>}` (number or hex string; 0, "" or null clears). It must be an
-  existing point other than this one, not the input, and not make a loop. `units-config` shows `inside`; deleting
+  existing point other than this one, not the input, and not make a loop; the input itself can't be inside another
+  point. `units-config` shows `inside`; deleting
   a point makes the points inside it top-level. The hub's own totals don't change (they are taken at the input);
   the app uses it so the "unmetered" figure doesn't count a nested load twice. `capabilities.pointNesting: true`.
 

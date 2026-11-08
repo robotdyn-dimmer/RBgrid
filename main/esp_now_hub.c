@@ -531,7 +531,7 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
 
     if (h->msg_type == RBN_MSG_REALTIME && len >= (int)sizeof(rbn_realtime_t)) {
         const rbn_realtime_t *m = (const rbn_realtime_t *)data;
-        int n = m->rec_count; if (n > 3) n = 3;
+        int n = m->rec_count; if (n > ESPNOW_REG_MAX_CH) n = ESPNOW_REG_MAX_CH;
         if (n >= 1 && len >= (int)(sizeof(rbn_realtime_t) + (size_t)n * sizeof(rbn_rt_rec_t))) {
             s_rt_recv++;
             s_last_i0 = m->recs[0].i_rms;
