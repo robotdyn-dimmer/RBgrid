@@ -29,6 +29,9 @@
 ### API
 - `GET /api/v1/schema` → `quality_bits` now names every bit the hub sets: `SRC_RESTART` (9), `SRC_FW` (10),
   `REVERSE_LOST` (11), `OUTAGE` (12), as well as 0–8. Additive.
+- Telemetry: the input's `src` / `src_class` / `present` were taken from the old built-in input id (0006), so an
+  input on an rbAmp module read `src: "adc"`, `present: false` while it was measuring. They now come from the real
+  input point.
 
 ## v1.1.7 — 2026-11-08
 
