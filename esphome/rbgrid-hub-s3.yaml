@@ -91,6 +91,7 @@ rbgrid:
   point_slots: 12           # fixed grid; points take free slots at runtime, no YAML change
   slot_current: true        # + "Point N current" per slot
   slot_devices: true        # each slot's entities under the sub-device rbgrid_point_N (declared above)
+  slot_cost: true           # + per-point cost (monetary, total) for the Energy dashboard
   currency: EUR             # label of the money entities = the tariff plan's currency (HA does not convert)
   power:
     name: "Grid power"

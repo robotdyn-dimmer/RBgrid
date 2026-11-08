@@ -226,6 +226,8 @@ typedef struct {
     float    v_v;           ///< RMS voltage, V (0 = unknown)
     double   e_in_wh;       ///< Lifetime energy in, Wh
     double   e_out_wh;      ///< Lifetime energy out, Wh
+    double   cost_total;    ///< Lifetime cost of the energy in, plan currency
+    double   rev_total;     ///< Lifetime value of the energy out, plan currency
 } rbgrid_point_snap_t;
 
 /**

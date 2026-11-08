@@ -462,6 +462,8 @@ int rbgrid_core_points_snapshot(rbgrid_point_snap_t *out, int max)
         o->v_v = u->realtime_average_200ms.average_200ms.voltage_rms_avg;
         const rbpower_lifetime_accumulators_basic_t *la = &u->statistics.lifetime_accumulators;
         float fin = la->total_energy_consumed_wh, fout = la->total_energy_supplied_wh;
+        o->cost_total = la->total_cost_consumed;
+        o->rev_total = la->total_cost_supplied;
         if (g_home_network.specialized.has_main_supply && uid == g_home_network.system.main_supply_unit_id &&
             g_home_network.specialized.main_supply) {
             rbpower_main_supply_t *ms = (rbpower_main_supply_t *)g_home_network.specialized.main_supply;
@@ -470,6 +472,8 @@ int rbgrid_core_points_snapshot(rbgrid_point_snap_t *out, int max)
                 ms->realtime_200ms.power_active_w;
             fin = ms->lifetime_accumulators.total_energy_consumed_wh;
             fout = ms->lifetime_accumulators.total_energy_supplied_wh;
+            o->cost_total = ms->lifetime_accumulators.total_cost_consumed;
+            o->rev_total = ms->lifetime_accumulators.total_cost_supplied;
         } else if (g_home_network.specialized.has_alternative_supply && uid == g_home_network.system.alternative_supply_unit_id &&
                    g_home_network.specialized.alternative_supply) {
             rbpower_alternative_supply_t *as = (rbpower_alternative_supply_t *)g_home_network.specialized.alternative_supply;
@@ -478,6 +482,8 @@ int rbgrid_core_points_snapshot(rbgrid_point_snap_t *out, int max)
                 as->realtime_200ms.power_active_w;
             fin = as->lifetime_accumulators.total_energy_consumed_wh;
             fout = as->lifetime_accumulators.total_energy_supplied_wh;
+            o->cost_total = as->lifetime_accumulators.total_cost_consumed;
+            o->rev_total = as->lifetime_accumulators.total_cost_supplied;
         }
         o->e_in_wh  = lifetime_wh(uid, true, fin);
         o->e_out_wh = lifetime_wh(uid, false, fout);

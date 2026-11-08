@@ -44,8 +44,8 @@ class RBgridComponent : public Component {
   void set_events(bool on) { events_ = on; }
 
   void add_slot(text_sensor::TextSensor *name, sensor::Sensor *p, sensor::Sensor *ein, sensor::Sensor *eout,
-                sensor::Sensor *cur, sensor::Sensor *volt) {
-    slots_.push_back(Slot{name, p, ein, eout, cur, volt});
+                sensor::Sensor *cur, sensor::Sensor *volt, sensor::Sensor *cost) {
+    slots_.push_back(Slot{name, p, ein, eout, cur, volt, cost});
   }
 
   /// Run one RBgrid command ({"cmd":"get|set|history|unit",...}); returns the device's JSON reply as text.
@@ -75,6 +75,7 @@ class RBgridComponent : public Component {
     sensor::Sensor *energy_out;
     sensor::Sensor *current;   // optional
     sensor::Sensor *voltage;   // optional
+    sensor::Sensor *cost;      // optional
     uint16_t unit{0};
     bool published_empty{false};
   };

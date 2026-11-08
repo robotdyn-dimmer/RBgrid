@@ -48,6 +48,8 @@ CONF_VOLTAGE = "voltage"
 CONF_SLOT_CURRENT = "slot_current"
 CONF_SLOT_VOLTAGE = "slot_voltage"
 CONF_SLOT_DEVICES = "slot_devices"
+CONF_SLOT_COST = "slot_cost"
+CONF_COST = "cost"
 CONF_DEVICE_ID = "device_id"
 CONF_CURRENCY = "currency"
 CONF_ENERGY_DAY_IN = "energy_day_in"
@@ -90,6 +92,7 @@ SLOT_SCHEMA = cv.Schema(
         cv.Required(CONF_ENERGY_OUT): sensor.sensor_schema(**_ENERGY),
         cv.Optional(CONF_CURRENT): sensor.sensor_schema(**_CURRENT),
         cv.Optional(CONF_VOLTAGE): sensor.sensor_schema(**_VOLTAGE),
+        cv.Optional(CONF_COST): cv.valid,   # validated in _system_schema (unit = currency)
     }
 )
 
@@ -121,7 +124,17 @@ def _system_schema(config):
         },
         extra=cv.ALLOW_EXTRA,
     )
-    return schema(config)
+    config = schema(config)
+    slot_cost = sensor.sensor_schema(**_money(cur, True))
+    slots = []
+    for sl in config.get(CONF_SLOTS, []):
+        sl = dict(sl)
+        if CONF_COST in sl:
+            sl[CONF_COST] = slot_cost(sl[CONF_COST])
+        slots.append(sl)
+    if CONF_SLOTS in config:
+        config[CONF_SLOTS] = slots
+    return config
 
 
 def _expand_slots(config):
@@ -131,6 +144,7 @@ def _expand_slots(config):
     with_i = config.pop(CONF_SLOT_CURRENT, True)
     with_v = config.pop(CONF_SLOT_VOLTAGE, False)
     devices = config.pop(CONF_SLOT_DEVICES, False)
+    with_cost = config.pop(CONF_SLOT_COST, False)
     if CONF_SLOTS not in config:
         slots = []
         for i in range(1, n + 1):
@@ -150,6 +164,8 @@ def _expand_slots(config):
                 sl[CONF_CURRENT] = ent("current")
             if with_v:
                 sl[CONF_VOLTAGE] = ent("voltage")
+            if with_cost:
+                sl[CONF_COST] = ent("cost")
             slots.append(sl)
         config[CONF_SLOTS] = slots
     return config
@@ -166,6 +182,7 @@ CONFIG_SCHEMA = cv.All(
                cv.Optional(CONF_SLOT_CURRENT, default=True): cv.boolean,
                cv.Optional(CONF_SLOT_VOLTAGE, default=False): cv.boolean,
                cv.Optional(CONF_SLOT_DEVICES, default=False): cv.boolean,
+               cv.Optional(CONF_SLOT_COST, default=False): cv.boolean,
                cv.Optional(CONF_CURRENCY, default="EUR"): cv.All(cv.string, cv.Length(min=3, max=3))},
               extra=cv.ALLOW_EXTRA),
     _expand_slots,
@@ -253,4 +270,5 @@ async def to_code(config):
         eo = await sensor.new_sensor(slot[CONF_ENERGY_OUT])
         cur = await sensor.new_sensor(slot[CONF_CURRENT]) if CONF_CURRENT in slot else cg.nullptr
         volt = await sensor.new_sensor(slot[CONF_VOLTAGE]) if CONF_VOLTAGE in slot else cg.nullptr
-        cg.add(var.add_slot(name, p, ei, eo, cur, volt))
+        cost = await sensor.new_sensor(slot[CONF_COST]) if CONF_COST in slot else cg.nullptr
+        cg.add(var.add_slot(name, p, ei, eo, cur, volt, cost))

@@ -254,6 +254,7 @@ void RBgridComponent::publish_frame_() {
         sl.energy_out->publish_state(NAN);
         pub_(sl.current, NAN);
         pub_(sl.voltage, NAN);
+        pub_(sl.cost, NAN);
       }
       continue;
     }
@@ -264,6 +265,7 @@ void RBgridComponent::publish_frame_() {
     sl.energy_out->publish_state((float) pt->e_out_wh);
     pub_(sl.current, pt->present ? pt->i_a : NAN);
     pub_(sl.voltage, (pt->present && pt->v_v > 0) ? pt->v_v : NAN);
+    pub_(sl.cost, (float) pt->cost_total);
   }
 }
 

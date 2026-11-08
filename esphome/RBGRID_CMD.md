@@ -108,7 +108,7 @@ Energy and money per stored period, joined on the device:
 | Tariff zone | text |
 | Config version | text, diagnostic |
 | Clock set, Demo tariff | binary, diagnostic |
-| Point N name / power / energy in / energy out / current (voltage optional) | 12 slots; a new point takes the first free slot. With `slot_devices: true` each slot is its own HA device `Point N` (declared under `esphome: devices:` as `rbgrid_point_N`), and its entity names are short: Name, Power, Energy in, Energy out, Current |
+| Point N name / power / energy in / energy out / current (voltage, cost optional: `slot_voltage`, `slot_cost`; cost = monetary, total) | 12 slots; a new point takes the first free slot. With `slot_devices: true` each slot is its own HA device `Point N` (declared under `esphome: devices:` as `rbgrid_point_N`), and its entity names are short: Name, Power, Energy in, Energy out, Current |
 
 Energy in/out **today** also qualify in the Energy dashboard pickers; pick the lifetime Energy in/out there. The first adoption fixes HA's entity ids: ship `friendly_name` (and `slot_devices`) before a device is first added, or the ids stay mixed.
 
