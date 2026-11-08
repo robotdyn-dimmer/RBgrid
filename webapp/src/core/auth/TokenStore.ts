@@ -17,42 +17,86 @@ export interface KeyValueStorage {
   removeItem(key: string): void;
 }
 
+/**
+ * The token belongs to ONE hub (Kimi #1): with a `scope` (the target's origin) each hub keeps its
+ * own slot, so switching hubs — or a `?device=` link to another host — never sends one hub's token
+ * to another. Without a scope (tests, single-target use) there is one slot.
+ */
 export class TokenStore {
-  private token: string | null;
+  private readonly mem = new Map<string, string | null>();
   private readonly storage?: KeyValueStorage;
+  private readonly scope?: () => string;
 
-  constructor(storage?: KeyValueStorage, initial?: string | null) {
+  constructor(storage?: KeyValueStorage, initial?: string | null, scope?: () => string) {
     this.storage = storage;
-    this.token = initial ?? storage?.getItem(STORAGE_KEY) ?? null;
+    this.scope = scope;
+    if (initial !== undefined) this.mem.set(this.key(), initial);
+  }
+
+  private key(): string {
+    const sc = this.scope?.();
+    return sc ? `${STORAGE_KEY}@${sc}` : STORAGE_KEY;
   }
 
   get(): string | null {
-    return this.token;
+    const k = this.key();
+    if (!this.mem.has(k)) this.mem.set(k, this.storage?.getItem(k) ?? null);
+    return this.mem.get(k) ?? null;
   }
 
   has(): boolean {
-    return this.token != null && this.token.length > 0;
+    const t = this.get();
+    return t != null && t.length > 0;
   }
 
   set(token: string): void {
-    this.token = token;
-    this.storage?.setItem(STORAGE_KEY, token);
+    const k = this.key();
+    this.mem.set(k, token);
+    this.storage?.setItem(k, token);
   }
 
   clear(): void {
-    this.token = null;
-    this.storage?.removeItem(STORAGE_KEY);
+    const k = this.key();
+    this.mem.set(k, null);
+    this.storage?.removeItem(k);
   }
 
   /** Authorization header to merge into a request — `{}` when no token is set. */
   authHeader(): Record<string, string> {
-    return this.has() ? { Authorization: `Bearer ${this.token}` } : {};
+    const t = this.get();
+    return t ? { Authorization: `Bearer ${t}` } : {};
   }
 }
 
-/** Default app instance backed by localStorage (guarded for non-browser/test contexts). */
-export function createBrowserTokenStore(): TokenStore {
+/** The origin a token is kept for: the hub's base URL, or the page's own origin when served by the hub. */
+export function tokenScopeOf(baseUrl: string, pageHref?: string): string {
+  try { return new URL(baseUrl || '/', pageHref ?? 'http://localhost/').origin; } catch { return baseUrl; }
+}
+
+/**
+ * One-time move of the pre-1.1.7 global token into the slot of the hub it was saved for (the
+ * persisted connection, never a deep link). Without a persisted hub it is dropped — it can't be
+ * told which hub it belongs to; the app asks for it again.
+ */
+export function migrateLegacyToken(ls: KeyValueStorage, pageHref?: string): void {
+  const legacy = ls.getItem(STORAGE_KEY);
+  if (legacy == null) return;
+  try {
+    const conn = JSON.parse(ls.getItem('rbgrid.connection') ?? 'null') as { baseUrl?: string; demo?: boolean } | null;
+    if (conn && !conn.demo && typeof conn.baseUrl === 'string') {
+      const k = `${STORAGE_KEY}@${tokenScopeOf(conn.baseUrl, pageHref)}`;
+      if (ls.getItem(k) == null) ls.setItem(k, legacy);
+    }
+  } catch { /* unreadable connection → drop */ }
+  ls.removeItem(STORAGE_KEY);
+}
+
+/** Default app instance backed by localStorage (guarded for non-browser/test contexts), one slot per hub. */
+export function createBrowserTokenStore(scope?: () => string): TokenStore {
   const ls: KeyValueStorage | undefined =
     typeof window !== 'undefined' && window.localStorage ? window.localStorage : undefined;
-  return new TokenStore(ls);
+  if (ls && scope) {
+    try { migrateLegacyToken(ls, window.location?.href); } catch { /* storage blocked */ }
+  }
+  return new TokenStore(ls, undefined, scope);
 }

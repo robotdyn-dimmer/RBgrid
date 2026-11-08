@@ -42,7 +42,12 @@ const dark = {
   shadowPop: '0 8px 24px rgba(0,0,0,0.45)',
 } as const;
 
-const light: Record<keyof typeof dark, any> = {
+/** A palette's shape: dark's keys with widened value types — both themes are checked against it
+ *  (Kimi #22: `any` + `as Palette` let a wrong-typed light value through). */
+type Widen<T> = T extends string ? string : T extends readonly (infer U)[] ? readonly Widen<U>[] : T;
+export type Palette = { readonly [K in keyof typeof dark]: Widen<(typeof dark)[K]> };
+
+const light: Palette = {
   bg: '#f3f5f8',
   surface: '#ffffff',
   surfaceRaised: '#f8fafc',
@@ -79,8 +84,7 @@ const light: Record<keyof typeof dark, any> = {
   shadowPop: '0 8px 24px rgba(17,24,39,0.12)',
 };
 
-export type Palette = typeof dark;
-export const palettes: Record<ThemeMode, Palette> = { dark, light: light as Palette };
+export const palettes: Record<ThemeMode, Palette> = { dark, light };
 
 export const type = {
   family: {

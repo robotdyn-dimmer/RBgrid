@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.7 — unreleased
+## v1.1.7 — 2026-11-08
 
 ### Stored data survives faults
 An independent code review of v1.1.6/1.1.7-dev looked for ways a fault could lose or double energy, or reset the hub's
@@ -66,6 +66,8 @@ into the image. `GET /api/v1/espnow` reports `keys:true` and where the key came 
   `periods_recv`, `periods_injected`, `periods_dropped`, `periods_dup`; they now count over the whole boot.
 - A deleted node point stays deleted after a restart, and data the node still sends for it is ignored.
 - An update over the air while nodes are connected no longer restarts the hub by its watchdog.
+- **Node firmware is published** in `node/` (ESP32, 4 MB flash, no PSRAM; rbAmp modules on I2C). Build, flash and
+  pairing: `node/README.md`. It needs no key file: the node gets its key when paired.
 
 ### Platform
 - **ESP-IDF 5.5.1** (was 5.4.1). An update over the air from earlier versions works with the boot loader already on
@@ -73,6 +75,10 @@ into the image. `GET /api/v1/espnow` reports `keys:true` and where the key came 
   crash under bus faults) are carried over: 5.5.1 does not have them yet.
 - The metering core is now separate from the web server and MQTT code (the same functions serve HTTP, MQTT and
   later other hosts). The API does not change.
+
+### Web app 1.1.7
+Source in `webapp/` (`rbgrid-ui_v1.1.7.zip` is the built app). Nodes section on the Points page, the live-stream
+ticket, restore-point messages, the hub token kept per hub, and many fixes. Full list: `webapp/CHANGELOG.md`.
 
 ### Smaller fixes
 - The SNTP sync callback no longer skips the clock-step check and the flush of records kept before the first sync

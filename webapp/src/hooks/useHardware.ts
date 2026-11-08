@@ -16,24 +16,31 @@ let hw: Hw = EMPTY;
 let key = '';
 let at = 0;
 let inflight = false;
+// The connection's generation: a read started for hub A that answers after a switch to B is
+// dropped, and B's read isn't held back by A's (Kimi #15).
+let gen = 0;
 const subs = new Set<() => void>();
 
 async function refresh(): Promise<void> {
   if (inflight) return;
   inflight = true;
+  const my = gen;
   const k = isDemo() ? 'demo' : getBaseUrl();
   try {
-    if (isDemo()) hw = { sensors: demoSensors(), modules: demoSensorModules() };
+    let next: Hw;
+    if (isDemo()) next = { sensors: demoSensors(), modules: demoSensorModules() };
     else {
       const r = await getApiClient().getSensors();
-      hw = { sensors: r.data?.sensors ?? [], modules: Array.isArray(r.data?.modules) ? r.data.modules : [] };
+      next = { sensors: r.data?.sensors ?? [], modules: Array.isArray(r.data?.modules) ? r.data.modules : [] };
     }
+    if (my !== gen) return;
+    hw = next;
     key = k; at = Date.now();
     subs.forEach((f) => f());
-  } catch { /* 503 while the hub boots / offline — keep the last copy, retry on next read */ } finally { inflight = false; }
+  } catch { /* 503 while the hub boots / offline — keep the last copy, retry on next read */ } finally { if (my === gen) inflight = false; }
 }
 
-onConnectionChange(() => { hw = EMPTY; key = ''; at = 0; subs.forEach((f) => f()); });
+onConnectionChange(() => { gen++; inflight = false; hw = EMPTY; key = ''; at = 0; subs.forEach((f) => f()); });
 
 function subscribe(cb: () => void): () => void {
   subs.add(cb);

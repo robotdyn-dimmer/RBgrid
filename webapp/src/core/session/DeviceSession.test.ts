@@ -241,3 +241,49 @@ describe('loadDomain — one request in flight (3φ audit H3P-03)', () => {
     expect(n).toBe(2);
   });
 });
+
+/** Kimi #14: write → reboot → the hub comes back → the awaiting-reboot job is closed. */
+describe('DeviceSession.reconcileAfterReboot', () => {
+  const noSleep = async () => undefined;
+  it('resolves once the hub is back with the written value', async () => {
+    const t = new FakeTransport({ hardware: { adc: 1 } });
+    t.answer = { requiresReboot: true };
+    const s = new DeviceSession({ transport: t, clock: fixedClock });
+    await s.loadDomain('hardware');
+    s.edit('hardware', 'adc', 2);
+    const job = (await s.applyDomain('hardware'))!;
+    expect(s.jobs.jobs.find((j) => j.id === job.id)?.status).toBe('awaiting-reboot');
+    // The hub is down for two polls.
+    const get = t.getConfig.bind(t);
+    let down = 2;
+    t.getConfig = async (d) => { if (down-- > 0) throw new Error('offline'); return get(d); };
+    const r = await s.reconcileAfterReboot({ sleep: noSleep });
+    expect(r).toEqual({ applied: ['hardware'], notApplied: [] });
+    expect(s.jobs.jobs.find((j) => j.id === job.id)?.status).toBe('succeeded');
+    expect(s.current.get('hardware').hasChanges).toBe(false);
+  });
+  it('fails when the hub came back with another value', async () => {
+    const t = new FakeTransport({ hardware: { adc: 1 } });
+    t.answer = { requiresReboot: true };
+    const s = new DeviceSession({ transport: t, clock: fixedClock });
+    await s.loadDomain('hardware');
+    s.edit('hardware', 'adc', 2);
+    const job = (await s.applyDomain('hardware'))!;
+    t.getConfig = async () => ({ adc: 1 }); // reverted at boot
+    const r = await s.reconcileAfterReboot({ sleep: noSleep });
+    expect(r.notApplied).toEqual(['hardware']);
+    expect(s.jobs.jobs.find((j) => j.id === job.id)?.status).toBe('failed');
+  });
+  it('fails when the hub never answers before the deadline', async () => {
+    let now = 0;
+    const t = new FakeTransport({ hardware: { adc: 1 } });
+    t.answer = { requiresReboot: true };
+    const s = new DeviceSession({ transport: t, clock: () => now });
+    await s.loadDomain('hardware');
+    s.edit('hardware', 'adc', 2);
+    await s.applyDomain('hardware');
+    t.getConfig = async () => { throw new Error('offline'); };
+    const r = await s.reconcileAfterReboot({ sleep: async (ms) => { now += ms; }, waitMs: 10_000 });
+    expect(r.notApplied).toEqual(['hardware']);
+  });
+});

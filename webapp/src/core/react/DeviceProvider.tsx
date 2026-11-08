@@ -9,14 +9,15 @@
  * reconciliation) and beyond. Built + typed now so that work is a wiring step, not a
  * design step.
  */
-import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { JsonObject } from '../json';
 import { DeviceCapabilities } from '../schema/capabilities';
 import { ConfigDomain, ConfigShadow } from '../shadow/ConfigShadow';
 import { Job } from '../jobs/JobTracker';
 import { DeviceTransport, DeviceTarget } from '../transport/types';
 import { createTransport } from '../transport/TransportRouter';
-import { getTransportKind, getBaseUrl, getBrokerUrl, getDeviceMac } from '../../services/connection';
+import { getTransportKind, getBaseUrl, getBrokerUrl, getDeviceMac, isDemo } from '../../services/connection';
+import { setWsAuthSource } from '../../services/websocket';
 import { DeviceSession } from '../session/DeviceSession';
 import { installBearerAuth } from '../auth/authWiring';
 import { provisioningView, ProvisioningView, EMPTY_PROVISIONING_STATUS } from '../provisioning/ProvisioningFSM';
@@ -33,6 +34,20 @@ const DeviceSessionContext = createContext<DeviceSession | null>(null);
  */
 const SessionVersionContext = createContext(0);
 
+/** One capability discovery per session, shared by the provider and the socket's ticket source. */
+const readyOf = new WeakMap<DeviceSession, Promise<DeviceCapabilities | null>>();
+function ensureReady(session: DeviceSession): Promise<DeviceCapabilities | null> {
+  let p = readyOf.get(session);
+  if (!p) { p = session.init().catch(() => null); readyOf.set(session, p); }
+  return p;
+}
+
+function installWsAuth(session: DeviceSession): void {
+  const tr = session.transport;
+  if (!tr.getWsTicket || isDemo()) return;
+  setWsAuthSource(async () => ((await ensureReady(session))?.flags.wsTicket ? { ticket: await tr.getWsTicket!() } : 'token'));
+}
+
 export const DeviceProvider: React.FC<{
   /** Override the transport (tests / MQTT). Defaults to the Direct backend. */
   transport?: DeviceTransport;
@@ -44,10 +59,16 @@ export const DeviceProvider: React.FC<{
     const target: DeviceTarget = getTransportKind() === 'mqtt'
       ? { kind: 'mqtt', brokerUrl: getBrokerUrl(), deviceMac: getDeviceMac() }
       : { kind: 'direct', baseUrl: getBaseUrl() };
-    sessionRef.current = new DeviceSession({
+    const session = new DeviceSession({
       transport: transport ?? createTransport(target),
       onChange: () => tick(),
     });
+    sessionRef.current = session;
+    // The telemetry socket asks for a one-time ticket where the hub hands them out (Kimi #7, root
+    // ws-token-handshake). Installed HERE, before any child mounts: child effects run before this
+    // provider's, and the first connect fell back to ?token= (root ws-ticket-app-check, step 1).
+    // It waits for the capabilities, so even the first URL never carries the token on such a hub.
+    installWsAuth(session);
   }
 
   // On mount: install Bearer auth on the Direct transport and discover capabilities.
@@ -55,8 +76,9 @@ export const DeviceProvider: React.FC<{
   useEffect(() => {
     installBearerAuth();
     const session = sessionRef.current;
-    session?.init().catch(() => undefined);
+    if (session) { installWsAuth(session); void ensureReady(session); } // again after a StrictMode remount
     session?.loadProvisioning().catch(() => undefined);
+    return () => setWsAuthSource(null);
   }, []);
 
   return (
@@ -160,18 +182,19 @@ export function useSummary(unit: string | null, period: SummaryPeriod): AsyncRea
   return { data, loading, reload: () => setNonce((n) => n + 1) };
 }
 
-/** ESP-NOW topology (hub + nodes), with a reload. */
-export function useEspnow(): AsyncRead<EspnowStatus> & { reloadNow: () => Promise<void> } {
+/** ESP-NOW topology (hub + nodes), with a reload. `reloadNow(true)` is a quiet poll: no loading
+ *  state, and a failed read keeps the last answer. */
+export function useEspnow(): AsyncRead<EspnowStatus> & { reloadNow: (quiet?: boolean) => Promise<void> } {
   const session = useDeviceSession();
   const [data, setData] = useState<EspnowStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [nonce, setNonce] = useState(0);
-  const fetchNow = async () => {
-    setLoading(true);
-    try { setData(await session.transport.getEspnow()); }
-    catch { setData(null); }
-    finally { setLoading(false); }
-  };
+  const fetchNow = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    try { const d = await session.transport.getEspnow(); if (d || !quiet) setData(d); }
+    catch { if (!quiet) setData(null); }
+    finally { if (!quiet) setLoading(false); }
+  }, [session]);
   useEffect(() => {
     let on = true;
     setLoading(true);

@@ -49,19 +49,39 @@ export function partitionByTime<T extends { ts: number }>(records: T[]): { dated
  * in `ts_end`, and every consumer (window sums, hour slots, labels, CSV) stays start-based.
  */
 const PERIOD_SPAN: Record<string, number> = { hour: 3600, day: 86400, week: 7 * 86400, month: 28 * 86400, year: 365 * 86400 };
+/** The longest a closed bucket legitimately covers: a 25 h clock-change day, a 31-day month, a leap year. */
+const MAX_SPAN: Record<string, number> = { hour: 3600, day: 25 * 3600, week: 7 * 86400 + 3600, month: 31 * 86400 + 3600, year: 366 * 86400 };
+const NOMINAL: Record<string, number> = { hour: 3600, day: 86400, week: 7 * 86400, month: 30 * 86400, year: 365 * 86400 };
 
-/** Interval start of a record (seconds). `dur` is capped by the period, so an over-long bucket
- *  (an anomalous 4500 s hour) or a closing a few seconds late never lands in a neighbour. */
-export function intervalStart(r: { ts: number; dur?: number }, period: string): number {
+/** The hub's calendar, as much of it as interval starts need (a DeviceClock fits). */
+export interface RecordCalendar {
+  parts: (tsSec: number) => { y: number; mo: number; d: number };
+  dayStart: (tsSec: number) => number;
+}
+
+/** Interval start of a record (seconds).
+ *  hour: `ts − dur`, `dur` capped at an hour, so an anomalous 4500 s hour never lands in a neighbour.
+ *  day / week / month / year: the calendar start (the hub's clock) of the bucket the record covers —
+ *  months are 28–31 days and clock-change days 23/25 h, so a fixed length put a 31-day month's start
+ *  on the 4th and a year filter from 1 January dropped it (Kimi #3). The middle of the covered span
+ *  picks the bucket, so a closing a few seconds late or a partial bucket still lands in its own. */
+export function intervalStart(r: { ts: number; dur?: number }, period: string, cal?: RecordCalendar): number {
   if (!isWallClockTs(r.ts)) return r.ts;
-  const span = PERIOD_SPAN[period] ?? 3600;
-  const dur = typeof r.dur === 'number' && r.dur > 0 ? Math.min(r.dur, span) : span;
-  return r.ts - dur;
+  const max = MAX_SPAN[period] ?? 3600;
+  const dur = typeof r.dur === 'number' && r.dur > 0 ? Math.min(r.dur, max) : (NOMINAL[period] ?? 3600);
+  if (period === 'hour' || !(period in MAX_SPAN)) return r.ts - Math.min(dur, 3600);
+  const mid = r.ts - dur / 2;
+  if (!cal) return r.ts - dur;
+  if (period === 'day') return cal.dayStart(mid);
+  if (period === 'week') return cal.dayStart(r.ts - dur + 43200);
+  const p = cal.parts(mid);
+  // Noon of the 1st → that day's local midnight (as historyWindow.monthStart).
+  return cal.dayStart(Date.UTC(p.y, period === 'year' ? 0 : p.mo - 1, 1, 12) / 1000);
 }
 
 /** Records with `ts` = interval start (wire `ts` kept as `ts_end`); idempotent. */
-export function toIntervalStarts<T extends { ts: number; dur?: number; ts_end?: number }>(records: T[], period: string): T[] {
-  return records.map((r) => (r.ts_end !== undefined ? r : { ...r, ts: intervalStart(r, period), ts_end: r.ts }));
+export function toIntervalStarts<T extends { ts: number; dur?: number; ts_end?: number }>(records: T[], period: string, cal?: RecordCalendar): T[] {
+  return records.map((r) => (r.ts_end !== undefined ? r : { ...r, ts: intervalStart(r, period, cal), ts_end: r.ts }));
 }
 
 /** A wire query for the window [from, to) in interval starts: the records CLOSE in (from, to + one bucket]. */

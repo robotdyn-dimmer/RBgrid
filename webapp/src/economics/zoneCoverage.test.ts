@@ -59,3 +59,36 @@ describe('tariff zones over the week (W2-3, firmware rules)', () => {
     expect(zoneRange(z('NIGHT', 23, 7))).toEqual({ start: 1380, end: 420 });
   });
 });
+
+import { parseHhmm } from './zoneCoverage';
+
+describe('parseHhmm — 24:00 is the only 24:mm (Kimi #20)', () => {
+  it.each([['23:59', 1439], ['24:00', 1440], ['0:30', 30], ['24:01', null], ['24:30', null], ['25:00', null], ['12:60', null]])('%s', (s, v) => {
+    expect(parseHhmm(s)).toBe(v);
+  });
+});
+
+import { hitsAt } from './zoneCoverage';
+
+describe('zone conditions one by one, as the hub (Kimi review)', () => {
+  const tr = (sh: number, eh: number) => ({ condition_type: 'TIME_RANGE', is_active: true, priority: 10, params: { start_hour: sh, start_minute: 0, end_hour: eh, end_minute: 0, spans_midnight: false } });
+  const wd = (mask: number) => ({ condition_type: 'WEEKDAY', is_active: true, priority: 10, params: { weekday_mask: mask } });
+  const zone = (o: Record<string, unknown>) => ({ zone_id: 'EVENING_PEAK', is_enabled: true, ...o }) as never;
+  it('two time ranges OR-ed: both windows are the zone', () => {
+    const z = [zone({ conditions_and_logic: false, conditions: [tr(7, 9), tr(17, 20)] })];
+    expect(hitsAt(z, 0, 8 * 60).win).toBe(0);
+    expect(hitsAt(z, 0, 18 * 60).win).toBe(0);
+    expect(hitsAt(z, 0, 12 * 60).win).toBe(-1);
+  });
+  it('two weekday masks OR-ed: either day set', () => {
+    const z = [zone({ conditions_and_logic: false, conditions: [wd(0x01), wd(0x10)] })]; // Mon | Fri
+    expect(hitsAt(z, 0, 600).win).toBe(0);
+    expect(hitsAt(z, 4, 600).win).toBe(0);
+    expect(hitsAt(z, 2, 600).win).toBe(-1);
+  });
+  it('AND: time × days', () => {
+    const z = [zone({ conditions: [tr(17, 20), wd(0x1f)] })];
+    expect(hitsAt(z, 1, 18 * 60).win).toBe(0);
+    expect(hitsAt(z, 6, 18 * 60).win).toBe(-1);
+  });
+});

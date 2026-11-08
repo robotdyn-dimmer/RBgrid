@@ -31,6 +31,13 @@ export function ctRatingA(ctCode: number | undefined, models: Record<number, str
   return Number.isFinite(a) && a > 0 ? a : null;
 }
 
+/** The CT list by rating; a channel's current model stays listed even if the hub dropped it. */
+export function ctOptions(models: Record<number, string>, current: number): [number, string][] {
+  const list = Object.entries(models).map(([k, v]) => [Number(k), v] as [number, string]);
+  if (!list.some(([k]) => k === current)) list.push([current, `#${current}`]);
+  return list.sort((a, b) => (ctRatingA(a[0], models) ?? 999) - (ctRatingA(b[0], models) ?? 999));
+}
+
 /**
  * Sensor class (62f1c9a2, root 18.10): 0 = the module isn't calibrated (no sensor choice),
  * 1 = SCT- (the user's SCT-013, chosen per channel, written into the module), 2 = CT- (factory

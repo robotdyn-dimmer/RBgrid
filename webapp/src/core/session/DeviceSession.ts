@@ -296,6 +296,43 @@ export class DeviceSession {
    * (wizard on a fresh hub 17.10, W191-02: a read-only «time» edit blocked the site name too).
    * Throws an ApplyAllError naming every domain that didn't apply, after trying them all.
    */
+  /**
+   * Close the jobs left `awaiting-reboot` once the hub is back (Kimi #14: they stayed active and
+   * the delta «written, applies after a reboot» never cleared). Waits `graceMs` for the restart to
+   * begin, polls until a config read answers (≤ `waitMs`), re-reads each domain and resolves the
+   * job when its delta emptied — fails it when the hub kept another value or never came back.
+   */
+  async reconcileAfterReboot(opts: { graceMs?: number; pollMs?: number; waitMs?: number; sleep?: (ms: number) => Promise<void> } = {}): Promise<{ applied: ConfigDomain[]; notApplied: ConfigDomain[] }> {
+    const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const pending = this.jobs.jobs.filter((j) => j.status === 'awaiting-reboot' && j.detail?.domain);
+    const domains = Array.from(new Set(pending.map((j) => j.detail!.domain as ConfigDomain)));
+    if (!domains.length) return { applied: [], notApplied: [] };
+    await sleep(opts.graceMs ?? 8000);
+    const deadline = this.clock() + (opts.waitMs ?? 120_000);
+    let back = false;
+    while (!back) {
+      try { await this.loadDomain(domains[0]); back = true; } catch {
+        if (this.clock() >= deadline) break;
+        await sleep(opts.pollMs ?? 3000);
+      }
+    }
+    const applied: ConfigDomain[] = [];
+    const notApplied: ConfigDomain[] = [];
+    for (const d of domains) {
+      let ok = back;
+      if (ok && d !== domains[0]) { try { await this.loadDomain(d); } catch { ok = false; } }
+      ok = ok && !this.shadow.get(d).hasChanges;
+      (ok ? applied : notApplied).push(d);
+      for (const j of pending) {
+        if (j.detail?.domain !== d) continue;
+        if (ok) this.jobs.resolve(j.id);
+        else this.jobs.fail(j.id, back ? 'not applied after the restart' : 'the hub did not come back');
+      }
+    }
+    this.notify();
+    return { applied, notApplied };
+  }
+
   /** Did any of these (just applied) jobs end up waiting for a reboot? */
   awaitingReboot(applied: readonly Job[]): boolean {
     const ids = new Set(applied.map((j) => j.id));

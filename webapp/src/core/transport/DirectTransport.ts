@@ -21,7 +21,7 @@
 import axios from 'axios';
 import { getApiClient } from '../../services/api';
 import { getBaseUrl, isDemo, deviceSameOrigin } from '../../services/connection';
-import { JsonObject, JsonValue } from '../json';
+import { JsonObject } from '../json';
 import { ConfigDomain } from '../shadow/ConfigShadow';
 import { RawSchema } from '../schema/capabilities';
 import { ProvisioningStatus } from '../provisioning/ProvisioningFSM';
@@ -30,6 +30,7 @@ import { EspnowStatus, EspnowAction, EspnowActionParams, EspnowActionResult } fr
 import { mockSchema, mockProvisioning, mockConfig, mockEconomics, mockSummary, mockEspnow } from '../mocks';
 import { demoAdjustUnitsConfig, demoExportCsv } from '../../mock/demo';
 import { tokenStore } from '../auth/authWiring';
+import { extractConfigPayload } from './envelope';
 import {
   DeviceTransport, TransportKind, UnsupportedDomainError, TokenRole, TokenRoles, SecurityConfig, ApStatus,
   BackupStatus, RestoreResult, OtaResult, OtaOptions, SetConfigResult,
@@ -47,30 +48,8 @@ const CONFIG_DOMAIN_PATH: Partial<Record<ConfigDomain, string>> = {
   wifi: '/api/system/wifi-config',
 };
 
-const ENVELOPE_META = new Set(['type', 'version', 'device_id', 'timestamp_local', 'timestamp_ntp']);
-
-/** Normalize a config GET body to its inner config object across the device's 3 shapes. */
-export function extractConfigPayload(body: unknown): JsonObject {
-  if (!body || typeof body !== 'object') return {};
-  const obj = body as Record<string, unknown>;
-  const keys = Object.keys(obj).filter((k) => !ENVELOPE_META.has(k));
-  // 1) {type,…,data:{…}} — the common base-wrapper. Sibling keys next to `data` are merged in
-  //    without overriding it (telemetry-config puts its writable `profile` at the ROOT).
-  if (obj.data && typeof obj.data === 'object' && !Array.isArray(obj.data)) {
-    const inner = { ...(obj.data as JsonObject) };
-    for (const k of keys) if (k !== 'data' && !(k in inner)) inner[k] = obj[k] as JsonValue;
-    return inner;
-  }
-  // 2) {<section>:{…}} — a single nested object (e.g. system-config → {system:{…}})
-  if (keys.length === 1) {
-    const only = obj[keys[0]];
-    if (only && typeof only === 'object' && !Array.isArray(only)) return only as JsonObject;
-  }
-  // 3) bare object (e.g. mqtt-config {broker_uri,…}) — strip envelope meta, return the rest
-  const rest: JsonObject = {};
-  for (const k of keys) rest[k] = obj[k] as JsonValue;
-  return rest;
-}
+// The envelope parser is shared with the MQTT transport (one parser for both, Kimi #12).
+export { extractConfigPayload } from './envelope';
 
 const DEMO_CONFIG_KEY = 'rbgrid.demo.config';
 /** Demo restore point (in-memory, one slot like the hub). */
@@ -179,7 +158,7 @@ export class DirectTransport implements DeviceTransport {
     try {
       const res = await axios.get<ProvisioningStatus | { data: ProvisioningStatus }>(
         `${base}/api/system/provisioning`,
-        { timeout: 5000 },
+        { headers: tokenStore.authHeader(), timeout: 5000 },
       );
       const body = res.data as ProvisioningStatus & { data?: ProvisioningStatus };
       return (body.data ?? body) as ProvisioningStatus;
@@ -205,6 +184,15 @@ export class DirectTransport implements DeviceTransport {
     await axios.post(`${base}/api/system/telemetry-config`, { profile }, {
       headers: tokenStore.authHeader(), timeout: 5000,
     });
+  }
+
+  async getWsTicket(): Promise<string> {
+    const res = await axios.post<{ ticket?: string; data?: { ticket?: string } }>(`${getBaseUrl()}/api/v1/ws-ticket`, undefined, {
+      headers: tokenStore.authHeader(), timeout: 5000,
+    });
+    const ticket = res.data?.ticket ?? res.data?.data?.ticket;
+    if (!ticket) throw new Error('no ticket');
+    return ticket;
   }
 
   async getTokenStatus(): Promise<boolean> {
@@ -255,12 +243,20 @@ export class DirectTransport implements DeviceTransport {
     if (isDemo()) return { ...demoAp };
     const base = getBaseUrl();
     if (!base) return null;
+    // /ap needs the ADMIN token: with a read token it is 403 on every load (root ws-ticket-app-recheck).
+    // Once refused, this tab doesn't ask again with the same token (a fingerprint, never the token).
+    const key = `rbgrid.apForbidden@${base}`;
+    const fp = tokenFingerprint(tokenStore.get());
+    try { if (sessionStorage.getItem(key) === fp) return null; } catch { /* storage blocked */ }
     try {
       const res = await axios.get<Record<string, unknown>>(`${base}/api/system/ap`, { headers: tokenStore.authHeader(), timeout: 5000 });
       const body = (res.data.data ?? res.data) as { ssid?: string; user_set?: boolean; per_device?: boolean };
       // `per_device` = the older name of the same flag (root 20.10).
       return { ssid: String(body.ssid ?? ''), userSet: Boolean(body.user_set ?? body.per_device) };
-    } catch {
+    } catch (e) {
+      if ((e as { response?: { status?: number } })?.response?.status === 403) {
+        try { sessionStorage.setItem(key, fp); } catch { /* storage blocked */ }
+      }
       return null;
     }
   }
@@ -311,8 +307,8 @@ export class DirectTransport implements DeviceTransport {
       const res = await axios.get<Record<string, unknown>>(`${base}/api/system/backup`, {
         headers: tokenStore.authHeader(), timeout: 5000,
       });
-      const b = (res.data.data ?? res.data) as { exists?: boolean; files?: number; meta?: BackupStatus['meta'] };
-      return { exists: Boolean(b.exists), files: Number(b.files ?? 0), meta: b.meta };
+      const b = (res.data.data ?? res.data) as { exists?: boolean; files?: number; sealed?: unknown; meta?: BackupStatus['meta'] };
+      return { exists: Boolean(b.exists), files: Number(b.files ?? 0), meta: b.meta, ...(typeof b.sealed === 'boolean' ? { sealed: b.sealed } : {}) };
     } catch {
       return null;
     }
@@ -386,14 +382,21 @@ export class DirectTransport implements DeviceTransport {
   }
 
   async espnowAction(action: EspnowAction, params: EspnowActionParams = {}): Promise<EspnowActionResult> {
-    if (isDemo()) return { ok: true, reboot_to_register: action === 'pair' || action === 'add' };
+    if (isDemo()) return { ok: true, reboot_to_register: action === 'add' };
     const base = getBaseUrl();
     if (!base) return { ok: false, message: 'not connected' };
-    const res = await axios.post<EspnowActionResult>(
-      `${base}/api/v1/espnow`, { action, ...params },
-      { headers: tokenStore.authHeader(), timeout: 5000 },
-    );
-    return res.data;
+    try {
+      const res = await axios.post<EspnowActionResult>(
+        `${base}/api/v1/espnow`, { action, ...params },
+        { headers: tokenStore.authHeader(), timeout: 5000 },
+      );
+      return res.data;
+    } catch (err) {
+      // fw 1.1.7 refuses with {ok:false, error, message} on 400/409/503 — that's an answer, not a lost request.
+      const data = (err as { response?: { data?: unknown } }).response?.data as EspnowActionResult | undefined;
+      if (data && typeof data === 'object' && data.ok === false) return data;
+      throw err;
+    }
   }
 
   async exportCsv(params: { unit: string; period: string; type: string; from?: number; to?: number }): Promise<Blob | null> {
@@ -417,7 +420,9 @@ export class DirectTransport implements DeviceTransport {
     const base = getBaseUrl();
     if (!base) return null;
     try {
-      const res = await axios.get<T | { data: T }>(`${base}${path}`, { params, timeout: 5000 });
+      // economics/summary/espnow are gated data reads once a READ token is armed (rbapi_require_read):
+      // without the Bearer they 401 and read as «no data» (Kimi #2).
+      const res = await axios.get<T | { data: T }>(`${base}${path}`, { params, headers: tokenStore.authHeader(), timeout: 5000 });
       const body = res.data as T & { data?: T };
       return (body.data ?? body) as T;
     } catch {
@@ -425,6 +430,13 @@ export class DirectTransport implements DeviceTransport {
     }
   }
 
+}
+
+/** A short non-reversible fingerprint of the token (FNV-1a) — plain http has no crypto.subtle. */
+function tokenFingerprint(token: string | null): string {
+  let h = 0x811c9dc5;
+  for (const ch of token ?? '') { h ^= ch.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16);
 }
 
 /** Thrown when a telemetry doc has no writable `profile` (the only POSTable telemetry field). */

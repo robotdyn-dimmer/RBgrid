@@ -90,3 +90,41 @@ describe('CmdChannel', () => {
     expect((await p).data).toEqual({ result: 'ok' });
   });
 });
+
+import { CmdRejectedError } from './CmdChannel';
+
+describe('CmdChannel — review fixes (Kimi #9–#11)', () => {
+  it('#9 an error cmd_ack rejects (a refused SET is not a success)', async () => {
+    const mqtt = new FakeMqtt();
+    const p = new CmdChannel(mqtt, ROOT).set('tariff', {});
+    const { id } = mqtt.lastCmd;
+    mqtt.deliver('rbgrid/aabbcc/cmd/resp', JSON.stringify({ id, type: 'cmd_ack', data: { cmd: 'set', section: 'tariff', result: 'error', message: 'unauthorized: admin token required' } }));
+    await expect(p).rejects.toBeInstanceOf(CmdRejectedError);
+  });
+  it('#9 an ok cmd_ack resolves', async () => {
+    const mqtt = new FakeMqtt();
+    const p = new CmdChannel(mqtt, ROOT).set('tariff', {});
+    mqtt.deliver('rbgrid/aabbcc/cmd/resp', JSON.stringify({ id: mqtt.lastCmd.id, type: 'cmd_ack', data: { result: 'ok' } }));
+    await expect(p).resolves.toBeTruthy();
+  });
+  it('#11 two browsers on one hub never share a request id', () => {
+    const mqtt = new FakeMqtt();
+    void new CmdChannel(mqtt, ROOT).get('system');
+    void new CmdChannel(mqtt, ROOT).get('system');
+    const [a, b] = mqtt.published.map((m) => JSON.parse(m.payload).id);
+    expect(a).not.toBe(b);
+  });
+  it('#10 a command still queued at the timeout is taken back, never sent late', async () => {
+    let fire: () => void = () => undefined;
+    const queue: string[] = [];
+    const lazy: MqttLike = {
+      publish: (_t, payload) => { queue.push(payload); return () => { queue.splice(queue.indexOf(payload), 1); }; },
+      subscribe: () => () => undefined,
+    };
+    const p = new CmdChannel(lazy, ROOT, { setTimeoutFn: (fn) => { fire = fn; return 1; }, clearTimeoutFn: () => undefined }).set('units', {});
+    expect(queue).toHaveLength(1);
+    fire();
+    await expect(p).rejects.toBeInstanceOf(CmdTimeoutError);
+    expect(queue).toHaveLength(0);
+  });
+});

@@ -10,12 +10,12 @@ import {
   HistoryElectricalRecord, HistoryEnergyRecord, HistoryEconomicsRecord,
 } from '../types/history';
 import { demoHistory } from '../mock/demo';
-import { toIntervalStarts, wireRange } from '../core/time/recordTime';
+import { toIntervalStarts, wireRange, RecordCalendar } from '../core/time/recordTime';
 import { reconcileDays } from '../core/history/reconcileDays';
 import { useDeviceClock } from '../core/deviceTime';
 
 /** Interval-start records inside [from, to) (see core/time/recordTime: `ts` on the wire = END). */
-function inWindow<T extends HistoryRecord>(recs: T[], period: HistoryPeriod, range?: HistoryRange): T[] {
+function inWindow<T extends HistoryRecord>(recs: T[], period: HistoryPeriod, range: HistoryRange | undefined, cal: RecordCalendar): T[] {
   // An EXACT repeat of a record (same end, duration and values — .139 held one day 4× after clock
   // tests) is one record, not four: summing them made «С начала месяца» jump 2,61 → 8,18 €.
   const seen = new Set<string>();
@@ -28,7 +28,7 @@ function inWindow<T extends HistoryRecord>(recs: T[], period: HistoryPeriod, ran
   // A record that STARTS after now is a clock artefact (a restart with the wrong time), not data —
   // it drew a «23 h» bar at noon (3φ rerun R02, L3P-22). 2 min of slack for clock skew.
   const nowS = Date.now() / 1000 + 120;
-  return toIntervalStarts(uniq, period).filter((r) => r.ts <= nowS && (range?.from === undefined || r.ts >= range.from) && (range?.to === undefined || r.ts < range.to));
+  return toIntervalStarts(uniq, period, cal).filter((r) => r.ts <= nowS && (range?.from === undefined || r.ts >= range.from) && (range?.to === undefined || r.ts < range.to));
 }
 
 export interface UseHistoryResult {
@@ -82,16 +82,21 @@ export function useHistory(
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const mounted = useRef(true);
+  // Only the latest request may write: a slow answer for the previous point/period must not
+  // land over the new one (Kimi #4). `mounted` alone is re-armed by the next effect.
+  const gen = useRef(0);
   const clock = useDeviceClock();
 
   const load = useCallback(async (quiet = false) => {
+    const my = ++gen.current;
+    const live = () => mounted.current && gen.current === my;
     if (!unitId) {
       setRecords([]);
       return;
     }
     if (isDemo()) {
       // The demo series honours the window like the hub does.
-      if (mounted.current) { setRecords(inWindow(demoHistory(type, period, Math.min(200, Math.max(48, limit)), unitId), period, range)); setHasMore(false); }
+      if (live()) { setRecords(inWindow(demoHistory(type, period, Math.min(200, Math.max(48, limit)), unitId), period, range, clock)); setHasMore(false); }
       return;
     }
     if (!quiet) { setLoading(true); setError(null); }
@@ -100,15 +105,15 @@ export function useHistory(
         unit_id: unitId, period, type, offset: 0, limit,
         ...wireRange(range?.from, range?.to, period),
       });
-      if (!mounted.current) return;
-      let recs = inWindow(res.data ?? [], period, range);
+      if (!live()) return;
+      let recs = inWindow(res.data ?? [], period, range, clock);
       // Day totals are checked against the hub's own hour records where the hour archive still
       // reaches (RES-R01: a day closed with 0 next to 5,8 kWh in its hours).
       if (period === 'day' && (type === 'energy' || type === 'economics')) {
         try {
           const hrs = await getApiClient().getHistory({ unit_id: unitId, period: 'hour', type, offset: 0, limit: 120, ...wireRange(range?.from, range?.to, 'hour') });
-          if (!mounted.current) return;
-          recs = inWindow(reconcileDays(recs, toIntervalStarts(hrs.data ?? [], 'hour'), (ts) => clock.dayStart(ts)), period, range);
+          if (!live()) return;
+          recs = inWindow(reconcileDays(recs, toIntervalStarts(hrs.data ?? [], 'hour'), (ts) => clock.dayStart(ts)), period, range, clock);
         } catch { /* the hour archive is optional — keep the day records */ }
       }
       setRecords(recs);
@@ -116,9 +121,9 @@ export function useHistory(
       setError(null);
     } catch {
       // A failed quiet refresh keeps the series on screen; the next tick tries again.
-      if (mounted.current && !quiet) setError('Failed to load history');
+      if (live() && !quiet) setError('Failed to load history');
     } finally {
-      if (mounted.current) setLoading(false);
+      if (live()) setLoading(false);
     }
   }, [unitId, period, type, limit, range?.from, range?.to, clock]);
 
@@ -145,17 +150,23 @@ export function useHistoryAll(
   range?: HistoryRange,
 ): UseHistoryAllResult {
   const [families, setFamilies] = useState<HistoryAll | null>(null);
+  const clock = useDeviceClock();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
+  // Only the latest request may write: a slow answer for the previous point/period must not
+  // land over the new one (Kimi #4). `mounted` alone is re-armed by the next effect.
+  const gen = useRef(0);
 
   const load = useCallback(async (quiet = false) => {
+    const my = ++gen.current;
+    const live = () => mounted.current && gen.current === my;
     if (!unitId) { setFamilies(null); return; }
     if (isDemo()) {
       setFamilies({
-        electrical: inWindow(demoHistory('electrical', period, 48, unitId) as HistoryElectricalRecord[], period, range),
-        energy: inWindow(demoHistory('energy', period, 48, unitId) as HistoryEnergyRecord[], period, range),
-        economics: inWindow(demoHistory('economics', period, 48, unitId) as HistoryEconomicsRecord[], period, range),
+        electrical: inWindow(demoHistory('electrical', period, 48, unitId) as HistoryElectricalRecord[], period, range, clock),
+        energy: inWindow(demoHistory('energy', period, 48, unitId) as HistoryEnergyRecord[], period, range, clock),
+        economics: inWindow(demoHistory('economics', period, 48, unitId) as HistoryEconomicsRecord[], period, range, clock),
       });
       return;
     }
@@ -165,18 +176,18 @@ export function useHistoryAll(
         unit_id: unitId, period,
         ...wireRange(range?.from, range?.to, period),
       });
-      if (mounted.current) setFamilies(data && {
+      if (live()) setFamilies(data && {
         ...data,
-        electrical: inWindow(data.electrical ?? [], period, range),
-        energy: inWindow(data.energy ?? [], period, range),
-        economics: inWindow(data.economics ?? [], period, range),
+        electrical: inWindow(data.electrical ?? [], period, range, clock),
+        energy: inWindow(data.energy ?? [], period, range, clock),
+        economics: inWindow(data.economics ?? [], period, range, clock),
       });
     } catch {
-      if (mounted.current && !quiet) setError('Failed to load history');
+      if (live() && !quiet) setError('Failed to load history');
     } finally {
-      if (mounted.current) setLoading(false);
+      if (live()) setLoading(false);
     }
-  }, [unitId, period, range?.from, range?.to]);
+  }, [unitId, period, range?.from, range?.to, clock]);
 
   useEffect(() => {
     mounted.current = true;

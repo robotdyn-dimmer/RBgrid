@@ -66,16 +66,26 @@ function inRange(r: TimeRange | null, m: number): boolean {
   return m >= r.start || m < r.end;
 }
 
-/** Conditions AND-ed (the hub's default) or OR-ed when `conditions_and_logic: false` (canon 54fffc83). */
+/** One ordinary condition at (day 0 = Mon, minute) — firmware check_tariff_condition. */
+function conditionOk(c: NonNullable<TariffZone['conditions']>[number], day: number, minute: number): boolean {
+  const p = (c.params ?? {}) as Record<string, number>;
+  switch (c.condition_type) {
+    case 'TIME_RANGE': return inRange({ start: (p.start_hour ?? 0) * 60 + (p.start_minute ?? 0), end: (p.end_hour ?? 0) * 60 + (p.end_minute ?? 0) }, minute);
+    case 'WEEKDAY': return ((Number(p.weekday_mask ?? ALL_DAYS) & ALL_DAYS) & (1 << day)) !== 0;
+    case 'WEEKEND': return day >= 5;
+    default: return false;
+  }
+}
+
+/** Conditions AND-ed (the hub's default) or OR-ed when `conditions_and_logic: false` (canon 54fffc83),
+ *  each condition on its own as the hub evaluates them (is_tariff_zone_active) — a zone with two
+ *  time ranges, or two weekday masks OR-ed, read as one range × one mask before (Kimi review). */
 function zoneMatches(z: TariffZone, day: number, minute: number): boolean {
   const active = (z.conditions ?? []).filter((c) => c.is_active !== false);
   if (!active.length) return true;
-  const dayOk = (zoneDays(z) & (1 << day)) !== 0;
-  const timeOk = inRange(zoneRange(z), minute);
-  if (z.conditions_and_logic !== false) return dayOk && timeOk;
-  const hasTime = active.some((c) => c.condition_type === 'TIME_RANGE');
-  const hasDays = active.some((c) => c.condition_type === 'WEEKDAY' || c.condition_type === 'WEEKEND');
-  return (hasTime && timeOk) || (hasDays && dayOk);
+  return z.conditions_and_logic !== false
+    ? active.every((c) => conditionOk(c, day, minute))
+    : active.some((c) => conditionOk(c, day, minute));
 }
 
 /** The zones matching (day 0 = Mon, minute): the winner by type, and the ones it overrides. */
@@ -200,5 +210,6 @@ export const parseHhmm = (s: string): number | null => {
   const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
   if (!m) return null;
   const h = Number(m[1]), mi = Number(m[2]);
-  return h <= 24 && mi < 60 ? Math.min(1440, h * 60 + mi) : null;
+  // 24:00 is the end of the day; any other 24:mm is not a time (Kimi #20: 24:30 became 24:00).
+  return (h < 24 && mi < 60) || (h === 24 && mi === 0) ? h * 60 + mi : null;
 };

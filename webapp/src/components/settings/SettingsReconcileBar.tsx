@@ -105,8 +105,15 @@ export const SettingsReconcileBar: React.FC = () => {
     setRebooting(true);
     try {
       await getApiClient().rebootDevice();
-      setRebootPending(false);
       setMsg({ sev: 'success', text: t('reconcile.rebooting') });
+      // Once the hub is back: re-read what was written and say whether it took (Kimi #14).
+      void session.reconcileAfterReboot().then(({ applied, notApplied }) => {
+        setRebootPending(false);
+        const names = (ds: ConfigDomain[]) => ds.map((d) => t(DOMAIN_LABEL[d] ?? d)).join(', ');
+        if (notApplied.length) setMsg({ sev: 'warning', text: t('reconcile.notAppliedAfterReboot', { list: names(notApplied) }) });
+        else if (applied.length) setMsg({ sev: 'success', text: t('reconcile.appliedAfterReboot') });
+        else setMsg(null);
+      });
     } catch {
       setMsg({ sev: 'error', text: t('reconcile.rebootFailed') });
     } finally {

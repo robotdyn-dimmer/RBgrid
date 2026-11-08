@@ -56,6 +56,8 @@ export interface LineConfig {
 export interface UnitsConfigJoin {
   /** Config for a telemetry group (joined by point, then HEX4 key, then legacy supply key). */
   forGroup: (g: UnitEntityGroup) => LineConfig | undefined;
+  /** Config by unit id ("0x6B08", "6B08"), for lists that aren't telemetry groups (ESP-NOW channels). */
+  forKey?: (unitId: string) => LineConfig | undefined;
   /** telemetry key (HEX4 UPPERCASE or legacy "main"/"alt"/"v_bus") → configured role. */
   roleByUnit: Record<string, UnitRole>;
   /** telemetry key → conductors a single reading stands for (W9: 3P → 3, two-pole → 2; phase groups and 1 omitted). */
@@ -166,7 +168,12 @@ export function buildUnitsJoin(list: JsonObject[]): UnitsConfigJoin {
   const forGroup = (g: UnitEntityGroup): LineConfig | undefined =>
     (g.point ? byPoint.get(g.point) : undefined) ?? byKey.get(normKey(g.unitKey));
 
-  return { forGroup, roleByUnit, conductorsByUnit, input, phases, historyCount, loaded: list.length > 0 };
+  const forKey = (unitId: string): LineConfig | undefined => {
+    const k = hexKey(unitId);
+    return k ? byKey.get(k) : undefined;
+  };
+
+  return { forGroup, forKey, roleByUnit, conductorsByUnit, input, phases, historyCount, loaded: list.length > 0 };
 }
 
 /** Map a numeric phase (G6) to its display label. */
