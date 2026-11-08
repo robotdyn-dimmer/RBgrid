@@ -19,6 +19,7 @@ extern "C" {
 #include "rbhome_types.h"   // rbpower_home_lock / unlock
 #include "littlefs_raw.h"   // the slot map lives in the core's config store
 #include "cJSON.h"
+#include "esp_now_hub.h"   // points switched off by the user free their slots
 #include "rbevlog.h"    // event lines → HA events
 }
 #include "freertos/queue.h"
@@ -228,14 +229,14 @@ void RBgridComponent::publish_frame_() {
   for (auto &sl : this->slots_) {
     if (sl.unit == 0) continue;
     bool found = false;
-    for (int k = 0; k < n && !found; k++) found = pts[k].unit_id == sl.unit;
+    for (int k = 0; k < n && !found; k++) found = pts[k].unit_id == sl.unit && !esp_now_hub_unit_switched_off(sl.unit);
     if (!found) { sl.unit = 0; sl.published_empty = false; changed = true; }
   }
   // Give new points the first free slot, in point-list order.
   for (int k = 0; k < n; k++) {
     bool mapped = false;
     for (auto &sl : this->slots_) if (sl.unit == pts[k].unit_id) { mapped = true; break; }
-    if (mapped) continue;
+    if (mapped || esp_now_hub_unit_switched_off(pts[k].unit_id)) continue;   // switched off by the user: no slot
     for (auto &sl : this->slots_) {
       if (sl.unit == 0) { sl.unit = pts[k].unit_id; sl.published_empty = false; changed = true; break; }
     }

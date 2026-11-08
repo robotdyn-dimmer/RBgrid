@@ -129,6 +129,8 @@ Energy and money per stored period, joined on the device:
 | Clock set, Demo tariff | binary, diagnostic |
 | Point N name / power / energy in / energy out / current (voltage, cost optional: `slot_voltage`, `slot_cost`; cost = monetary, total) | 12 slots; a new point takes the first free slot. With `slot_devices: true` each slot is its own HA device `Point N` (declared under `esphome: devices:` as `rbgrid_point_N`), and its entity names are short: Name, Power, Energy in, Energy out, Current |
 
+A slot is released (Name "", values unknown) when its point is deleted, or when the user switches the point off: the whole node disabled, or that input disabled in the node settings (`set espnow configure`). Switching it back on gives the point the first free slot again, which may be a different one. A point whose source is merely absent (module or node silent) keeps its slot and name; only its live values go unknown.
+
 Energy in/out **today** also qualify in the Energy dashboard pickers; pick the lifetime Energy in/out there. The first adoption fixes HA's entity ids: ship `friendly_name` (and `slot_devices`) before a device is first added, or the ids stay mixed.
 
 Energy steps at the 15-minute period boundaries: the module counters are the truth, and a period is booked when it closes. The money unit is fixed at build time (`currency:` in YAML) and must match the tariff plan's currency; the device logs a warning if they differ.

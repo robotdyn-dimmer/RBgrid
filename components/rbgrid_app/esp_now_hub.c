@@ -304,8 +304,10 @@ esp_err_t esp_now_registry_save(const espnow_registry_t *reg)
     return littlefs_raw_write(ESPNOW_REG_FILE, (const void *)reg, sizeof(*reg));
 }
 
+static void enh_off_mark_dirty(void);
 esp_err_t esp_now_registry_add_node(const uint8_t mac[6], const espnow_reg_chan_t *channels, uint8_t n)
 {
+    enh_off_mark_dirty();
     if (!mac || !channels || n == 0) return ESP_ERR_INVALID_ARG;
     if (n > ESPNOW_REG_MAX_CH) n = ESPNOW_REG_MAX_CH;
     espnow_registry_t reg; esp_now_registry_load(&reg); reg.version = ESPNOW_REG_VERSION;
@@ -324,6 +326,7 @@ esp_err_t esp_now_registry_add_node(const uint8_t mac[6], const espnow_reg_chan_
 
 esp_err_t esp_now_registry_remove_node(const uint8_t mac[6])
 {
+    enh_off_mark_dirty();
     espnow_registry_t reg;
     if (!esp_now_registry_load(&reg)) return ESP_ERR_NOT_FOUND;
     int idx = -1;
@@ -418,6 +421,38 @@ static enh_nodecfg_slot_t *ncfg_get(const uint8_t mac[6], bool create)
         if (!s_ncfg[i].used) { memset(&s_ncfg[i], 0, sizeof(s_ncfg[i])); s_ncfg[i].used = true; s_ncfg[i].loaded = true;
                                memcpy(s_ncfg[i].mac, mac, 6); return &s_ncfg[i]; }
     return NULL;
+}
+/* Points switched off by the user (whole node disabled, or the input disabled in the node settings): the ESPHome
+ * front end frees their HA slots. Rebuilt lazily (NVS reads) after a change; read from the ESPHome loop task. */
+static volatile bool s_off_dirty = true;
+static uint16_t s_off_units[ESPNOW_REG_MAX_NODES * ESPNOW_REG_MAX_CH];
+static volatile int s_off_n = 0;
+static void enh_off_mark_dirty(void) { s_off_dirty = true; }
+static enh_nodecfg_slot_t *ncfg_get(const uint8_t mac[6], bool create);
+bool esp_now_hub_unit_switched_off(uint16_t unit_id)
+{
+    if (s_off_dirty) {
+        s_off_dirty = false;
+        uint16_t tmp[ESPNOW_REG_MAX_NODES * ESPNOW_REG_MAX_CH]; int n = 0;
+        espnow_registry_t reg;
+        if (esp_now_registry_load(&reg))
+            for (int i = 0; i < reg.node_count; i++) {
+                bool node_off = (reg.nodes[i].flags & ESPNOW_REG_FLAG_DISABLED) != 0;
+                enh_nodecfg_slot_t *sl = node_off ? NULL : ncfg_get(reg.nodes[i].mac, false);
+                for (int c = 0; c < reg.nodes[i].ch_count; c++) {
+                    bool off = node_off;
+                    for (int k = 0; !off && sl && k < sl->c.n; k++)
+                        if (sl->c.chans[k].channel_id == reg.nodes[i].channels[c].ch && !sl->c.chans[k].enabled) off = true;
+                    if (off && n < (int)(sizeof(tmp) / sizeof(tmp[0])))
+                        tmp[n++] = (uint16_t)rbgrid_create_espnow_unit_id(reg.nodes[i].mac, reg.nodes[i].channels[c].ch);
+                }
+            }
+        s_off_n = 0;
+        memcpy(s_off_units, tmp, sizeof(tmp[0]) * n);
+        s_off_n = n;
+    }
+    for (int i = 0; i < s_off_n; i++) if (s_off_units[i] == unit_id) return true;
+    return false;
 }
 static void ncfg_save(enh_nodecfg_slot_t *sl)
 {
@@ -1300,6 +1335,7 @@ char *esp_now_hub_action(const cJSON *req, int *status)
             else {
                 nc.period_s = 900; nc.cfg_seq++; nc.state = 1; nc.result = 0;
                 sl->c = nc; ncfg_save(sl);
+                enh_off_mark_dirty();
                 if (esp_now_hub_running()) ncfg_send(sl);
                 snprintf(out, sizeof(out), "{\"ok\":true,\"config_state\":\"pending\",\"cfg_seq\":%u}", (unsigned)nc.cfg_seq);
             }
@@ -1396,6 +1432,7 @@ uint32_t esp_now_hub_delnode_cascade(const uint8_t mac[6])
 void esp_now_hub_set_node_disabled(const uint8_t mac[6], bool disabled)
 {
     esp_now_registry_set_disabled(mac, disabled);   /* persist across reboot */
+    enh_off_mark_dirty();
     portENTER_CRITICAL(&s_units_mux);
     enh_node_t *n = enh_node_slot(mac);
     if (n) n->disabled = disabled;
