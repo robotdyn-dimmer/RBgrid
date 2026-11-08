@@ -544,7 +544,7 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
                 const rbn_rt_rec_t *rec = &m->recs[r];
                 enh_unit_t *u = enh_slot(mac, rec->channel_id);
                 if (u) { u->i = rec->i_rms; u->v = rec->v_rms; u->p = rec->p_active;
-                         u->pf = rec->pf_x1000 / 1000.0f; u->has_v = (rec->v_rms > 0.5f);
+                         u->pf = rec->pf_x1000 / 1000.0f; u->has_v = (rec->v_rms > 50.0f);   /* mains on the voltage input; a module without it reads a few volts of noise */
                          u->last_us = now; u->fresh = true; }
             }
             enh_node_t *nd = enh_node_slot(mac);    /* node liveness heartbeat */
