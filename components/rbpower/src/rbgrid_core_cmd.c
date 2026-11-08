@@ -94,6 +94,28 @@ static char* cmd_get_section(const cJSON* root, const char* section)
     if (strcmp(section, "schema") == 0)  return rbgrid_build_schema_json();
     if (strcmp(section, "sensors") == 0) return rbgrid_json_create_sensors_list(rbgrid_core_json_ctx());
     if (strcmp(section, "espnow") == 0)  return s_espnow_status_provider ? s_espnow_status_provider() : NULL;
+    if (strcmp(section, "price") == 0) {   /* external energy prices in force / ahead */
+        static rbpower_ext_price_t ep[48];
+        int n = rbpower_tariff_external_prices(ep, 48);
+        cJSON* o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "type", "price");
+        cJSON_AddNumberToObject(o, "now", (double)time(NULL));
+        float b = -1, sl = -1;
+        bool on = rbpower_tariff_external_price_at((uint32_t)time(NULL), &b, &sl);
+        cJSON_AddBoolToObject(o, "active", on);
+        cJSON* a = cJSON_AddArrayToObject(o, "prices");
+        for (int i = 0; i < n; i++) {
+            cJSON* e = cJSON_CreateObject();
+            cJSON_AddNumberToObject(e, "from", ep[i].from);
+            cJSON_AddNumberToObject(e, "until", ep[i].until);
+            cJSON_AddNumberToObject(e, "buy", round((double)ep[i].buy * 1e6) / 1e6);
+            if (ep[i].sell >= 0) cJSON_AddNumberToObject(e, "sell", round((double)ep[i].sell * 1e6) / 1e6);
+            cJSON_AddItemToArray(a, e);
+        }
+        char* r = cJSON_PrintUnformatted(o);
+        cJSON_Delete(o);
+        return r;
+    }
     if (strcmp(section, "i2c") == 0) {
         if (!s_i2c_action) return NULL;
         cJSON *q = cJSON_CreateObject(); cJSON_AddStringToObject(q, "op", "state");
@@ -175,6 +197,33 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
 
     char* ack = NULL;
     char msg[96];
+    if (strcmp(section, "price") == 0) {
+        /* external energy price: {"buy","sell"?,"from","until"} | {"prices":[...]} | {"clear":true} */
+        if (cJSON_IsTrue(cJSON_GetObjectItem(data, "clear"))) {
+            rbpower_tariff_clear_external_price();
+            ack = cmd_ack_json("set", section, "ok", "external prices cleared", id);
+        } else {
+            const cJSON* arr = cJSON_GetObjectItem(data, "prices");
+            const cJSON* one = data;
+            int n = cJSON_IsArray(arr) ? cJSON_GetArraySize(arr) : 1, okc = 0;
+            const char* why = NULL;
+            for (int k = 0; k < n && !why; k++) {
+                const cJSON* e = cJSON_IsArray(arr) ? cJSON_GetArrayItem(arr, k) : one;
+                const cJSON *jb = cJSON_GetObjectItem(e, "buy"), *js = cJSON_GetObjectItem(e, "sell");
+                const cJSON *jf = cJSON_GetObjectItem(e, "from"), *ju = cJSON_GetObjectItem(e, "until");
+                if (!cJSON_IsNumber(jb) || !cJSON_IsNumber(jf) || !cJSON_IsNumber(ju)) { why = "each price needs buy, from, until (unix s)"; break; }
+                if (js && !cJSON_IsNumber(js)) { why = "sell must be a number"; break; }
+                if (rbpower_tariff_set_external_price((float)jb->valuedouble, js ? (float)js->valuedouble : -1.0f,
+                                                      (uint32_t)jf->valuedouble, (uint32_t)ju->valuedouble) != ESP_OK)
+                    { why = "bad price (buy 0..100) or until <= from"; break; }
+                okc++;
+            }
+            if (why) { snprintf(msg, sizeof(msg), "%s (%d stored before it)", why, okc); ack = cmd_ack_json("set", section, "error", msg, id); }
+            else { snprintf(msg, sizeof(msg), "%d price(s) stored", okc); ack = cmd_ack_json("set", section, "ok", msg, id); }
+        }
+        free(data_str);
+        return ack;
+    }
     if (strcmp(section, "i2c") == 0) {
         if (!s_i2c_action) {
             ack = cmd_ack_json("set", section, "error", "I2C actions not available in this build", id);

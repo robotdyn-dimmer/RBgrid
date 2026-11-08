@@ -1,0 +1,102 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "rbgrid_cmd/economics/1",
+ "title": "rbgrid_cmd reply: get economics",
+ "description": "Economics of one point (= GET /api/v1/economics). Schema 1 (reply field `schema`). Inferred from a live device (ESPHome build 1.2.0-dev, 2026-11-08): every listed key is present in that reply; extra keys may appear and must be ignored.",
+ "type": "object",
+ "required": [
+  "currency",
+  "net_metering",
+  "progressive",
+  "unit",
+  "v",
+  "zones"
+ ],
+ "properties": {
+  "v": {
+   "type": "number"
+  },
+  "unit": {
+   "type": "string"
+  },
+  "currency": {
+   "type": "string"
+  },
+  "zones": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "cost",
+     "revenue",
+     "zone"
+    ],
+    "properties": {
+     "zone": {
+      "type": "string"
+     },
+     "cost": {
+      "type": "number"
+     },
+     "revenue": {
+      "type": "number"
+     }
+    }
+   }
+  },
+  "net_metering": {
+   "type": "object",
+   "required": [
+    "credit_balance_kwh",
+    "last_billable_net_kwh",
+    "lifetime_earned_kwh",
+    "lifetime_used_kwh",
+    "period_export_kwh",
+    "period_import_kwh"
+   ],
+   "properties": {
+    "period_import_kwh": {
+     "type": "number"
+    },
+    "period_export_kwh": {
+     "type": "number"
+    },
+    "credit_balance_kwh": {
+     "type": "number"
+    },
+    "lifetime_earned_kwh": {
+     "type": "number"
+    },
+    "lifetime_used_kwh": {
+     "type": "number"
+    },
+    "last_billable_net_kwh": {
+     "type": "number"
+    }
+   }
+  },
+  "progressive": {
+   "type": "object",
+   "required": [
+    "cumulative_import_kwh",
+    "enabled",
+    "rate_mult",
+    "tier"
+   ],
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "cumulative_import_kwh": {
+     "type": "number"
+    },
+    "tier": {
+     "type": "number"
+    },
+    "rate_mult": {
+     "type": "number"
+    }
+   }
+  }
+ }
+}

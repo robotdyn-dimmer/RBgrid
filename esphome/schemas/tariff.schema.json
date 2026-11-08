@@ -1,0 +1,332 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "rbgrid_cmd/tariff/1",
+ "title": "rbgrid_cmd reply: get tariff",
+ "description": "The tariff plan (= GET /api/system/tariff-plan-config). Schema 1 (reply field `schema`). Inferred from a live device (ESPHome build 1.2.0-dev, 2026-11-08): every listed key is present in that reply; extra keys may appear and must be ignored.",
+ "type": "object",
+ "required": [
+  "data",
+  "device_id",
+  "timestamp_local",
+  "timestamp_ntp",
+  "type",
+  "version"
+ ],
+ "properties": {
+  "type": {
+   "type": "string"
+  },
+  "version": {
+   "type": "string"
+  },
+  "device_id": {
+   "type": "string"
+  },
+  "timestamp_local": {
+   "type": "number"
+  },
+  "timestamp_ntp": {
+   "type": "number"
+  },
+  "data": {
+   "type": "object",
+   "required": [
+    "list"
+   ],
+   "properties": {
+    "list": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "active_zones_count",
+       "calculation_method",
+       "carry_over_credits",
+       "created_timestamp",
+       "currency_code",
+       "default_selling_rate_per_kwh",
+       "default_zone_id",
+       "description",
+       "enable_load_shifting_recommendations",
+       "energy_tax_per_kwh",
+       "fixed_payments",
+       "fixed_payments_count",
+       "grid_usage_fee_per_kwh",
+       "is_active",
+       "is_default",
+       "is_placeholder",
+       "last_modified_timestamp",
+       "load_shifting_threshold_percent",
+       "max_credit_carry_over_kwh",
+       "net_metering_default_ratio",
+       "net_metering_enabled",
+       "net_metering_period",
+       "optimization_priority",
+       "plan_name",
+       "plan_type",
+       "plan_version",
+       "progressive_config",
+       "provider_name",
+       "region_code",
+       "renewable_levy_per_kwh",
+       "supported_features",
+       "valid_from_timestamp",
+       "valid_until_timestamp",
+       "vat_percent",
+       "zones"
+      ],
+      "properties": {
+       "plan_name": {
+        "type": "string"
+       },
+       "is_placeholder": {
+        "type": "boolean"
+       },
+       "provider_name": {
+        "type": "string"
+       },
+       "description": {
+        "type": "string"
+       },
+       "plan_type": {
+        "type": "string"
+       },
+       "active_zones_count": {
+        "type": "number"
+       },
+       "default_zone_id": {
+        "type": "string"
+       },
+       "zones": {
+        "type": "array",
+        "items": {
+         "type": "object",
+         "required": [
+          "activations_count_today",
+          "base_multiplier",
+          "conditions",
+          "conditions_and_logic",
+          "critical_peak_multiplier",
+          "description",
+          "is_currently_active",
+          "is_enabled",
+          "last_activation_timestamp",
+          "net_metering_ratio",
+          "rate_buying_per_kwh",
+          "rate_selling_per_kwh",
+          "seasonal_multiplier",
+          "zone_id",
+          "zone_name"
+         ],
+         "properties": {
+          "zone_id": {
+           "type": "string"
+          },
+          "zone_name": {
+           "type": "string"
+          },
+          "description": {
+           "type": "string"
+          },
+          "rate_buying_per_kwh": {
+           "type": "number"
+          },
+          "rate_selling_per_kwh": {
+           "type": "number"
+          },
+          "net_metering_ratio": {
+           "type": "number"
+          },
+          "base_multiplier": {
+           "type": "number"
+          },
+          "seasonal_multiplier": {
+           "type": "number"
+          },
+          "critical_peak_multiplier": {
+           "type": "number"
+          },
+          "conditions_and_logic": {
+           "type": "boolean"
+          },
+          "conditions": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "required": [
+             "condition_type",
+             "is_active",
+             "params",
+             "priority"
+            ],
+            "properties": {
+             "condition_type": {
+              "type": "string"
+             },
+             "params": {
+              "type": "object",
+              "required": [
+               "end_hour",
+               "end_minute",
+               "spans_midnight",
+               "start_hour",
+               "start_minute"
+              ],
+              "properties": {
+               "start_hour": {
+                "type": "number"
+               },
+               "start_minute": {
+                "type": "number"
+               },
+               "end_hour": {
+                "type": "number"
+               },
+               "end_minute": {
+                "type": "number"
+               },
+               "spans_midnight": {
+                "type": "boolean"
+               }
+              }
+             },
+             "is_active": {
+              "type": "boolean"
+             },
+             "priority": {
+              "type": "number"
+             }
+            }
+           }
+          },
+          "is_enabled": {
+           "type": "boolean"
+          },
+          "is_currently_active": {
+           "type": "boolean"
+          },
+          "last_activation_timestamp": {
+           "type": "number"
+          },
+          "activations_count_today": {
+           "type": "number"
+          }
+         }
+        }
+       },
+       "progressive_config": {
+        "type": "object",
+        "required": [
+         "calculation_period",
+         "is_enabled",
+         "reset_day",
+         "reset_monthly",
+         "thresholds",
+         "tiers_count"
+        ],
+        "properties": {
+         "is_enabled": {
+          "type": "boolean"
+         },
+         "tiers_count": {
+          "type": "number"
+         },
+         "thresholds": {
+          "type": "array"
+         },
+         "calculation_period": {
+          "type": "string"
+         },
+         "reset_monthly": {
+          "type": "boolean"
+         },
+         "reset_day": {
+          "type": "number"
+         }
+        }
+       },
+       "fixed_payments": {
+        "type": "array"
+       },
+       "fixed_payments_count": {
+        "type": "number"
+       },
+       "currency_code": {
+        "type": "string"
+       },
+       "region_code": {
+        "type": "string"
+       },
+       "vat_percent": {
+        "type": "number"
+       },
+       "energy_tax_per_kwh": {
+        "type": "number"
+       },
+       "grid_usage_fee_per_kwh": {
+        "type": "number"
+       },
+       "renewable_levy_per_kwh": {
+        "type": "number"
+       },
+       "net_metering_enabled": {
+        "type": "boolean"
+       },
+       "net_metering_default_ratio": {
+        "type": "number"
+       },
+       "default_selling_rate_per_kwh": {
+        "type": "number"
+       },
+       "net_metering_period": {
+        "type": "string"
+       },
+       "carry_over_credits": {
+        "type": "boolean"
+       },
+       "max_credit_carry_over_kwh": {
+        "type": "number"
+       },
+       "supported_features": {
+        "type": "number"
+       },
+       "calculation_method": {
+        "type": "string"
+       },
+       "optimization_priority": {
+        "type": "string"
+       },
+       "enable_load_shifting_recommendations": {
+        "type": "boolean"
+       },
+       "load_shifting_threshold_percent": {
+        "type": "number"
+       },
+       "valid_from_timestamp": {
+        "type": "number"
+       },
+       "valid_until_timestamp": {
+        "type": "number"
+       },
+       "is_active": {
+        "type": "boolean"
+       },
+       "is_default": {
+        "type": "boolean"
+       },
+       "plan_version": {
+        "type": "number"
+       },
+       "created_timestamp": {
+        "type": "number"
+       },
+       "last_modified_timestamp": {
+        "type": "number"
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

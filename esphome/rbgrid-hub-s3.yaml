@@ -127,3 +127,13 @@ rbgrid:
     name: "Clock set"
   tariff_placeholder:
     name: "Demo tariff"
+  external_price:
+    name: "External price"
+  modules_total:
+    name: "Modules"
+  modules_online:
+    name: "Modules online"
+  nodes_total:
+    name: "Nodes"
+  nodes_online:
+    name: "Nodes online"

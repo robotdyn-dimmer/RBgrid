@@ -1,0 +1,163 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "rbgrid_cmd/sensors/1",
+ "title": "rbgrid_cmd reply: get sensors",
+ "description": "Modules, channels, CT models, bound points (= GET /api/v1/sensors). Schema 1 (reply field `schema`). Inferred from a live device (ESPHome build 1.2.0-dev, 2026-11-08): every listed key is present in that reply; extra keys may appear and must be ignored.",
+ "type": "object",
+ "required": [
+  "device_id",
+  "modules",
+  "sensors",
+  "timestamp_local",
+  "timestamp_ntp",
+  "type",
+  "version"
+ ],
+ "properties": {
+  "type": {
+   "type": "string"
+  },
+  "version": {
+   "type": "string"
+  },
+  "device_id": {
+   "type": "string"
+  },
+  "timestamp_local": {
+   "type": "number"
+  },
+  "timestamp_ntp": {
+   "type": "number"
+  },
+  "sensors": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "iface",
+     "present",
+     "src_class",
+     "unit_id"
+    ],
+    "properties": {
+     "unit_id": {
+      "type": "string"
+     },
+     "present": {
+      "type": "boolean"
+     },
+     "iface": {
+      "type": "string"
+     },
+     "src_class": {
+      "type": "string"
+     },
+     "bus": {
+      "type": "number"
+     },
+     "module": {
+      "type": "number"
+     },
+     "ch": {
+      "type": "number"
+     },
+     "ch_label": {
+      "type": "string"
+     },
+     "addr": {
+      "type": "number"
+     },
+     "ct_code": {
+      "type": "number"
+     },
+     "ct_name": {
+      "type": "string"
+     },
+     "ct_rated_a": {
+      "type": "number"
+     },
+     "ct_fs_a": {
+      "type": "number"
+     },
+     "ct_peak_a": {
+      "type": "number"
+     },
+     "sct_correction": {
+      "type": "string"
+     },
+     "line": {
+      "type": "string"
+     },
+     "channel": {
+      "type": "number"
+     },
+     "sensor_type": {
+      "type": "number"
+     }
+    }
+   }
+  },
+  "modules": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "addr",
+     "cal",
+     "ct_settable",
+     "fw",
+     "fw_name",
+     "line",
+     "model",
+     "module",
+     "n_i",
+     "n_v",
+     "present",
+     "sensor_class",
+     "variant"
+    ],
+    "properties": {
+     "module": {
+      "type": "number"
+     },
+     "addr": {
+      "type": "number"
+     },
+     "present": {
+      "type": "boolean"
+     },
+     "line": {
+      "type": "string"
+     },
+     "model": {
+      "type": "string"
+     },
+     "sensor_class": {
+      "type": "number"
+     },
+     "ct_settable": {
+      "type": "boolean"
+     },
+     "variant": {
+      "type": "number"
+     },
+     "n_v": {
+      "type": "number"
+     },
+     "n_i": {
+      "type": "number"
+     },
+     "cal": {
+      "type": "string"
+     },
+     "fw": {
+      "type": "number"
+     },
+     "fw_name": {
+      "type": "string"
+     }
+    }
+   }
+  }
+ }
+}

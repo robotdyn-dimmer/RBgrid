@@ -405,6 +405,7 @@ void rbgrid_core_tariff_now(rbgrid_tariff_now_t *t)
     snprintf(t->currency, sizeof(t->currency), "%s", rbpower_tariff_currency());
     t->placeholder = tp && rbpower_tariff_plan_is_placeholder(tp->plan_name, tp->provider_name);
     t->time_valid = rbtime_is_time_valid();
+    t->external = t->time_valid && rbpower_tariff_external_price_at((uint32_t)time(NULL), NULL, NULL);
 }
 
 /* Version of the active configuration: CRC32 of the points + tariff plan JSON, as 8 hex digits. Builds both

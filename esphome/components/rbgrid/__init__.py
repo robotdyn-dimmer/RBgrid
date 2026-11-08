@@ -17,6 +17,7 @@ from esphome.components import binary_sensor, esp32, sensor, text_sensor
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
+    DEVICE_CLASS_CONNECTIVITY,
     DEVICE_CLASS_CURRENT,
     DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_MONETARY,
@@ -64,7 +65,15 @@ CONF_TARIFF_ZONE = "tariff_zone"
 CONF_CONFIG_VERSION = "config_version"
 CONF_TIME_VALID = "time_valid"
 CONF_TARIFF_PLACEHOLDER = "tariff_placeholder"
+CONF_EXTERNAL_PRICE = "external_price"
 CONF_EVENTS = "events"
+CONF_ONLINE = "online"
+CONF_SLOT_ONLINE = "slot_online"
+CONF_MODULES_TOTAL = "modules_total"
+CONF_MODULES_ONLINE = "modules_online"
+CONF_NODES_TOTAL = "nodes_total"
+CONF_NODES_ONLINE = "nodes_online"
+_COUNT = dict(accuracy_decimals=0, entity_category=ENTITY_CATEGORY_DIAGNOSTIC, state_class=STATE_CLASS_MEASUREMENT)
 UNIT_WATT_HOURS = "Wh"
 MAX_SLOTS = 64
 
@@ -93,6 +102,8 @@ SLOT_SCHEMA = cv.Schema(
         cv.Optional(CONF_CURRENT): sensor.sensor_schema(**_CURRENT),
         cv.Optional(CONF_VOLTAGE): sensor.sensor_schema(**_VOLTAGE),
         cv.Optional(CONF_COST): cv.valid,   # validated in _system_schema (unit = currency)
+        cv.Optional(CONF_ONLINE): binary_sensor.binary_sensor_schema(
+            device_class=DEVICE_CLASS_CONNECTIVITY, entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
     }
 )
 
@@ -145,6 +156,7 @@ def _expand_slots(config):
     with_v = config.pop(CONF_SLOT_VOLTAGE, False)
     devices = config.pop(CONF_SLOT_DEVICES, False)
     with_cost = config.pop(CONF_SLOT_COST, False)
+    with_online = config.pop(CONF_SLOT_ONLINE, True)
     if CONF_SLOTS not in config:
         slots = []
         for i in range(1, n + 1):
@@ -166,6 +178,8 @@ def _expand_slots(config):
                 sl[CONF_VOLTAGE] = ent("voltage")
             if with_cost:
                 sl[CONF_COST] = ent("cost")
+            if with_online:
+                sl[CONF_ONLINE] = ent("online")
             slots.append(sl)
         config[CONF_SLOTS] = slots
     return config
@@ -183,6 +197,7 @@ CONFIG_SCHEMA = cv.All(
                cv.Optional(CONF_SLOT_VOLTAGE, default=False): cv.boolean,
                cv.Optional(CONF_SLOT_DEVICES, default=False): cv.boolean,
                cv.Optional(CONF_SLOT_COST, default=False): cv.boolean,
+               cv.Optional(CONF_SLOT_ONLINE, default=True): cv.boolean,
                cv.Optional(CONF_CURRENCY, default="EUR"): cv.All(cv.string, cv.Length(min=3, max=3))},
               extra=cv.ALLOW_EXTRA),
     _expand_slots,
@@ -205,10 +220,16 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BUY_PRICE): cv.valid,
             cv.Optional(CONF_SELL_PRICE): cv.valid,
             cv.Optional(CONF_TARIFF_ZONE): text_sensor.text_sensor_schema(),
+            cv.Optional(CONF_MODULES_TOTAL): sensor.sensor_schema(**_COUNT),
+            cv.Optional(CONF_MODULES_ONLINE): sensor.sensor_schema(**_COUNT),
+            cv.Optional(CONF_NODES_TOTAL): sensor.sensor_schema(**_COUNT),
+            cv.Optional(CONF_NODES_ONLINE): sensor.sensor_schema(**_COUNT),
             cv.Optional(CONF_EVENTS, default=True): cv.boolean,
             cv.Optional(CONF_CONFIG_VERSION): text_sensor.text_sensor_schema(entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
             cv.Optional(CONF_TIME_VALID): binary_sensor.binary_sensor_schema(entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
             cv.Optional(CONF_TARIFF_PLACEHOLDER): binary_sensor.binary_sensor_schema(
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
+            cv.Optional(CONF_EXTERNAL_PRICE): binary_sensor.binary_sensor_schema(
                 entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
             cv.Optional(CONF_SLOTS, default=[]): cv.All(cv.ensure_list(SLOT_SCHEMA), cv.Length(max=MAX_SLOTS)),
         }
@@ -250,7 +271,9 @@ async def to_code(config):
                         (CONF_ENERGY_DAY_OUT, "set_energy_day_out_sensor"), (CONF_COST_TOTAL, "set_cost_total_sensor"),
                         (CONF_REVENUE_TOTAL, "set_revenue_total_sensor"), (CONF_COST_DAY, "set_cost_day_sensor"),
                         (CONF_REVENUE_DAY, "set_revenue_day_sensor"), (CONF_BUY_PRICE, "set_buy_price_sensor"),
-                        (CONF_SELL_PRICE, "set_sell_price_sensor")):
+                        (CONF_SELL_PRICE, "set_sell_price_sensor"), (CONF_MODULES_TOTAL, "set_modules_total_sensor"),
+                        (CONF_MODULES_ONLINE, "set_modules_online_sensor"), (CONF_NODES_TOTAL, "set_nodes_total_sensor"),
+                        (CONF_NODES_ONLINE, "set_nodes_online_sensor")):
         if key in config:
             s = await sensor.new_sensor(config[key])
             cg.add(getattr(var, setter)(s))
@@ -259,7 +282,8 @@ async def to_code(config):
             s = await text_sensor.new_text_sensor(config[key])
             cg.add(getattr(var, setter)(s))
     for key, setter in ((CONF_TIME_VALID, "set_time_valid_sensor"),
-                        (CONF_TARIFF_PLACEHOLDER, "set_tariff_placeholder_sensor")):
+                        (CONF_TARIFF_PLACEHOLDER, "set_tariff_placeholder_sensor"),
+                        (CONF_EXTERNAL_PRICE, "set_external_price_sensor")):
         if key in config:
             s = await binary_sensor.new_binary_sensor(config[key])
             cg.add(getattr(var, setter)(s))
@@ -272,3 +296,5 @@ async def to_code(config):
         volt = await sensor.new_sensor(slot[CONF_VOLTAGE]) if CONF_VOLTAGE in slot else cg.nullptr
         cost = await sensor.new_sensor(slot[CONF_COST]) if CONF_COST in slot else cg.nullptr
         cg.add(var.add_slot(name, p, ei, eo, cur, volt, cost))
+        if CONF_ONLINE in slot:
+            cg.add(var.set_last_slot_online(await binary_sensor.new_binary_sensor(slot[CONF_ONLINE])))

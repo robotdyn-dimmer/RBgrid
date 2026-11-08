@@ -248,6 +248,7 @@ typedef struct {
     char   currency[8];       ///< Plan currency (ISO code)
     bool   placeholder;       ///< Money is computed off the built-in demo plan (no plan saved yet)
     bool   time_valid;        ///< The wall clock is set (zones need it)
+    bool   external;          ///< The energy rate comes from an external price (set price), not the plan zone
 } rbgrid_tariff_now_t;
 
 /**

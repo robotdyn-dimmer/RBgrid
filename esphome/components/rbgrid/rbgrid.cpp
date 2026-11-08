@@ -19,7 +19,8 @@ extern "C" {
 #include "rbhome_types.h"   // rbpower_home_lock / unlock
 #include "littlefs_raw.h"   // the slot map lives in the core's config store
 #include "cJSON.h"
-#include "esp_now_hub.h"   // points switched off by the user free their slots
+#include "esp_now_hub.h"
+#include "rbamp_bridge.h"   // module counts   // points switched off by the user free their slots
 #include "rbevlog.h"    // event lines → HA events
 }
 #include "freertos/queue.h"
@@ -216,10 +217,22 @@ void RBgridComponent::publish_frame_() {
   if (this->tariff_zone_ != nullptr && this->tariff_zone_->state != tn.zone) this->tariff_zone_->publish_state(tn.zone);
   if (this->time_valid_ != nullptr) this->time_valid_->publish_state(tn.time_valid);
   if (this->tariff_placeholder_ != nullptr) this->tariff_placeholder_->publish_state(tn.placeholder);
+  if (this->external_price_ != nullptr) this->external_price_->publish_state(tn.external);
   if (!this->currency_warned_ && tn.currency[0] && this->currency_ != tn.currency) {
     this->currency_warned_ = true;   // the money unit is fixed at build time; HA only labels it
     ESP_LOGW(TAG, "tariff currency is %s but the money entities are labelled %s (set `currency:` in YAML)", tn.currency,
              this->currency_.c_str());
+  }
+  if (this->modules_total_ || this->modules_online_) {
+    int on = 0, tot = rbamp_bridge_module_counts(&on);
+    if (this->modules_total_ && this->modules_total_->state != tot) this->modules_total_->publish_state(tot);
+    if (this->modules_online_ && this->modules_online_->state != on) this->modules_online_->publish_state(on);
+  }
+  if (this->nodes_total_ || this->nodes_online_) {
+    int tot = 0, on = 0;
+    esp_now_hub_node_counts(&tot, &on);
+    if (this->nodes_total_ && this->nodes_total_->state != tot) this->nodes_total_->publish_state(tot);
+    if (this->nodes_online_ && this->nodes_online_->state != on) this->nodes_online_->publish_state(on);
   }
   if (this->slots_.empty()) return;
 
@@ -256,6 +269,7 @@ void RBgridComponent::publish_frame_() {
         pub_(sl.current, NAN);
         pub_(sl.voltage, NAN);
         pub_(sl.cost, NAN);
+        if (sl.online != nullptr) sl.online->invalidate_state();
       }
       continue;
     }
@@ -267,6 +281,8 @@ void RBgridComponent::publish_frame_() {
     pub_(sl.current, pt->present ? pt->i_a : NAN);
     pub_(sl.voltage, (pt->present && pt->v_v > 0) ? pt->v_v : NAN);
     pub_(sl.cost, (float) pt->cost_total);
+    if (sl.online != nullptr && (!sl.online->has_state() || sl.online->state != pt->present))
+      sl.online->publish_state(pt->present);
   }
 }
 

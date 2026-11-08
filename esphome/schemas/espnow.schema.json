@@ -1,0 +1,196 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "rbgrid_cmd/espnow/1",
+ "title": "rbgrid_cmd reply: get espnow",
+ "description": "ESP-NOW nodes and pairing state (= GET /api/v1/espnow). Schema 1 (reply field `schema`). Inferred from a live device (ESPHome build 1.2.0-dev, 2026-11-08): every listed key is present in that reply; extra keys may appear and must be ignored.",
+ "type": "object",
+ "required": [
+  "beacons_sent",
+  "channel",
+  "enabled",
+  "key_source",
+  "keys",
+  "max_channels_per_node",
+  "max_nodes",
+  "nodes",
+  "paired_count",
+  "pairing_left_s",
+  "pairing_open",
+  "periods_dropped",
+  "periods_dup",
+  "periods_injected",
+  "periods_recv",
+  "rt_recv",
+  "running",
+  "stats_recv"
+ ],
+ "properties": {
+  "running": {
+   "type": "boolean"
+  },
+  "enabled": {
+   "type": "string"
+  },
+  "keys": {
+   "type": "boolean"
+  },
+  "key_source": {
+   "type": "string"
+  },
+  "max_nodes": {
+   "type": "number"
+  },
+  "max_channels_per_node": {
+   "type": "number"
+  },
+  "pairing_left_s": {
+   "type": "number"
+  },
+  "channel": {
+   "type": "number"
+  },
+  "pairing_open": {
+   "type": "boolean"
+  },
+  "paired_count": {
+   "type": "number"
+  },
+  "beacons_sent": {
+   "type": "number"
+  },
+  "periods_recv": {
+   "type": "number"
+  },
+  "periods_injected": {
+   "type": "number"
+  },
+  "periods_dropped": {
+   "type": "number"
+  },
+  "periods_dup": {
+   "type": "number"
+  },
+  "rt_recv": {
+   "type": "number"
+  },
+  "stats_recv": {
+   "type": "number"
+  },
+  "nodes": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "channels",
+     "config",
+     "config_state",
+     "disabled",
+     "fw",
+     "last_seen_s",
+     "mac",
+     "online",
+     "period_s",
+     "rssi_dbm",
+     "sync"
+    ],
+    "properties": {
+     "mac": {
+      "type": "string"
+     },
+     "online": {
+      "type": "boolean"
+     },
+     "disabled": {
+      "type": "boolean"
+     },
+     "last_seen_s": {
+      "type": "number"
+     },
+     "rssi_dbm": {
+      "type": "number"
+     },
+     "config_state": {
+      "type": "string"
+     },
+     "period_s": {
+      "type": "number"
+     },
+     "fw": {
+      "type": "string"
+     },
+     "config": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "ch",
+        "ct_code",
+        "enabled"
+       ],
+       "properties": {
+        "ch": {
+         "type": "number"
+        },
+        "enabled": {
+         "type": "boolean"
+        },
+        "ct_code": {
+         "type": "number"
+        }
+       }
+      }
+     },
+     "sync": {
+      "type": "object",
+      "required": [
+       "fits",
+       "loss_pct",
+       "resid_sd_us",
+       "skew_ppm"
+      ],
+      "properties": {
+       "resid_sd_us": {
+        "type": "number"
+       },
+       "skew_ppm": {
+        "type": "number"
+       },
+       "fits": {
+        "type": "number"
+       },
+       "loss_pct": {
+        "type": "number"
+       }
+      }
+     },
+     "channels": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "ch",
+        "ct_code",
+        "present",
+        "unit_id"
+       ],
+       "properties": {
+        "ch": {
+         "type": "number"
+        },
+        "ct_code": {
+         "type": "number"
+        },
+        "unit_id": {
+         "type": "string"
+        },
+        "present": {
+         "type": "boolean"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

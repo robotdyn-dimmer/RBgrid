@@ -175,6 +175,8 @@ uint32_t esp_now_hub_delnode_cascade(const uint8_t mac[6]);          /* remove n
 void     esp_now_hub_set_node_disabled(const uint8_t mac[6], bool disabled);  /* runtime silence/resume a node */
 /** @brief True if the user switched this ESP-NOW point off (node disabled, or its input disabled in the node settings). */
 bool     esp_now_hub_unit_switched_off(uint16_t unit_id);
+/** @brief Paired nodes and how many are online now (disabled nodes count as not online). */
+void     esp_now_hub_node_counts(int *total, int *online);
 /**
  * @brief Build the ESP-NOW status JSON (GET /api/v1/espnow): hub counters, and per registered node its
  *        online/disabled state, last-seen age (s), sync health and per-channel unit presence.

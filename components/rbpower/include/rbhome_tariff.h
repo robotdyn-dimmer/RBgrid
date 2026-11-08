@@ -2433,4 +2433,32 @@ extern "C"
 #endif
 void rbpower_tariff_cost_at_default_zone(rbpower_unit_id_t unit_id, float energy_wh, rbgrid_snapshot_base_t* result_base);
 
+/** @brief One external price entry (see rbpower_tariff_set_external_price). */
+typedef struct {
+    uint32_t from;    ///< Start, unix seconds
+    uint32_t until;   ///< End (exclusive), unix seconds
+    float    buy;     ///< Energy rate, currency/kWh (the plan's fees and VAT are added on top)
+    float    sell;    ///< Feed-in rate, currency/kWh; < 0 = the plan's zone rate
+} rbpower_ext_price_t;
+
+/**
+ * @brief Set an external energy price for [from, until) (Home Assistant: Nord Pool, Tibber…). RAM only.
+ * @param buy    Energy rate, currency/kWh, 0..100; the plan's per-kWh fees and VAT still apply.
+ * @param sell   Feed-in rate, currency/kWh; < 0 keeps the plan's zone rate.
+ * @param from   Start (unix s).
+ * @param until  End (unix s), > from.
+ * @retval ESP_OK  Stored (an entry with the same start is replaced; entries ended over a day before are dropped).
+ * @retval ESP_ERR_INVALID_ARG  Bad rate or interval.
+ */
+esp_err_t rbpower_tariff_set_external_price(float buy, float sell, uint32_t from, uint32_t until);
+/** @brief Drop every external price: the plan's zone rates apply again. */
+void rbpower_tariff_clear_external_price(void);
+/**
+ * @brief External price in force at @p ts. Leaves the outputs untouched when none covers it.
+ * @return true if an entry covers @p ts.
+ */
+bool rbpower_tariff_external_price_at(uint32_t ts, float *buy, float *sell);
+/** @brief Copy the stored external prices. @return Entries written. */
+int rbpower_tariff_external_prices(rbpower_ext_price_t *out, int max);
+
 #endif // RBHOME_TARIFF_H

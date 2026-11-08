@@ -429,28 +429,44 @@ static uint16_t s_off_units[ESPNOW_REG_MAX_NODES * ESPNOW_REG_MAX_CH];
 static volatile int s_off_n = 0;
 static void enh_off_mark_dirty(void) { s_off_dirty = true; }
 static enh_nodecfg_slot_t *ncfg_get(const uint8_t mac[6], bool create);
+static volatile int s_reg_nodes = 0;   /* paired nodes (registry), cached with the switched-off list */
+static void enh_off_rebuild(void)
+{
+    if (!s_off_dirty) return;
+    s_off_dirty = false;
+    uint16_t tmp[ESPNOW_REG_MAX_NODES * ESPNOW_REG_MAX_CH]; int n = 0;
+    espnow_registry_t reg;
+    if (!esp_now_registry_load(&reg)) reg.node_count = 0;
+    for (int i = 0; i < reg.node_count; i++) {
+        bool node_off = (reg.nodes[i].flags & ESPNOW_REG_FLAG_DISABLED) != 0;
+        enh_nodecfg_slot_t *sl = node_off ? NULL : ncfg_get(reg.nodes[i].mac, false);
+        for (int c = 0; c < reg.nodes[i].ch_count; c++) {
+            bool off = node_off;
+            for (int k = 0; !off && sl && k < sl->c.n; k++)
+                if (sl->c.chans[k].channel_id == reg.nodes[i].channels[c].ch && !sl->c.chans[k].enabled) off = true;
+            if (off && n < (int)(sizeof(tmp) / sizeof(tmp[0])))
+                tmp[n++] = (uint16_t)rbgrid_create_espnow_unit_id(reg.nodes[i].mac, reg.nodes[i].channels[c].ch);
+        }
+    }
+    s_off_n = 0;
+    memcpy(s_off_units, tmp, sizeof(tmp[0]) * n);
+    s_off_n = n;
+    s_reg_nodes = reg.node_count;
+}
+void esp_now_hub_node_counts(int *total, int *online)
+{
+    enh_off_rebuild();
+    int on = 0;
+    portENTER_CRITICAL(&s_units_mux);
+    for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
+        if (s_nodes[i].used && s_nodes[i].online && !s_nodes[i].disabled) on++;
+    portEXIT_CRITICAL(&s_units_mux);
+    if (total) *total = s_reg_nodes;
+    if (online) *online = on;
+}
 bool esp_now_hub_unit_switched_off(uint16_t unit_id)
 {
-    if (s_off_dirty) {
-        s_off_dirty = false;
-        uint16_t tmp[ESPNOW_REG_MAX_NODES * ESPNOW_REG_MAX_CH]; int n = 0;
-        espnow_registry_t reg;
-        if (esp_now_registry_load(&reg))
-            for (int i = 0; i < reg.node_count; i++) {
-                bool node_off = (reg.nodes[i].flags & ESPNOW_REG_FLAG_DISABLED) != 0;
-                enh_nodecfg_slot_t *sl = node_off ? NULL : ncfg_get(reg.nodes[i].mac, false);
-                for (int c = 0; c < reg.nodes[i].ch_count; c++) {
-                    bool off = node_off;
-                    for (int k = 0; !off && sl && k < sl->c.n; k++)
-                        if (sl->c.chans[k].channel_id == reg.nodes[i].channels[c].ch && !sl->c.chans[k].enabled) off = true;
-                    if (off && n < (int)(sizeof(tmp) / sizeof(tmp[0])))
-                        tmp[n++] = (uint16_t)rbgrid_create_espnow_unit_id(reg.nodes[i].mac, reg.nodes[i].channels[c].ch);
-                }
-            }
-        s_off_n = 0;
-        memcpy(s_off_units, tmp, sizeof(tmp[0]) * n);
-        s_off_n = n;
-    }
+    enh_off_rebuild();
     for (int i = 0; i < s_off_n; i++) if (s_off_units[i] == unit_id) return true;
     return false;
 }

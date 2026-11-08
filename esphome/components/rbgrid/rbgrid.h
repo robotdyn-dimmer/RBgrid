@@ -39,6 +39,11 @@ class RBgridComponent : public Component {
   void set_config_version_sensor(text_sensor::TextSensor *s) { config_version_ = s; }
   void set_time_valid_sensor(binary_sensor::BinarySensor *s) { time_valid_ = s; }
   void set_tariff_placeholder_sensor(binary_sensor::BinarySensor *s) { tariff_placeholder_ = s; }
+  void set_external_price_sensor(binary_sensor::BinarySensor *s) { external_price_ = s; }
+  void set_modules_total_sensor(sensor::Sensor *s) { modules_total_ = s; }
+  void set_modules_online_sensor(sensor::Sensor *s) { modules_online_ = s; }
+  void set_nodes_total_sensor(sensor::Sensor *s) { nodes_total_ = s; }
+  void set_nodes_online_sensor(sensor::Sensor *s) { nodes_online_ = s; }
   void set_currency(const std::string &c) { currency_ = c; }
   /// Send the device's event log lines to HA as "esphome.rbgrid_event" {kind, level, message}.
   void set_events(bool on) { events_ = on; }
@@ -46,6 +51,10 @@ class RBgridComponent : public Component {
   void add_slot(text_sensor::TextSensor *name, sensor::Sensor *p, sensor::Sensor *ein, sensor::Sensor *eout,
                 sensor::Sensor *cur, sensor::Sensor *volt, sensor::Sensor *cost) {
     slots_.push_back(Slot{name, p, ein, eout, cur, volt, cost});
+  }
+  /// The source of the last added slot answers (module polled / node online); unknown on an empty slot.
+  void set_last_slot_online(binary_sensor::BinarySensor *b) {
+    if (!slots_.empty()) slots_.back().online = b;
   }
 
   /// Run one RBgrid command ({"cmd":"get|set|history|unit",...}); returns the device's JSON reply as text.
@@ -76,6 +85,7 @@ class RBgridComponent : public Component {
     sensor::Sensor *current;   // optional
     sensor::Sensor *voltage;   // optional
     sensor::Sensor *cost;      // optional
+    binary_sensor::BinarySensor *online{nullptr};   // optional
     uint16_t unit{0};
     bool published_empty{false};
   };
@@ -99,10 +109,15 @@ class RBgridComponent : public Component {
   sensor::Sensor *revenue_day_{nullptr};
   sensor::Sensor *buy_price_{nullptr};
   sensor::Sensor *sell_price_{nullptr};
+  sensor::Sensor *modules_total_{nullptr};
+  sensor::Sensor *modules_online_{nullptr};
+  sensor::Sensor *nodes_total_{nullptr};
+  sensor::Sensor *nodes_online_{nullptr};
   text_sensor::TextSensor *tariff_zone_{nullptr};
   text_sensor::TextSensor *config_version_{nullptr};
   binary_sensor::BinarySensor *time_valid_{nullptr};
   binary_sensor::BinarySensor *tariff_placeholder_{nullptr};
+  binary_sensor::BinarySensor *external_price_{nullptr};
   std::string currency_{"EUR"};
   bool currency_warned_{false};
   std::string version_{""};

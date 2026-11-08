@@ -37,6 +37,8 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
   - A stale or unknown `rid` fails with "no such part … repeat the command".
   - Real sizes: `get schema` is 9.1 KB (3 parts), `get tariff` 2.4 KB, `get units` 1.3 KB per point or so, `history` grows with `limit`.
 
+**Reply schemas:** `esphome/schemas/` (JSON Schema per reply, version = `schema`).
+
 ## Commands
 
 ### Read: `{"cmd":"get","section":S}`
@@ -53,6 +55,7 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
 | `summary` | `/api/v1/summary` | `"unit"`, `"period"` (hour/day/month…), `"from"`, `"to"` (unix) |
 | `i2c` | `/api/v1/i2c`: buses, board pin profile, modules | |
 | `espnow` | `/api/v1/espnow`: nodes, pairing state | |
+| `price` | External prices stored (see below): `{"type":"price","now","active","prices":[{"from","until","buy","sell"?}]}` | |
 
 ### Change
 
@@ -65,6 +68,7 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
 | `{"cmd":"set","section":"i2c","data":{"op":"address","module":0,"addr":81}}` | Change a module's address |
 | `{"cmd":"set","section":"i2c","data":{"op":"pins","bus":0,"sda":8,"scl":9}}` | Bus pins (after a restart) |
 | `{"cmd":"set","section":"espnow","data":{"action":"pair","seconds":180}}` | ESP-NOW actions (`pair`, `pair_cancel`, `configure`, `remove`, `disable`, `enable`, `latch`) |
+| `{"cmd":"set","section":"price","data":{"buy":0.12,"sell":0.05,"from":unix,"until":unix}}` | External energy price for [`from`, `until`); `"prices":[...]` sets many at once, `{"clear":true}` drops them all. See below |
 
 ### Points: `{"cmd":"unit","op":...}`
 
@@ -77,6 +81,22 @@ These are the web app's point routes. The reply carries `data.code` (HTTP-style)
 | `rebind` | `"unit":"0100","data":{"module":0,"ch":1}` | Move a point to another channel |
 | `rename` | `"unit":"0100","data":{"point":"kitchen"}` | Change the point slug |
 | `delete` | `"unit":"0100"` | Its history stays on flash, unreachable |
+
+### External price (Nord Pool, Tibber, … through HA)
+
+`{"cmd":"set","section":"price","data":{"prices":[{"buy":0.112,"sell":0.04,"from":1794139200,"until":1794142800}, ...]}}`
+
+- `buy` replaces the tariff zone's **energy rate** (currency/kWh, 0…100) for [`from`, `until`). The plan's per-kWh fees
+  (grid usage, energy tax, levy) and VAT are still added, so the `Buy price` entity shows the all-in rate. `sell`
+  (optional) replaces the feed-in rate; leave it out to keep the plan's.
+- A 15-min period is priced at its midpoint, like the zones. Energy is booked when the period closes, so a price
+  must cover the period's middle by then; sending the day-ahead prices once a day is the intended use.
+- An entry with the same `from` is replaced; entries that ended more than a day before a new one are dropped; up to 48
+  are kept (the oldest start goes first).
+- **Outside every entry the tariff plan's zone rates apply** (the fixed tariff is the fallback): if HA stops sending,
+  money keeps accruing at the plan. The `External price` entity is on while an entry covers now.
+- Prices live in RAM: after a restart, send them again (HA can re-send on the device's reconnect).
+- Errors: missing `buy`/`from`/`until`, `buy` outside 0…100, `until` ≤ `from`. Entries before the bad one stay stored.
 
 ### History: `{"cmd":"history","unit":"0100","period":"hour|day|week|month|year","type":"electrical|energy|economics|quality|direction","offset":0,"limit":50}`
 
@@ -127,7 +147,10 @@ Energy and money per stored period, joined on the device:
 | Tariff zone | text |
 | Config version | text, diagnostic |
 | Clock set, Demo tariff | binary, diagnostic |
-| Point N name / power / energy in / energy out / current (voltage, cost optional: `slot_voltage`, `slot_cost`; cost = monetary, total) | 12 slots; a new point takes the first free slot. With `slot_devices: true` each slot is its own HA device `Point N` (declared under `esphome: devices:` as `rbgrid_point_N`), and its entity names are short: Name, Power, Energy in, Energy out, Current |
+| External price | binary, diagnostic: an external price covers now |
+| Modules, Modules online | count, diagnostic: configured rbAmp modules / those that answer (fewer than 3 failed polls in a row) |
+| Nodes, Nodes online | count, diagnostic: paired ESP-NOW nodes / those online (a disabled node is not online) |
+| Point N name / power / energy in / energy out / current (voltage, cost optional: `slot_voltage`, `slot_cost`; cost = monetary, total; `Online` = connectivity, diagnostic: the point's source answers, unknown on an empty slot, `slot_online` default on) | 12 slots; a new point takes the first free slot. With `slot_devices: true` each slot is its own HA device `Point N` (declared under `esphome: devices:` as `rbgrid_point_N`), and its entity names are short: Name, Power, Energy in, Energy out, Current |
 
 A slot is released (Name "", values unknown) when its point is deleted, or when the user switches the point off: the whole node disabled, or that input disabled in the node settings (`set espnow configure`). Switching it back on gives the point the first free slot again, which may be a different one. A point whose source is merely absent (module or node silent) keeps its slot and name; only its live values go unknown.
 

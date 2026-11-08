@@ -1,0 +1,49 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "rbgrid_cmd/price/1",
+ "title": "rbgrid_cmd reply: get price",
+ "description": "External prices stored on the device. Schema 1 (reply field `schema`). Inferred from a live device (ESPHome build 1.2.0-dev, 2026-11-08): every listed key is present in that reply; extra keys may appear and must be ignored.",
+ "type": "object",
+ "required": [
+  "active",
+  "now",
+  "prices",
+  "type"
+ ],
+ "properties": {
+  "type": {
+   "type": "string"
+  },
+  "now": {
+   "type": "number"
+  },
+  "active": {
+   "type": "boolean"
+  },
+  "prices": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "buy",
+     "from",
+     "until"
+    ],
+    "properties": {
+     "from": {
+      "type": "number"
+     },
+     "until": {
+      "type": "number"
+     },
+     "buy": {
+      "type": "number"
+     },
+     "sell": {
+      "type": "number"
+     }
+    }
+   }
+  }
+ }
+}

@@ -2957,6 +2957,15 @@ int rbamp_bridge_digest(uint8_t m, int n, char *out, size_t cap)
     return len;
 }
 
+int rbamp_bridge_module_counts(int *online)
+{
+    int on = 0, n = s_cfg.module_count;
+    for (int m = 0; m < n && m < RBAMP_MAX_MODULES; ++m)
+        if (s_dev[m] != NULL && s_poll_fail_n[m] < 3) on++;   /* probed and its polls answer */
+    if (online) *online = on;
+    return n;
+}
+
 bool rbamp_bridge_module_status(uint8_t m, uint8_t *addr, bool *has_vhw, uint8_t *energy_mode)
 {
     if (m >= RBAMP_MAX_MODULES || s_dev[m] == NULL) return false;

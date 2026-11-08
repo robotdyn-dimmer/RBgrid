@@ -1,0 +1,281 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "rbgrid_cmd/units/1",
+ "title": "rbgrid_cmd reply: get units",
+ "description": "Every point with its settings (= GET /api/system/units-config). Schema 1 (reply field `schema`). Inferred from a live device (ESPHome build 1.2.0-dev, 2026-11-08): every listed key is present in that reply; extra keys may appear and must be ignored.",
+ "type": "object",
+ "required": [
+  "data",
+  "device_id",
+  "timestamp_local",
+  "timestamp_ntp",
+  "type",
+  "version"
+ ],
+ "properties": {
+  "type": {
+   "type": "string"
+  },
+  "version": {
+   "type": "string"
+  },
+  "device_id": {
+   "type": "string"
+  },
+  "timestamp_local": {
+   "type": "number"
+  },
+  "timestamp_ntp": {
+   "type": "number"
+  },
+  "data": {
+   "type": "object",
+   "required": [
+    "active_units_count",
+    "point_tombstones",
+    "system_healthy",
+    "units",
+    "units_count"
+   ],
+   "properties": {
+    "units": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "accumulate_energy",
+       "bidirectional_metering",
+       "billing",
+       "caps",
+       "channel_idx",
+       "charge_threshold_w",
+       "child_units",
+       "children_count",
+       "created_timestamp_us",
+       "device_uid",
+       "group_id",
+       "has_realtime_data",
+       "has_statistics_enabled",
+       "history",
+       "idle_timeout_min",
+       "inside",
+       "is_active",
+       "last_update_us",
+       "location",
+       "max_current_a",
+       "name",
+       "parent_unit_id",
+       "phase",
+       "point",
+       "rated_power_w",
+       "rated_voltage_v",
+       "role",
+       "role_trunk",
+       "short_name",
+       "sources",
+       "sources_count",
+       "stat_class",
+       "thresholds",
+       "total_updates",
+       "type",
+       "unit_id"
+      ],
+      "properties": {
+       "unit_id": {
+        "type": "number"
+       },
+       "name": {
+        "type": "string"
+       },
+       "short_name": {
+        "type": "string"
+       },
+       "location": {
+        "type": "string"
+       },
+       "type": {
+        "type": "string"
+       },
+       "role": {
+        "type": "string"
+       },
+       "stat_class": {
+        "type": "string"
+       },
+       "sources": {
+        "type": "array",
+        "items": {
+         "type": "object",
+         "required": [
+          "invert_sign",
+          "is_primary",
+          "sensor_profile_id",
+          "source_id",
+          "source_type",
+          "weight_factor"
+         ],
+         "properties": {
+          "source_type": {
+           "type": "string"
+          },
+          "source_id": {
+           "type": "number"
+          },
+          "sensor_profile_id": {
+           "type": "number"
+          },
+          "weight_factor": {
+           "type": "number"
+          },
+          "is_primary": {
+           "type": "boolean"
+          },
+          "invert_sign": {
+           "type": "boolean"
+          }
+         }
+        }
+       },
+       "sources_count": {
+        "type": "number"
+       },
+       "parent_unit_id": {
+        "type": "number"
+       },
+       "child_units": {
+        "type": "array"
+       },
+       "children_count": {
+        "type": "number"
+       },
+       "bidirectional_metering": {
+        "type": "boolean"
+       },
+       "accumulate_energy": {
+        "type": "boolean"
+       },
+       "rated_power_w": {
+        "type": "number"
+       },
+       "max_current_a": {
+        "type": "number"
+       },
+       "rated_voltage_v": {
+        "type": "number"
+       },
+       "charge_threshold_w": {
+        "type": "number"
+       },
+       "idle_timeout_min": {
+        "type": "number"
+       },
+       "thresholds": {
+        "type": "object",
+        "required": [
+         "enable_alerts",
+         "over_current_a",
+         "over_power_w",
+         "over_voltage_v",
+         "under_voltage_v"
+        ],
+        "properties": {
+         "over_power_w": {
+          "type": "number"
+         },
+         "under_voltage_v": {
+          "type": "number"
+         },
+         "over_current_a": {
+          "type": "number"
+         },
+         "over_voltage_v": {
+          "type": "number"
+         },
+         "enable_alerts": {
+          "type": "boolean"
+         }
+        }
+       },
+       "billing": {
+        "type": "object",
+        "required": [
+         "cost_per_kwh",
+         "current_tariff_zone",
+         "time_of_use_enabled"
+        ],
+        "properties": {
+         "cost_per_kwh": {
+          "type": "number"
+         },
+         "time_of_use_enabled": {
+          "type": "boolean"
+         },
+         "current_tariff_zone": {
+          "type": "number"
+         }
+        }
+       },
+       "is_active": {
+        "type": "boolean"
+       },
+       "created_timestamp_us": {
+        "type": "number"
+       },
+       "point": {
+        "type": "string"
+       },
+       "caps": {
+        "type": "number"
+       },
+       "device_uid": {
+        "type": "number"
+       },
+       "channel_idx": {
+        "type": "number"
+       },
+       "history": {
+        "type": "boolean"
+       },
+       "phase": {
+        "type": "number"
+       },
+       "group_id": {
+        "type": "number"
+       },
+       "role_trunk": {
+        "type": "number"
+       },
+       "inside": {
+        "type": "number"
+       },
+       "has_realtime_data": {
+        "type": "boolean"
+       },
+       "has_statistics_enabled": {
+        "type": "boolean"
+       },
+       "last_update_us": {
+        "type": "number"
+       },
+       "total_updates": {
+        "type": "number"
+       }
+      }
+     }
+    },
+    "units_count": {
+     "type": "number"
+    },
+    "active_units_count": {
+     "type": "number"
+    },
+    "system_healthy": {
+     "type": "boolean"
+    },
+    "point_tombstones": {
+     "type": "array"
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,719 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "rbgrid_cmd/telemetry_data/1",
+ "title": "rbgrid_cmd reply: get telemetry_data",
+ "description": "Live frame: system, tariff now, points (= GET /api/telemetry/latest). Schema 1 (reply field `schema`). Inferred from a live device (ESPHome build 1.2.0-dev, 2026-11-08): every listed key is present in that reply; extra keys may appear and must be ignored.",
+ "type": "object",
+ "required": [
+  "boot_id",
+  "freq",
+  "freq_src",
+  "hw_rev",
+  "main_unit",
+  "net_dir",
+  "net_pwr",
+  "seq",
+  "sntp",
+  "sync_age_s",
+  "system",
+  "time_src",
+  "tq",
+  "ts",
+  "units",
+  "v"
+ ],
+ "properties": {
+  "v": {
+   "type": "number"
+  },
+  "ts": {
+   "type": "number"
+  },
+  "sntp": {
+   "type": "number"
+  },
+  "tq": {
+   "type": "number"
+  },
+  "sync_age_s": {
+   "type": "number"
+  },
+  "time_src": {
+   "type": "string"
+  },
+  "seq": {
+   "type": "number"
+  },
+  "boot_id": {
+   "type": "number"
+  },
+  "hw_rev": {
+   "type": "number"
+  },
+  "freq": {
+   "type": "number"
+  },
+  "freq_src": {
+   "type": "string"
+  },
+  "net_dir": {
+   "type": "number"
+  },
+  "net_pwr": {
+   "type": "number"
+  },
+  "system": {
+   "type": "object",
+   "required": [
+    "base_w",
+    "base_w_hours",
+    "base_w_nights",
+    "boot",
+    "cost_day",
+    "cost_total",
+    "day_start",
+    "e_day_in",
+    "e_day_out",
+    "e_in",
+    "e_out",
+    "p_act",
+    "p_rea",
+    "present",
+    "rev_day",
+    "rev_total",
+    "tariff",
+    "units"
+   ],
+   "properties": {
+    "p_act": {
+     "type": "number"
+    },
+    "p_rea": {
+     "type": "number"
+    },
+    "e_in": {
+     "type": "number"
+    },
+    "e_out": {
+     "type": "number"
+    },
+    "e_day_in": {
+     "type": "number"
+    },
+    "e_day_out": {
+     "type": "number"
+    },
+    "cost_total": {
+     "type": "number"
+    },
+    "cost_day": {
+     "type": "number"
+    },
+    "rev_total": {
+     "type": "number"
+    },
+    "rev_day": {
+     "type": "number"
+    },
+    "base_w": {
+     "type": "null"
+    },
+    "base_w_hours": {
+     "type": "number"
+    },
+    "base_w_nights": {
+     "type": "number"
+    },
+    "day_start": {
+     "type": "string"
+    },
+    "boot": {
+     "type": "object",
+     "required": [
+      "downtime_s",
+      "planned",
+      "reason",
+      "ts"
+     ],
+     "properties": {
+      "ts": {
+       "type": "number"
+      },
+      "reason": {
+       "type": "string"
+      },
+      "planned": {
+       "type": "boolean"
+      },
+      "downtime_s": {
+       "type": "number"
+      }
+     }
+    },
+    "tariff": {
+     "type": "object",
+     "required": [
+      "buy_rate",
+      "buy_rate_all_in",
+      "cost_rate_h",
+      "currency",
+      "placeholder",
+      "sell_rate",
+      "zone"
+     ],
+     "properties": {
+      "zone": {
+       "type": "string"
+      },
+      "buy_rate": {
+       "type": "number"
+      },
+      "sell_rate": {
+       "type": "number"
+      },
+      "buy_rate_all_in": {
+       "type": "number"
+      },
+      "cost_rate_h": {
+       "type": "number"
+      },
+      "currency": {
+       "type": "string"
+      },
+      "placeholder": {
+       "type": "boolean"
+      }
+     }
+    },
+    "units": {
+     "type": "number"
+    },
+    "present": {
+     "type": "number"
+    }
+   }
+  },
+  "units": {
+   "type": "object",
+   "required": [
+    "0100",
+    "6A04",
+    "6A05",
+    "6A06",
+    "v_bus"
+   ],
+   "properties": {
+    "v_bus": {
+     "type": "object",
+     "required": [
+      "bus",
+      "ch",
+      "module",
+      "n_ph",
+      "present",
+      "src",
+      "src_class",
+      "v"
+     ],
+     "properties": {
+      "v": {
+       "type": "number"
+      },
+      "present": {
+       "type": "boolean"
+      },
+      "src": {
+       "type": "string"
+      },
+      "src_class": {
+       "type": "string"
+      },
+      "bus": {
+       "type": "number"
+      },
+      "module": {
+       "type": "number"
+      },
+      "ch": {
+       "type": "number"
+      },
+      "n_ph": {
+       "type": "number"
+      }
+     }
+    },
+    "0100": {
+     "type": "object",
+     "required": [
+      "age_s",
+      "caps",
+      "cost_day",
+      "cost_total",
+      "dir",
+      "e_day_in",
+      "e_day_out",
+      "e_in",
+      "e_out",
+      "i",
+      "load_pct",
+      "p_act",
+      "p_rea",
+      "pf",
+      "point",
+      "present",
+      "q_live",
+      "res",
+      "rev_day",
+      "rev_total",
+      "role",
+      "src",
+      "src_class",
+      "type",
+      "unit_id",
+      "v"
+     ],
+     "properties": {
+      "v": {
+       "type": "number"
+      },
+      "i": {
+       "type": "number"
+      },
+      "p_act": {
+       "type": "number"
+      },
+      "p_rea": {
+       "type": "number"
+      },
+      "pf": {
+       "type": "number"
+      },
+      "dir": {
+       "type": "number"
+      },
+      "present": {
+       "type": "boolean"
+      },
+      "age_s": {
+       "type": "null"
+      },
+      "src": {
+       "type": "string"
+      },
+      "src_class": {
+       "type": "string"
+      },
+      "e_in": {
+       "type": "number"
+      },
+      "e_out": {
+       "type": "number"
+      },
+      "load_pct": {
+       "type": "number"
+      },
+      "e_day_in": {
+       "type": "number"
+      },
+      "e_day_out": {
+       "type": "number"
+      },
+      "cost_day": {
+       "type": "number"
+      },
+      "rev_day": {
+       "type": "number"
+      },
+      "cost_total": {
+       "type": "number"
+      },
+      "rev_total": {
+       "type": "number"
+      },
+      "unit_id": {
+       "type": "string"
+      },
+      "type": {
+       "type": "string"
+      },
+      "role": {
+       "type": "string"
+      },
+      "point": {
+       "type": "string"
+      },
+      "caps": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "res": {
+       "type": "number"
+      },
+      "q_live": {
+       "type": "number"
+      }
+     }
+    },
+    "6A04": {
+     "type": "object",
+     "required": [
+      "age_s",
+      "caps",
+      "dir",
+      "e_day_in",
+      "e_day_out",
+      "e_in",
+      "e_out",
+      "energy_mode",
+      "i",
+      "p_act",
+      "p_rea",
+      "pf",
+      "point",
+      "present",
+      "q_live",
+      "res",
+      "result",
+      "role",
+      "src",
+      "src_class",
+      "type",
+      "unit_id",
+      "v"
+     ],
+     "properties": {
+      "v": {
+       "type": "number"
+      },
+      "i": {
+       "type": "number"
+      },
+      "p_act": {
+       "type": "number"
+      },
+      "p_rea": {
+       "type": "number"
+      },
+      "pf": {
+       "type": "number"
+      },
+      "dir": {
+       "type": "number"
+      },
+      "present": {
+       "type": "boolean"
+      },
+      "age_s": {
+       "type": "number"
+      },
+      "point": {
+       "type": "string"
+      },
+      "src": {
+       "type": "string"
+      },
+      "src_class": {
+       "type": "string"
+      },
+      "energy_mode": {
+       "type": "string"
+      },
+      "e_in": {
+       "type": "number"
+      },
+      "e_day_in": {
+       "type": "number"
+      },
+      "e_out": {
+       "type": "number"
+      },
+      "e_day_out": {
+       "type": "number"
+      },
+      "result": {
+       "type": "object",
+       "required": [
+        "i",
+        "p_act",
+        "p_rea",
+        "pf",
+        "v"
+       ],
+       "properties": {
+        "v": {
+         "type": "number"
+        },
+        "i": {
+         "type": "number"
+        },
+        "p_act": {
+         "type": "number"
+        },
+        "p_rea": {
+         "type": "number"
+        },
+        "pf": {
+         "type": "number"
+        }
+       }
+      },
+      "unit_id": {
+       "type": "string"
+      },
+      "type": {
+       "type": "string"
+      },
+      "role": {
+       "type": "string"
+      },
+      "caps": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "res": {
+       "type": "number"
+      },
+      "q_live": {
+       "type": "number"
+      }
+     }
+    },
+    "6A05": {
+     "type": "object",
+     "required": [
+      "age_s",
+      "caps",
+      "dir",
+      "e_day_in",
+      "e_day_out",
+      "e_in",
+      "e_out",
+      "i",
+      "p_act",
+      "p_rea",
+      "pf",
+      "point",
+      "present",
+      "q_live",
+      "res",
+      "result",
+      "role",
+      "src",
+      "src_class",
+      "type",
+      "unit_id"
+     ],
+     "properties": {
+      "i": {
+       "type": "number"
+      },
+      "p_act": {
+       "type": "number"
+      },
+      "p_rea": {
+       "type": "number"
+      },
+      "pf": {
+       "type": "number"
+      },
+      "dir": {
+       "type": "number"
+      },
+      "present": {
+       "type": "boolean"
+      },
+      "age_s": {
+       "type": "null"
+      },
+      "point": {
+       "type": "string"
+      },
+      "src": {
+       "type": "string"
+      },
+      "src_class": {
+       "type": "string"
+      },
+      "e_in": {
+       "type": "number"
+      },
+      "e_day_in": {
+       "type": "number"
+      },
+      "e_out": {
+       "type": "number"
+      },
+      "e_day_out": {
+       "type": "number"
+      },
+      "result": {
+       "type": "object",
+       "required": [
+        "i",
+        "p_act",
+        "p_rea",
+        "pf"
+       ],
+       "properties": {
+        "i": {
+         "type": "number"
+        },
+        "p_act": {
+         "type": "number"
+        },
+        "p_rea": {
+         "type": "number"
+        },
+        "pf": {
+         "type": "number"
+        }
+       }
+      },
+      "unit_id": {
+       "type": "string"
+      },
+      "type": {
+       "type": "string"
+      },
+      "role": {
+       "type": "string"
+      },
+      "caps": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "res": {
+       "type": "number"
+      },
+      "q_live": {
+       "type": "number"
+      }
+     }
+    },
+    "6A06": {
+     "type": "object",
+     "required": [
+      "age_s",
+      "caps",
+      "dir",
+      "e_day_in",
+      "e_day_out",
+      "e_in",
+      "e_out",
+      "i",
+      "p_act",
+      "p_rea",
+      "pf",
+      "point",
+      "present",
+      "q_live",
+      "res",
+      "result",
+      "role",
+      "src",
+      "src_class",
+      "type",
+      "unit_id"
+     ],
+     "properties": {
+      "i": {
+       "type": "number"
+      },
+      "p_act": {
+       "type": "number"
+      },
+      "p_rea": {
+       "type": "number"
+      },
+      "pf": {
+       "type": "number"
+      },
+      "dir": {
+       "type": "number"
+      },
+      "present": {
+       "type": "boolean"
+      },
+      "age_s": {
+       "type": "null"
+      },
+      "point": {
+       "type": "string"
+      },
+      "src": {
+       "type": "string"
+      },
+      "src_class": {
+       "type": "string"
+      },
+      "e_in": {
+       "type": "number"
+      },
+      "e_day_in": {
+       "type": "number"
+      },
+      "e_out": {
+       "type": "number"
+      },
+      "e_day_out": {
+       "type": "number"
+      },
+      "result": {
+       "type": "object",
+       "required": [
+        "i",
+        "p_act",
+        "p_rea",
+        "pf"
+       ],
+       "properties": {
+        "i": {
+         "type": "number"
+        },
+        "p_act": {
+         "type": "number"
+        },
+        "p_rea": {
+         "type": "number"
+        },
+        "pf": {
+         "type": "number"
+        }
+       }
+      },
+      "unit_id": {
+       "type": "string"
+      },
+      "type": {
+       "type": "string"
+      },
+      "role": {
+       "type": "string"
+      },
+      "caps": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "res": {
+       "type": "number"
+      },
+      "q_live": {
+       "type": "number"
+      }
+     }
+    }
+   }
+  },
+  "main_unit": {
+   "type": "string"
+  }
+ }
+}
