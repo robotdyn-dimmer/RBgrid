@@ -31,7 +31,7 @@
 ### Stored data survives faults
 An independent code review of v1.1.6/1.1.7-dev looked for ways a fault could lose or double energy, or reset the hub's
 settings. These are the fixes; each one was reproduced on the bench with injected faults before and after.
-- **A failed flash write no longer loses the hour.** The hourly record is kept for a retry (every quarter) instead
+- **A failed flash write no longer loses the hour.** The hourly record is kept for a retry (every 15 minutes) instead
   of being dropped, together with the hour's recovery copy in NVS. A set that failed half-way is completed without
   writing its first part twice.
 - **A storage read error at boot no longer erases the settings.** The configuration store was formatted on any
@@ -45,14 +45,14 @@ settings. These are the fixes; each one was reproduced on the bench with injecte
 - **Energy measured while the hub was off for more than a day is kept.** It used to be dropped. It is now added to
   the totals and to the current hour, which is flagged `outage` (new history quality bit 12), and priced at the
   plan's default zone.
-- **A quarter that wasn't recorded keeps its energy for the next restart** (the module's counter reference used
-  to move on before the quarter was in).
-- **Quarter prices use the quarter's own time**, also when it is processed late, and a new tariff plan is applied
+- **A 15-minute period that wasn't recorded keeps its energy for the next restart** (the module's counter reference
+  used to move on before the period was in).
+- **15-minute periods are priced at their own time**, also when it is processed late, and a new tariff plan is applied
   in one step: the costing never sees a half-loaded plan. A plan with more zones than the hub holds is refused
   (it read past the zone table over MQTT).
 
 ### Tariffs and net metering
-- **Clock not set yet** (power-up without internet): quarters are priced at the plan's default zone instead of
+- **Clock not set yet** (power-up without internet): 15-minute periods are priced at the plan's default zone instead of
   whatever zone the unset clock fell into.
 - **Net metering switched off** no longer collects the month's import and export, so the first month-end after
   switching it back on settles only that month.
@@ -84,7 +84,7 @@ into the image. `GET /api/v1/espnow` reports `keys:true` and where the key came 
 - **Node health:** signal (`rssi_dbm`), link loss over the last minute (`loss_pct`), last heard. Over MQTT: a retained
   status topic per node and events (`paired`, `removed`, `node_online`, `node_offline`); in Home Assistant a
   signal sensor per node. A node not heard since the hub started reads "no data", not 0.
-- **Energy by the node's own quarter.** A node period is priced and filed by the quarter the node closed, not by when
+- **Energy by the node's own 15-minute period.** A node period is priced and filed by the 15-minute period the node closed, not by when
   it arrived, so a period held through a radio gap or a hub restart lands in the right hour and zone. A period
   stamped more than 2 minutes ahead of the hub clock is filed by its arrival, with a FAIL event.
 - Node periods are acknowledged only after they are recorded, and a period the node sends again (lost
@@ -383,7 +383,7 @@ First source release of the RBgrid hub firmware under the **PolyForm Noncommerci
 - SCT-013 rating correction for BASIC modules (via the rbAmp ESP-IDF component).
 - Per-channel sensor load flags: near the sensor limit (`ct_warn`) and clipping (`clip`).
 - Any channel may be left unused; free channels are listed in `/api/v1/sensors` and can be bound later.
-- 15-minute energy taken from the module's own period accounting; a hub restart inside a quarter keeps
+- 15-minute energy taken from the module's own period accounting; a hub restart inside a 15-minute period keeps
   the energy the module counted meanwhile.
 
 ### Statistics, tariffs, export
