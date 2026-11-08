@@ -91,8 +91,25 @@ Energy and money per stored period, joined on the device:
  "cols":["ts","dur","wh_in","wh_out","cost","revenue","q"],"rows":[[1794124800,3600,12.3,0,0.0048,0,1], ...]}
 ```
 
-- `ts` is the period start (unix), `dur` the seconds it covers.
-- `q` holds the quality bits; `get schema` → `quality_bits` names them (ESTIMATED, OUTAGE, restart, …).
+- `ts` is the **end** of the covered interval (unix), the history contract's rule. `dur` is the seconds it covers, so the interval is [`ts − dur`, `ts`). A full hour row stamped 09:00 is 08:00–09:00. A short row (e.g. `dur` 267 stamped 08:00) is the part of an hour after a boot.
+- `cost` / `revenue` are stored in minor units (cents) in flash, so a stored row is exact to 0.01 of the currency. Finer money is only live (entities).
+- `q` holds the quality bits; `get schema` → `quality_bits` names them:
+
+  | Bit (value) | Name |
+  |---|---|
+  | 0 (1) | PARTIAL |
+  | 1 (2) | TIME_UNSYNC |
+  | 2 (4) | CLOCK_STEP |
+  | 3 (8) | SRC_GAP |
+  | 4 (16) | RECOMPUTED |
+  | 5 (32) | ESTIMATED |
+  | 6 (64) | UNSIGNED_SRC — a BASIC module (consumption only) |
+  | 7 (128) | OVERRANGE |
+  | 8 (256) | MIGRATED |
+  | 9 (512) | SRC_RESTART |
+  | 10 (1024) | SRC_FW |
+  | 11 (2048) | REVERSE_LOST |
+  | 12 (4096) | OUTAGE |
 - Rows come newest first, filtered to [`from`, `to`).
 - **Resolution:** the hour is the finest stored period. 15-minute periods are live only and are not kept in flash.
 - About 40 bytes per row; more than ~90 rows arrive in parts.
