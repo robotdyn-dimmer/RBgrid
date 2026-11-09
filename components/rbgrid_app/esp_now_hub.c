@@ -80,6 +80,12 @@ static uint32_t s_last_node_fits = 0;
 #define ENH_MAX_UNITS    (ESPNOW_REG_MAX_NODES * ESPNOW_REG_MAX_CH)
 /** @brief Fallback voltage (V) for current-only nodes with no voltage source (unused; see rbgrid_nominal_voltage_v()). */
 #define ENH_NOMINAL_V    230.0f   /* fallback voltage for current-only nodes with no V source */
+#ifndef RBGRID_CURONLY_ENERGY_ESTIMATE
+/** @brief 1: book a current-only node period with energy from the nominal voltage (ESTIMATED). 0 (default): not booked. */
+#define RBGRID_CURONLY_ENERGY_ESTIMATE 0
+#endif
+/** @brief Current-only node periods not booked (RBGRID_CURONLY_ENERGY_ESTIMATE = 0). */
+static uint32_t s_curonly_skipped = 0;
 /** @brief Nominal mains voltage (V) from the hardware config, defined in main.cpp (fallback 230 V).
  *  @return Nominal voltage in V. */
 extern float rbgrid_nominal_voltage_v(void);
@@ -1042,8 +1048,14 @@ static void inject_task(void *arg)
                 float e_wh = rec->energy_wh, p_avg = rec->avg_power_w, p_max = rec->max_power_w, v_rec = rec->voltage_v;
                 uint32_t dur_ms = rec->period_ms;
                 uint16_t q_extra = 0;
-                /* Current-only channel (no voltage on the node: voltage 0, energy 0, current > 0): estimate from the
-                 * nominal voltage, as the live values do; the hour is flagged ESTIMATED. */
+                /* Current-only channel (no voltage on the node: voltage 0, energy 0, current > 0). Energy from the nominal
+                 * voltage is not real energy (operator 2026-11-10: wrong figures), so by default such a record is not
+                 * booked: the hour stays without data rather than showing an estimate (live values still show current).
+                 * RBGRID_CURONLY_ENERGY_ESTIMATE=1 restores the estimate (flagged ESTIMATED). */
+                if (v_rec <= 0.0f && fabsf(e_wh) < 1e-6f && rec->current_avg_a > 0.0f && !RBGRID_CURONLY_ENERGY_ESTIMATE) {
+                    s_curonly_skipped++;
+                    continue;
+                }
                 if (v_rec <= 0.0f && fabsf(e_wh) < 1e-6f && rec->current_avg_a > 0.0f) {
                     const float vn = rbgrid_nominal_voltage_v();
                     p_avg = vn * rec->current_avg_a;
@@ -1490,6 +1502,7 @@ char *esp_now_hub_status_json(void)
     cJSON_AddNumberToObject(root, "periods_recv", s_periods_recv);          /* PERIOD frames queued */
     cJSON_AddNumberToObject(root, "periods_injected", s_periods_injected);  /* records counted */
     cJSON_AddNumberToObject(root, "periods_dropped", s_periods_dropped);    /* records ACKed but not counted (disabled/rejected) */
+    cJSON_AddNumberToObject(root, "periods_curonly_skipped", s_curonly_skipped);   /* current-only records not booked */
     cJSON_AddNumberToObject(root, "periods_dup", s_periods_dup);            /* resends of an injected frame, re-ACKed only */
     cJSON_AddNumberToObject(root, "rt_recv", s_rt_recv);
     cJSON_AddNumberToObject(root, "stats_recv", s_stats_recv);
