@@ -1308,6 +1308,8 @@ static void inject_module(uint8_t mod, const rbamp_module_cfg_t *mc, const rbamp
             float i = ich * cg;
             /* voltage module: device power + device PF; current-only: host P = V(phase) × I. */
             if (!has_v) u = unit_grid_voltage(en->unit_id);
+            else if (s_nv[mod] > 1 && ch < 3 && !isnan(s_u_ph[mod][ch]) && s_u_ph[mod][ch] > 1.0f)
+                u = s_u_ph[mod][ch];   /* U3I3 channel as its own point: its phase's voltage (was L1's for every channel) */
             float p  = has_v ? (isnan(pch) ? 0.0f : pch * cg) : (u * i);
             float pf = has_v ? (isnan(pfch) ? 0.0f : pfch) : 1.0f;
             /* BASIC meters consumption only: a negative live P (CT reversed) never reaches the energy, so it must not
