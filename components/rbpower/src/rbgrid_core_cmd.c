@@ -95,8 +95,8 @@ static char* cmd_get_section(const cJSON* root, const char* section)
     if (strcmp(section, "sensors") == 0) return rbgrid_json_create_sensors_list(rbgrid_core_json_ctx());
     if (strcmp(section, "espnow") == 0)  return s_espnow_status_provider ? s_espnow_status_provider() : NULL;
     if (strcmp(section, "price") == 0) {   /* external energy prices in force / ahead */
-        static rbpower_ext_price_t ep[48];
-        int n = rbpower_tariff_external_prices(ep, 48);
+        static rbpower_ext_price_t ep[RBPOWER_EXT_PRICE_MAX];
+        int n = rbpower_tariff_external_prices(ep, RBPOWER_EXT_PRICE_MAX);
         cJSON* o = cJSON_CreateObject();
         cJSON_AddStringToObject(o, "type", "price");
         cJSON_AddNumberToObject(o, "now", (double)time(NULL));

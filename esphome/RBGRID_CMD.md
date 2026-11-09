@@ -95,8 +95,10 @@ These are the web app's point routes. The reply carries `data.code` (HTTP-style)
   (optional) replaces the feed-in rate; leave it out to keep the plan's.
 - A 15-min period is priced at its midpoint, like the zones. Energy is booked when the period closes, so a price
   must cover the period's middle by then; sending the day-ahead prices once a day is the intended use.
-- An entry with the same `from` is replaced; entries that ended more than a day before a new one are dropped; up to 48
-  are kept (the oldest start goes first).
+- An entry with the same `from` is replaced; entries that ended more than an hour ago (by the device clock) are dropped;
+  up to 192 are kept = 2 days of 15-min prices (when full, the oldest start goes first). Order inside `prices[]` does
+  not matter. Entries add up across commands, so a long list can go in pages (≤ 48 entries ≈ 3 KB per command is a
+  comfortable size); `{"clear":true}` first if the new list must replace everything.
 - **Outside every entry the tariff plan's zone rates apply** (the fixed tariff is the fallback): if HA stops sending,
   money keeps accruing at the plan. The `External price` entity is on while an entry covers now.
 - Prices live in RAM: after a restart, send them again (HA can re-send on the device's reconnect).

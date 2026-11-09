@@ -2433,6 +2433,9 @@ extern "C"
 #endif
 void rbpower_tariff_cost_at_default_zone(rbpower_unit_id_t unit_id, float energy_wh, rbgrid_snapshot_base_t* result_base);
 
+/** Entries kept by the external price store: 2 days of 15-min prices (2 x 96). */
+#define RBPOWER_EXT_PRICE_MAX 192
+
 /** @brief One external price entry (see rbpower_tariff_set_external_price). */
 typedef struct {
     uint32_t from;    ///< Start, unix seconds

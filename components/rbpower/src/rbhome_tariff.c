@@ -2465,7 +2465,7 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
  * Replaces the zone's energy rate per kWh for [from, until); the plan's per-kWh fees and VAT still apply on top, and the
  * zone still names the period. Outside every entry the plan's zone rates apply (the fixed tariff is the fallback).
  * RAM only: after a restart the price source sends the prices again. */
-#define EXT_PRICE_MAX 48   /* a day of hourly prices, two days of half-hour... the newest entries win */
+#define EXT_PRICE_MAX RBPOWER_EXT_PRICE_MAX   /* 2 days of 15-min prices; the oldest start goes first */
 typedef struct { uint32_t from, until; float buy, sell; } ext_price_t;
 static ext_price_t s_ext_price[EXT_PRICE_MAX];
 static int s_ext_price_n = 0;
@@ -2476,9 +2476,14 @@ esp_err_t rbpower_tariff_set_external_price(float buy, float sell, uint32_t from
     if (!(buy >= 0.0f) || buy > 100.0f || sell > 100.0f || until <= from) return ESP_ERR_INVALID_ARG;
     ext_price_t e = { from, until, buy, sell };
     portENTER_CRITICAL(&s_ext_price_mux);
+    /* Drop the entry this replaces and entries that ended over an hour ago by the clock (the hour keeps the price
+     * of a period that just closed; booking runs at its end). Age is measured from now, not from the new entry:
+     * an ascending today+tomorrow list must not purge today's entries. Clock unset: no age purge. */
+    uint32_t now = (uint32_t)time(NULL);
+    uint32_t keep_after = now > 1600000000u ? now - 3600u : 0u;
     int k = 0;
-    for (int i = 0; i < s_ext_price_n; i++)                 /* drop entries that ended, and the one this replaces */
-        if (s_ext_price[i].until > from - (from > 86400 ? 86400 : from) && s_ext_price[i].from != from)
+    for (int i = 0; i < s_ext_price_n; i++)
+        if (s_ext_price[i].until > keep_after && s_ext_price[i].from != from)
             s_ext_price[k++] = s_ext_price[i];
     s_ext_price_n = k;
     if (s_ext_price_n == EXT_PRICE_MAX) {                   /* full: drop the oldest start */
