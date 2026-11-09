@@ -15,6 +15,8 @@
 #include "rbgrid_config_storage.h"
 #include "rbgrid_config_api.h"
 #include "rbhome_tariff.h"
+#include "rbpower.h"
+#include "rbgrid_tz.h"
 #include "rbdynprice.h"
 #include "rbpeak.h"
 #include "rbactivation.h"
@@ -117,6 +119,20 @@ static char* cmd_get_section(const cJSON* root, const char* section)
         cJSON_Delete(o);
         return r;
     }
+    if (strcmp(section, "time") == 0) {   /* the hub's own time zone (tariff zones, local days, windows) */
+        rbtime_config_t tc; memset(&tc, 0, sizeof(tc));
+        rbtime_get_config(&tc);
+        time_t now = time(NULL); struct tm lt; char loc[24] = "";
+        if (rbgrid_localtime_r(&now, &lt)) strftime(loc, sizeof(loc), "%Y-%m-%dT%H:%M:%S", &lt);
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "type", "time");
+        cJSON_AddStringToObject(o, "timezone", tc.timezone);
+        cJSON_AddBoolToObject(o, "time_valid", rbtime_is_time_valid());
+        cJSON_AddNumberToObject(o, "now", (double)now);
+        cJSON_AddStringToObject(o, "local", loc);
+        char *r = cJSON_PrintUnformatted(o); cJSON_Delete(o);
+        return r;
+    }
     if (strcmp(section, "price_log") == 0) {   /* applied price per closed 15-min period (audit) */
         const cJSON *jf = cJSON_GetObjectItem(root, "from"), *ju = cJSON_GetObjectItem(root, "until");
         cJSON *o = rbdynprice_price_log_json(cJSON_IsNumber(jf) ? (uint32_t)jf->valuedouble : 0,
@@ -212,6 +228,36 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
 
     char* ack = NULL;
     char msg[96];
+    if (strcmp(section, "time") == 0) {   /* {"timezone":"CST-8"}: POSIX TZ with an offset; saved in /time.json */
+        const char *tz = cJSON_GetStringValue(cJSON_GetObjectItem(data, "timezone"));
+        if (!tz || !tz[0] || strlen(tz) > 31 || !rbtime_timezone_is_valid(tz)) {
+            free(data_str);
+            return cmd_ack_json("set", section, "error",
+                                "timezone: a POSIX TZ with an offset, e.g. \"CST-8\", \"CET-1CEST,M3.5.0,M10.5.0/3\"", id);
+        }
+        /* merge into the saved time config (other keys kept), or start one */
+        char *old = NULL; size_t sz = 0;
+        cJSON *root2 = NULL;
+        if (littlefs_raw_size("/time.json", &sz) == ESP_OK && sz > 0 && sz < 4096 && (old = malloc(sz + 1))) {
+            size_t got = 0;
+            if (littlefs_raw_read("/time.json", old, sz, &got) == ESP_OK) { old[got] = 0; root2 = cJSON_Parse(old); }
+            free(old);
+        }
+        if (!root2) root2 = cJSON_CreateObject();
+        cJSON *cfg = cJSON_GetObjectItem(root2, "config");
+        if (!cfg) cfg = cJSON_AddObjectToObject(root2, "config");
+        cJSON_DeleteItemFromObject(cfg, "timezone");
+        cJSON_AddStringToObject(cfg, "timezone", tz);
+        char *out = cJSON_PrintUnformatted(root2); cJSON_Delete(root2);
+        esp_err_t se = out ? rbgrid_storage_save_time(out) : ESP_ERR_NO_MEM;
+        free(out);
+        rbpower_err_t te = rbtime_set_timezone(tz);
+        ack = (se == ESP_OK && te == RBPOWER_OK) ? cmd_ack_json("set", section, "ok", "timezone saved and applied", id)
+                                                 : cmd_ack_json("set", section, "error", "timezone applied but not saved", id);
+        rbdynprice_kick();
+        free(data_str);
+        return ack;
+    }
     if (strcmp(section, "rules") == 0) {   /* {"rules":[…]} and/or {"signal":{…}}; a rejection names the field */
         char ef[24] = "", em[128] = "";
         if (rbact_set(data, ef, sizeof(ef), em, sizeof(em)) == ESP_OK) {

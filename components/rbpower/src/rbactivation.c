@@ -95,6 +95,7 @@ int rbact_rank(uint32_t ts, bool sell, int *of_n)
 /* The window instance [S, E) of a daily window that contains now, else the next one. */
 static void window_instance(uint32_t now, int from_h, int to_h, uint32_t *S, uint32_t *E)
 {
+    to_h %= 24;                                          /* 24 = midnight at the end of the day */
     int len_h = to_h > from_h ? to_h - from_h : to_h + 24 - from_h;
     uint32_t m = local_midnight(now);
     for (int back = 1; back >= -1; back--) {              /* yesterday's (overnight), today's, tomorrow's */
@@ -362,11 +363,11 @@ esp_err_t rbact_set(const cJSON *d, char *ef, size_t efl, char *em, size_t eml)
                 r->consecutive = cJSON_IsTrue(cJSON_GetObjectItem(e, "consecutive"));
                 if (t == RT_CHEAPEST) {
                     const cJSON *f = cJSON_GetObjectItem(e, "from_h"), *to = cJSON_GetObjectItem(e, "to_h");
-                    if (!cJSON_IsNumber(f) || !cJSON_IsNumber(to) || f->valueint < 0 || f->valueint > 23 || to->valueint < 0 || to->valueint > 24 ||
-                        (f->valueint == to->valueint && to->valueint != 24))
-                        REJECT("from_h", "rule %d: from_h 0..23, to_h 0..24 (from_h = to_h only as 0..24 = all day)", n.n);
-                    r->from_h = (uint8_t)f->valueint; r->to_h = (uint8_t)(to->valueint % 24);
-                    int len = r->to_h > r->from_h ? r->to_h - r->from_h : r->to_h + 24 - r->from_h;
+                    if (!cJSON_IsNumber(f) || !cJSON_IsNumber(to) || f->valueint < 0 || f->valueint > 23 || to->valueint < 0 || to->valueint > 24)
+                        REJECT("from_h", "rule %d: from_h 0..23, to_h 0..24 (to_h <= from_h crosses midnight; equal = 24 h)", n.n);
+                    r->from_h = (uint8_t)f->valueint; r->to_h = (uint8_t)to->valueint;   /* kept as given: get = set */
+                    int t24 = r->to_h % 24;
+                    int len = t24 > r->from_h ? t24 - r->from_h : t24 + 24 - r->from_h;
                     if (r->periods > len * 4) REJECT("periods", "rule %d: more periods than the window holds (%d)", n.n, len * 4);
                 } else {
                     const cJSON *dl = cJSON_GetObjectItem(e, "deadline_h");
@@ -378,7 +379,10 @@ esp_err_t rbact_set(const cJSON *d, char *ef, size_t efl, char *em, size_t eml)
         }
         c = n;
     }
-    portENTER_CRITICAL(&s_mux); s_cfg = c; memset(s_st, 0, sizeof(s_st)); portEXIT_CRITICAL(&s_mux);
+    act_state_t st[RBACT_MAX_RULES]; memset(st, 0, sizeof(st));
+    uint32_t now = (uint32_t)time(NULL);
+    for (int i = 0; i < c.n; i++) eval_rule(&c.r[i], &st[i], now);   /* states at once (get rules right after set) */
+    portENTER_CRITICAL(&s_mux); s_cfg = c; memcpy(s_st, st, sizeof(st)); portEXIT_CRITICAL(&s_mux);
     cfg_save();
     rbdynprice_kick();                                   /* the dynprice task re-evaluates within ~2 s */
     return ESP_OK;

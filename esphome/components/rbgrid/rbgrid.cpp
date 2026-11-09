@@ -384,6 +384,9 @@ void RBgridComponent::run_command(const std::string &json) {
     const char *m = d ? cJSON_GetStringValue(cJSON_GetObjectItem(d, "message")) : nullptr;
     if (m == nullptr) m = cJSON_GetStringValue(cJSON_GetObjectItem(r, "message"));
     this->last_error_ = m ? m : "command failed";
+    // a rejection that names a field: "[field=zone] message" — HA only receives the error text
+    const char *f = d ? cJSON_GetStringValue(cJSON_GetObjectItem(d, "field")) : nullptr;
+    if (f != nullptr && f[0]) this->last_error_ = std::string("[field=") + f + "] " + this->last_error_;
   }
   cJSON_Delete(r);
 }

@@ -57,6 +57,7 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
 | `espnow` | `/api/v1/espnow`: nodes, pairing state. `nodes_total` / `nodes_online` = paired nodes / online now; `paired_count` = nodes paired in the current pairing window (a restart gives them their points) | |
 | `events` | The device's event log since a cursor: `"since":seq` (0 = oldest in RAM), `"limit"` ≤ 100 (default 50), `"level"` `event` (default: events + fails) \| `fail` \| `all`. Reply `{"type":"events","boot","first","next","more","lines":[{"seq","ts","up","lvl","msg"}]}`; pass `next` as the next `since`. This boot's RAM ring only. Use it after a reconnect to pick up what fired while HA was away (boot lines go out before HA connects) | |
 | `price` | Dynamic prices: state, the HA store and the resolved price per 15-min period (see "Dynamic prices") | |
+| `time` | The hub's own time zone (tariff zones, local days, cheap windows): `{"type":"time","timezone","time_valid","now","local"}`. A fresh hub runs on `UTC0` until a zone is set | |
 | `dynprice` | Price provider config, status and the provider catalogue (see "Dynamic prices") | |
 
 ### Change
@@ -74,6 +75,7 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
 | `{"cmd":"set","section":"espnow","data":{"action":"configure","mac":"E8:DB:84:3D:42:E8","config":{"period_s":900,"channels":[{"ch":5,"enabled":false}]}}}` | A node's input settings. `channels[]`: `ch` (the node's channel id, as `get espnow` lists it), optional `enabled`, optional `ct_code` 1…7; only the listed channels change. `period_s` is optional and must be 900. `channels` may also sit next to `action` without `config`. At least one channel must stay on. Applies when the node acknowledges (`config_state` pending → applied in `get espnow`) |
 | `{"cmd":"set","section":"espnow","data":{"action":"disable","mac":"…"}}` | `disable` / `enable` / `remove` a node by `mac`; `pair` opens the window for `seconds`; `latch` closes the current period on every node now |
 | `{"cmd":"set","section":"price","data":{"buy":0.12,"sell":0.05,"from":unix,"until":unix}}` | Home Assistant price push for [`from`, `until`); `"prices":[...]` sets many at once, `{"clear":true}` drops them all. See "Dynamic prices" |
+| `{"cmd":"set","section":"time","data":{"timezone":"CST-8"}}` | The hub's time zone, a POSIX TZ with an offset (`"CET-1CEST,M3.5.0,M10.5.0/3"`, `"<UTC+9>-9"`); saved and applied at once. Names like `Asia/Shanghai` are refused |
 | `{"cmd":"set","section":"dynprice","data":{...}}` | Price providers (primary / backup), zone, contract formula. See "Dynamic prices" |
 
 ### Points: `{"cmd":"unit","op":...}`
@@ -144,8 +146,8 @@ The plan's currency must equal the zone's currency for every network provider se
 
 - **Final buy price.** spot class: (energy rate + the plan's per-kWh fees) × (1 + VAT). all_in class: the price as is.
   Then `floor_buy` applies. Negative values are real prices.
-- **Errors** name the field: `{"result":"error","message":"…","field":"zone"}`. Over HTTP the same rejection is
-  `400 {"error":"…","field":"zone"}`.
+- **Errors** name the field: `{"result":"error","message":"…","field":"zone"}`. Through the ESPHome action the error
+  text starts with `[field=zone] `. Over HTTP the same rejection is `400 {"error":"…","field":"zone"}`.
 
 **`price_state`** (also the `Price state` entity):
 
@@ -203,7 +205,7 @@ zone where none covers). Up to 8 rules; `set` with `"rules":[…]` replaces them
 | `kind` | Fields | Active when |
 |---|---|---|
 | `threshold` | `on_below`, `off_above` (≥ on_below) | buy ≤ `on_below`; stays on until buy ≥ `off_above` |
-| `cheapest` | `from_h` 0…23, `to_h` 0…24 (local; `to_h` < `from_h` crosses midnight, 0…24 = all day), `periods` 1…96, `consecutive` | the current period is one of the `periods` cheapest of that day's window (or of the cheapest consecutive block) |
+| `cheapest` | `from_h` 0…23, `to_h` 0…24 (local; `to_h` ≤ `from_h` crosses midnight, equal = 24 h, 0…24 = the calendar day; `get` returns what was set), `periods` 1…96, `consecutive` | the current period is one of the `periods` cheapest of that day's window (or of the cheapest consecutive block) |
 | `deadline` | `deadline_h` 0…23, `periods`, `consecutive` | the same, over the 24 h ending at `deadline_h` ("N periods of run time before 07:00") |
 
 - Common fields: `id` (1…255), `name` (≤ 23 chars), `enabled` (default true).
