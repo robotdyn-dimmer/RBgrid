@@ -164,7 +164,11 @@ static void cfg_defaults(dp_cfg_t *c)
     strcpy(c->product, "AGILE-24-10-01");
     strcpy(c->export_product, "AGILE-OUTGOING-19-05-13");
 }
-static void cfg_get(dp_cfg_t *out) { portENTER_CRITICAL(&s_cfg_mux); *out = s_cfg; portEXIT_CRITICAL(&s_cfg_mux); }
+static void cfg_get(dp_cfg_t *out)
+{
+    portENTER_CRITICAL(&s_cfg_mux); *out = s_cfg; portEXIT_CRITICAL(&s_cfg_mux);
+    if (out->ver != DP_CFG_VER) cfg_defaults(out);       /* before rbdynprice_init (a first boot formats storage first) */
+}
 
 /* ============================================== stores ============================================== */
 
@@ -612,6 +616,12 @@ static int http_get(const char *url, char *buf, int cap, int *status)
 }
 
 /* Energy-Charts: {"unix_seconds":[…],"price":[…],"unit":"EUR / MWh"} — period starts, EUR/MWh. */
+static char s_fetch_prov[24], s_fetch_zone[12];
+static bool store_is_for_fetch_locked(int st)
+{
+    return !strcmp(s_st[st].provider, s_fetch_prov) && !strcmp(s_st[st].zone, s_fetch_zone);
+}
+
 static const char *fetch_energy_charts(int st, const char *zone, uint32_t start, uint32_t end, int *stored)
 {
     *stored = 0;
@@ -652,6 +662,7 @@ static const char *fetch_energy_charts(int st, const char *zone, uint32_t start,
             until = from + (from - (uint32_t)cJSON_GetArrayItem(ts, i - 1)->valuedouble);
         else until = from + 900;
         if (until - from > 3600) until = from + 900;
+        if (!store_is_for_fetch_locked(st)) break;
         st_put_locked(&s_st[st], from, until, (float)(p->valuedouble / div), NAN);
         (*stored)++;
     }
@@ -732,13 +743,17 @@ static cJSON *get_json(const char *url, int cap, int *status, const char **err)
     return j;
 }
 
+/* The provider + zone the running fetch is for. A config change during a slow fetch hands the store to another
+ * provider; the fetch's late entries must not land there. Written only by the fetch task. */
+
 static void put_entry(int st, uint32_t from, uint32_t until, float price, int *stored)
 {
     if (!from || until <= from || until - from > 3600 || isnan(price)) return;
     portENTER_CRITICAL(&s_st_mux);
-    st_put_locked(&s_st[st], from, until, price, NAN);
+    bool ok = store_is_for_fetch_locked(st);
+    if (ok) st_put_locked(&s_st[st], from, until, price, NAN);
     portEXIT_CRITICAL(&s_st_mux);
-    (*stored)++;
+    if (ok) (*stored)++;
 }
 
 /* Nord Pool data portal: {"multiAreaEntries":[{"deliveryStart","deliveryEnd","entryPerArea":{"SE3":1887.2}}]}, /MWh. */
@@ -844,7 +859,7 @@ static const char *fetch_octopus(int st, const dp_zone_t *z, const char *product
             if (!pass) put_entry(st, f, u, (float)(v->valuedouble / 100.0), stored);
             else {                                           /* export rate → sell of the matching entry */
                 portENTER_CRITICAL(&s_st_mux);
-                for (int i = 0; i < s_st[st].n; i++)
+                for (int i = 0; store_is_for_fetch_locked(st) && i < s_st[st].n; i++)
                     if (s_st[st].e[i].from == f) { s_st[st].e[i].sell = (float)(v->valuedouble / 100.0); s_st[st].dirty = true; }
                 portEXIT_CRITICAL(&s_st_mux);
             }
@@ -865,6 +880,8 @@ static const char *fetch_store(int st, const char *provider, const char *zone)
     const dp_provider_t *pv = provider_by_id(provider);
     const dp_zone_t *z = zone_of(pv, zone);
     dp_cfg_t c; cfg_get(&c);
+    snprintf(s_fetch_prov, sizeof(s_fetch_prov), "%s", provider);
+    snprintf(s_fetch_zone, sizeof(s_fetch_zone), "%s", zone);
     if (!z) err = "no_data_for_zone";
     else if (!strcmp(provider, "energy_charts"))     err = fetch_energy_charts(st, zone, start, end, &stored);
     else if (!strcmp(provider, "nordpool"))          err = fetch_nordpool(st, z, now, &stored);

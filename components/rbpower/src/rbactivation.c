@@ -168,7 +168,7 @@ static void eval_rule(const act_rule_t *r, act_state_t *st, uint32_t now)
     int k = cur < 0 ? 0 : cur + 1;
     if (st->active) while (k < cnt && sel[k]) k++;      /* skip the rest of the current run */
     for (; k < cnt; k++) if (sel[k]) { st->next_start = S + k * 900; break; }
-    if (!st->next_start) {                               /* nothing more in this instance: the next day's first pick */
+    if (!st->next_start && rbdynprice_valid_until() >= E + 86400) {   /* the next day's pick, only once its prices are in */
         uint32_t S2 = S + 86400, E2 = E + 86400;
         int c2 = select_cheapest(S2, E2, r->periods, r->consecutive, sel, 100);
         for (int k = 0; k < c2; k++) if (sel[k]) { st->next_start = S2 + k * 900; break; }
