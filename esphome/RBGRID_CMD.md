@@ -94,11 +94,23 @@ Design: `hello_world/documents/architecture/DYNAMIC_TARIFFS_DESIGN.md`. The hub 
 **primary** and an optional **backup** provider. For each 15-min period the hub uses a primary entry if one covers
 the period's midpoint, else a backup entry, else the tariff plan's zone.
 
-**Providers** (P1):
+**Providers:**
 - `energy_charts` (network): the hub fetches it itself, 15-min day-ahead, EUR/MWh → EUR/kWh, spot class. Only the
   CC BY 4.0 zones are offered: AT, BE, CH, CZ, DE-LU, DK1, DK2, FR, HU, IT-North, NL, NO2, PL, SE4, SI. It needs a plan
   in EUR (no FX in P1).
+- `nordpool` (network, **unofficial** endpoint, P2): Nord Pool data portal. Nordic + Baltic areas SE1–4 (SEK),
+  NO1–5 (NOK), DK1–2 (DKK), FI, EE, LV, LT (EUR). 15-min, /MWh → /kWh in the area's currency, spot. Tomorrow appears
+  ~13:00 CET (HTTP 204 before).
+- `elprisetjustnu` (network, P2): SE1–4, SEK/kWh excl. VAT, 15-min, spot. One file per day.
+- `hvakosterstrommen` (network, P2): NO1–5, NOK/kWh excl. VAT, **hourly**, spot. One file per day.
+- `energyzero` (network, P2): NL, 15-min, **all-in incl. VAT** (the plan's tax/VAT are not added).
+- `octopus` (network, P2): UK Agile, GSP regions A–P, GBP, 30-min, **all-in incl. VAT**. Config `product` (default
+  `AGILE-24-10-01`) and `export_product` (default `AGILE-OUTGOING-19-05-13`, `""` = none). The export rates become
+  the entries' sell, so use `sell_mode: "source"` to apply them.
 - `ha` (local): Home Assistant pushes with `set price`. Its class (`spot` / `all_in`) is set in the config.
+
+The zone is shared by the primary and the backup network provider (e.g. `nordpool` + `elprisetjustnu` on SE3).
+The plan's currency must equal the zone's currency for every network provider selected.
 
 **`{"cmd":"get","section":"dynprice"}`** returns the config, the status and the provider catalogue:
 ```
@@ -128,6 +140,7 @@ the period's midpoint, else a backup entry, else the tariff plan's zone.
 | `hourly_mean` | Bill each 15-min period at the mean of its hour's four 15-min prices |
 | `floor_buy`, `floor_sell` | Lowest final buy / sell price; `null` = none (negative prices pass through) |
 | `sell_mode` | `source` (the entry's sell, else the plan's) \| `plan` \| `formula` (raw × `k_sell` − `feedin_fee`) |
+| `product`, `export_product` | Octopus product codes (import / export; export `""` = none) |
 
 - **Final buy price.** spot class: (energy rate + the plan's per-kWh fees) × (1 + VAT). all_in class: the price as is.
   Then `floor_buy` applies. Negative values are real prices.

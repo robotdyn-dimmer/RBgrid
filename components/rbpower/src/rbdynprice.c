@@ -62,9 +62,51 @@ typedef struct {
     const char *terms_url, *attribution;
 } dp_provider_t;
 
+/* Nord Pool day-ahead (data portal, unofficial endpoint): Nordic + Baltic areas, prices in the area's currency. */
+static const dp_zone_t NP_ZONES[] = {
+    {"SE1", "Sweden North (SE1)", "SE", "SEK"}, {"SE2", "Sweden North-Central (SE2)", "SE", "SEK"},
+    {"SE3", "Sweden South-Central (SE3)", "SE", "SEK"}, {"SE4", "Sweden South (SE4)", "SE", "SEK"},
+    {"NO1", "Norway South-East (NO1)", "NO", "NOK"}, {"NO2", "Norway South-West (NO2)", "NO", "NOK"},
+    {"NO3", "Norway Central (NO3)", "NO", "NOK"}, {"NO4", "Norway North (NO4)", "NO", "NOK"},
+    {"NO5", "Norway West (NO5)", "NO", "NOK"},
+    {"DK1", "Denmark West (DK1)", "DK", "DKK"}, {"DK2", "Denmark East (DK2)", "DK", "DKK"},
+    {"FI", "Finland", "FI", "EUR"}, {"EE", "Estonia", "EE", "EUR"}, {"LV", "Latvia", "LV", "EUR"},
+    {"LT", "Lithuania", "LT", "EUR"},
+};
+static const dp_zone_t SE_ZONES[] = {
+    {"SE1", "Sweden North (SE1)", "SE", "SEK"}, {"SE2", "Sweden North-Central (SE2)", "SE", "SEK"},
+    {"SE3", "Sweden South-Central (SE3)", "SE", "SEK"}, {"SE4", "Sweden South (SE4)", "SE", "SEK"},
+};
+static const dp_zone_t NO_ZONES[] = {
+    {"NO1", "Norway South-East (NO1)", "NO", "NOK"}, {"NO2", "Norway South-West (NO2)", "NO", "NOK"},
+    {"NO3", "Norway Central (NO3)", "NO", "NOK"}, {"NO4", "Norway North (NO4)", "NO", "NOK"},
+    {"NO5", "Norway West (NO5)", "NO", "NOK"},
+};
+static const dp_zone_t EZ_ZONES[] = { {"NL", "Netherlands", "NL", "EUR"} };
+/* Octopus Agile: GSP regions (the tariff code's last letter). */
+static const dp_zone_t OC_ZONES[] = {
+    {"A", "Eastern England", "GB", "GBP"}, {"B", "East Midlands", "GB", "GBP"}, {"C", "London", "GB", "GBP"},
+    {"D", "Merseyside and North Wales", "GB", "GBP"}, {"E", "West Midlands", "GB", "GBP"},
+    {"F", "North East England", "GB", "GBP"}, {"G", "North West England", "GB", "GBP"},
+    {"H", "Southern England", "GB", "GBP"}, {"J", "South East England", "GB", "GBP"},
+    {"K", "South Wales", "GB", "GBP"}, {"L", "South West England", "GB", "GBP"}, {"M", "Yorkshire", "GB", "GBP"},
+    {"N", "South Scotland", "GB", "GBP"}, {"P", "North Scotland", "GB", "GBP"},
+};
+#define NZ(a) (sizeof(a) / sizeof(a[0]))
+
 static const dp_provider_t PROVIDERS[] = {
     {"energy_charts", "Energy-Charts (Fraunhofer ISE)", CLS_SPOT, false, false, 900, EC_ZONES, EC_NZONES,
      "https://api.energy-charts.info/", "Bundesnetzagentur | SMARD.de / Energy-Charts (CC BY 4.0)"},
+    {"nordpool", "Nord Pool (unofficial data portal)", CLS_SPOT, false, false, 900, NP_ZONES, NZ(NP_ZONES),
+     "https://www.nordpoolgroup.com/", "Day-ahead prices: Nord Pool (unofficial endpoint)"},
+    {"elprisetjustnu", "Elpriset just nu (SE)", CLS_SPOT, false, false, 900, SE_ZONES, NZ(SE_ZONES),
+     "https://www.elprisetjustnu.se/elpris-api", "Elpriser tillhandahålls av Elpriset just nu.se"},
+    {"hvakosterstrommen", "Hva koster strømmen (NO, hourly)", CLS_SPOT, false, false, 3600, NO_ZONES, NZ(NO_ZONES),
+     "https://www.hvakosterstrommen.no/strompris-api", "Strømpriser levert av Hva koster strømmen.no"},
+    {"energyzero", "EnergyZero (NL, all-in)", CLS_ALL_IN, false, false, 900, EZ_ZONES, NZ(EZ_ZONES),
+     "https://www.energyzero.nl/", "Prices: EnergyZero (all-in incl. VAT)"},
+    {"octopus", "Octopus Agile (UK, all-in)", CLS_ALL_IN, false, false, 1800, OC_ZONES, NZ(OC_ZONES),
+     "https://octopus.energy/", "Prices: Octopus Energy Agile (incl. VAT)"},
     {"ha", "Home Assistant", CLS_SPOT, true, false, 0, NULL, 0, "", ""},
 };
 #define NPROV (sizeof(PROVIDERS) / sizeof(PROVIDERS[0]))
@@ -85,12 +127,12 @@ static const dp_zone_t *zone_of(const dp_provider_t *p, const char *zone)
 enum { SELL_SOURCE = 0, SELL_PLAN = 1, SELL_FORMULA = 2 };
 static const char *const SELL_MODES[] = {"source", "plan", "formula"};
 
-#define DP_CFG_VER 1
+#define DP_CFG_VER 3
 typedef struct {
     uint8_t ver;
     bool    enabled;
-    char    source[16];           /* provider id */
-    char    backup[16];           /* provider id or "none" */
+    char    source[24];           /* provider id */
+    char    backup[24];           /* provider id or "none" */
     char    zone[12];             /* zone of the network provider(s) */
     uint8_t ha_class;             /* CLS_SPOT / CLS_ALL_IN */
     float   factor, markup;       /* spot → energy rate */
@@ -99,6 +141,8 @@ typedef struct {
     float   floor_buy, floor_sell;/* NAN = none */
     uint8_t sell_mode;            /* SELL_* */
     float   k_sell, feedin_fee;   /* formula sell = raw × k_sell − feedin_fee */
+    char    product[32];          /* Octopus import product code */
+    char    export_product[32];   /* Octopus export product code ("" = none) */
 } dp_cfg_t;
 
 static dp_cfg_t s_cfg;
@@ -116,13 +160,15 @@ static void cfg_defaults(dp_cfg_t *c)
     c->floor_buy = NAN; c->floor_sell = NAN;
     c->sell_mode = SELL_SOURCE;
     c->k_sell = 1.0f; c->feedin_fee = 0.0f;
+    strcpy(c->product, "AGILE-24-10-01");
+    strcpy(c->export_product, "AGILE-OUTGOING-19-05-13");
 }
 static void cfg_get(dp_cfg_t *out) { portENTER_CRITICAL(&s_cfg_mux); *out = s_cfg; portEXIT_CRITICAL(&s_cfg_mux); }
 
 /* ============================================== stores ============================================== */
 
 typedef struct { uint32_t from, until; float price, sell; } dp_entry_t;
-typedef struct { dp_entry_t *e; int n; char provider[16]; char zone[12]; bool dirty; } dp_store_t;
+typedef struct { dp_entry_t *e; int n; char provider[24]; char zone[12]; bool dirty; } dp_store_t;
 
 enum { ST_HA = 0, ST_NET_P = 1, ST_NET_B = 2, ST_N = 3 };
 static dp_store_t s_st[ST_N];
@@ -337,8 +383,8 @@ const char *rbdynprice_state(void)
 /* ============================================ persistence =========================================== */
 
 #define DP_NVS_NS   "rbdynp"
-#define DP_ST_MAGIC 0x50445231u   /* "1RDP" */
-typedef struct { uint32_t magic; char provider[16]; char zone[12]; uint16_t n; } dp_st_hdr_t;
+#define DP_ST_MAGIC 0x50445232u   /* "2RDP" */
+typedef struct { uint32_t magic; char provider[24]; char zone[12]; uint16_t n; } dp_st_hdr_t;
 
 static void cfg_save(void)
 {
@@ -357,6 +403,7 @@ static void cfg_load(void)
     dp_cfg_t c; size_t len = sizeof(c);
     if (nvs_get_blob(h, "cfg", &c, &len) == ESP_OK && len == sizeof(c) && c.ver == DP_CFG_VER) {
         c.source[sizeof(c.source) - 1] = 0; c.backup[sizeof(c.backup) - 1] = 0; c.zone[sizeof(c.zone) - 1] = 0;
+        c.product[sizeof(c.product) - 1] = 0; c.export_product[sizeof(c.export_product) - 1] = 0;
         s_cfg = c;
     }
     nvs_close(h);
@@ -404,7 +451,7 @@ static void st_load_all(void)
         portENTER_CRITICAL(&s_st_mux);
         memcpy(s_st[st].provider, hd->provider, sizeof(s_st[st].provider));
         memcpy(s_st[st].zone, hd->zone, sizeof(s_st[st].zone));
-        s_st[st].provider[15] = 0; s_st[st].zone[11] = 0;
+        s_st[st].provider[23] = 0; s_st[st].zone[11] = 0;
         memcpy(s_st[st].e, buf + sizeof(*hd), hd->n * sizeof(dp_entry_t));
         s_st[st].n = hd->n;
         portEXIT_CRITICAL(&s_st_mux);
@@ -612,6 +659,200 @@ static const char *fetch_energy_charts(int st, const char *zone, uint32_t start,
     return *stored ? NULL : "no_data_for_zone";
 }
 
+/* ---- helpers for the date-based providers ---- */
+
+static int32_t dp_days_from_civil(int y, unsigned m, unsigned d)
+{
+    y -= m <= 2;
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = (unsigned)(y - era * 400);
+    const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (int32_t)doe - 719468;
+}
+static void dp_civil_from_days(int32_t z, int *y, int *m, int *d)
+{
+    z += 719468;
+    const int era = (z >= 0 ? z : z - 146096) / 146097;
+    const unsigned doe = (unsigned)(z - era * 146097);
+    const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const unsigned mp = (5 * doy + 2) / 153;
+    *d = (int)(doy - (153 * mp + 2) / 5 + 1);
+    *m = (int)(mp < 10 ? mp + 3 : mp - 9);
+    *y = (int)yoe + era * 400 + (*m <= 2);
+}
+
+/* "YYYY-MM-DDTHH:MM[:SS[.fff]](Z|±HH:MM)" → UTC s; 0 on a bad string. */
+static uint32_t parse_iso(const char *s)
+{
+    int Y, M, D, h, mi, sec = 0, n = 0;
+    if (!s || sscanf(s, "%4d-%2d-%2dT%2d:%2d%n", &Y, &M, &D, &h, &mi, &n) != 5) return 0;
+    const char *p = s + n;
+    if (*p == ':') { int k = 0; if (sscanf(p, ":%2d%n", &sec, &k) != 1) return 0; p += k; }
+    if (*p == '.') { p++; while (*p >= '0' && *p <= '9') p++; }
+    long off = 0;
+    if (*p == '+' || *p == '-') {
+        int oh = 0, om = 0;
+        if (sscanf(p + 1, "%2d:%2d", &oh, &om) < 1) return 0;
+        off = (oh * 3600L + om * 60L) * (*p == '-' ? -1 : 1);
+    } else if (*p != 'Z' && *p != 0) return 0;
+    int64_t t = (int64_t)dp_days_from_civil(Y, M, D) * 86400 + h * 3600 + mi * 60 + sec - off;
+    return t > 0 ? (uint32_t)t : 0;
+}
+
+/* Market day (CET date) for ts + k days. */
+static void market_date(uint32_t ts, int k, int *y, int *m, int *d)
+{
+    dp_civil_from_days((int32_t)((ts + 3600) / 86400) + k, y, m, d);
+}
+
+static char *dp_buf(int cap)
+{
+    char *b = heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return b ? b : malloc(cap);
+}
+
+/* GET and parse JSON. *status = HTTP status; returns NULL on transport/parse failure (or non-200). */
+static cJSON *get_json(const char *url, int cap, int *status, const char **err)
+{
+    char *buf = dp_buf(cap);
+    if (!buf) { *err = "fetch_failed"; return NULL; }
+    int n = http_get(url, buf, cap, status);
+    cJSON *j = NULL;
+    if (n < 0) *err = "fetch_failed";
+    else if (*status == 429) *err = "rate_limited";
+    else if (*status == 401 || *status == 403) *err = "auth";
+    else if (*status == 204 || *status == 404) *err = "no_data_for_zone";
+    else if (*status != 200) *err = "http_status";
+    else if (n >= cap - 1) *err = "parse";                   /* truncated */
+    else if (!(j = cJSON_ParseWithLength(buf, n))) *err = "parse";
+    free(buf);
+    return j;
+}
+
+static void put_entry(int st, uint32_t from, uint32_t until, float price, int *stored)
+{
+    if (!from || until <= from || until - from > 3600 || isnan(price)) return;
+    portENTER_CRITICAL(&s_st_mux);
+    st_put_locked(&s_st[st], from, until, price, NAN);
+    portEXIT_CRITICAL(&s_st_mux);
+    (*stored)++;
+}
+
+/* Nord Pool data portal: {"multiAreaEntries":[{"deliveryStart","deliveryEnd","entryPerArea":{"SE3":1887.2}}]}, /MWh. */
+static const char *fetch_nordpool(int st, const dp_zone_t *z, uint32_t now, int *stored)
+{
+    const char *last = "no_data_for_zone";
+    for (int k = 0; k < 2; k++) {
+        int y, m, d; market_date(now, k, &y, &m, &d);
+        char url[200];
+        snprintf(url, sizeof(url), "https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices?date=%04d-%02d-%02d"
+                 "&market=DayAhead&deliveryArea=%s&currency=%s", y, m, d, z->id, z->currency);
+        int status; const char *err = NULL;
+        cJSON *j = get_json(url, 32 * 1024, &status, &err);
+        if (!j) { if (k == 0) last = err; continue; }
+        const cJSON *e;
+        cJSON_ArrayForEach(e, cJSON_GetObjectItem(j, "multiAreaEntries")) {
+            const cJSON *v = cJSON_GetObjectItem(cJSON_GetObjectItem(e, "entryPerArea"), z->id);
+            if (!cJSON_IsNumber(v)) continue;
+            put_entry(st, parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "deliveryStart"))),
+                      parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "deliveryEnd"))),
+                      (float)(v->valuedouble / 1000.0), stored);
+        }
+        cJSON_Delete(j);
+    }
+    return *stored ? NULL : last;
+}
+
+/* elprisetjustnu.se / hvakosterstrommen.no: one static file per day and zone,
+ * [{"<CUR>_per_kWh":…,"time_start":"…+01:00","time_end":"…"}], excl. VAT. */
+static const char *fetch_daily_file(int st, const dp_zone_t *z, const char *host, uint32_t now, int *stored)
+{
+    const char *last = "no_data_for_zone";
+    char key[16]; snprintf(key, sizeof(key), "%s_per_kWh", z->currency);
+    for (int k = 0; k < 2; k++) {
+        int y, m, d; market_date(now, k, &y, &m, &d);
+        char url[160];
+        snprintf(url, sizeof(url), "https://%s/api/v1/prices/%04d/%02d-%02d_%s.json", host, y, m, d, z->id);
+        int status; const char *err = NULL;
+        cJSON *j = get_json(url, 24 * 1024, &status, &err);
+        if (!j) { if (k == 0) last = err; continue; }
+        const cJSON *e;
+        cJSON_ArrayForEach(e, j) {
+            const cJSON *v = cJSON_GetObjectItem(e, key);
+            if (!cJSON_IsNumber(v)) continue;
+            put_entry(st, parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "time_start"))),
+                      parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "time_end"))), (float)v->valuedouble, stored);
+        }
+        cJSON_Delete(j);
+    }
+    return *stored ? NULL : last;
+}
+
+/* EnergyZero public API: {"all_in_with_vat":[{"start","end","price":{"value":"0.25"}}]} — the all-in user price. */
+static const char *fetch_energyzero(int st, uint32_t now, int *stored)
+{
+    const char *last = "no_data_for_zone";
+    for (int k = 0; k < 2; k++) {
+        int y, m, d; market_date(now, k, &y, &m, &d);
+        char url[200];
+        snprintf(url, sizeof(url), "https://public.api.energyzero.nl/public/v1/prices?date=%02d-%02d-%04d"
+                 "&interval=INTERVAL_QUARTER&energyType=ENERGY_TYPE_ELECTRICITY", d, m, y);
+        int status; const char *err = NULL;
+        cJSON *j = get_json(url, 160 * 1024, &status, &err);
+        if (!j) { if (k == 0) last = err; continue; }
+        const cJSON *e;
+        cJSON_ArrayForEach(e, cJSON_GetObjectItem(j, "all_in_with_vat")) {
+            const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(e, "price"), "value"));
+            if (!v) continue;
+            put_entry(st, parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "start"))),
+                      parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "end"))), strtof(v, NULL), stored);
+        }
+        cJSON_Delete(j);
+    }
+    return *stored ? NULL : last;
+}
+
+/* Octopus: {"results":[{"value_inc_vat":35.1,"valid_from","valid_to"}]} in p/kWh incl. VAT; the export product's
+ * rates become the entries' sell. */
+static const char *fetch_octopus(int st, const dp_zone_t *z, const char *product, const char *export_product,
+                                 uint32_t now, int *stored)
+{
+    uint32_t from = now - now % 86400 - 3600, to = from + 3 * 86400;
+    int y1, m1, d1, y2, m2, d2;
+    dp_civil_from_days((int32_t)(from / 86400), &y1, &m1, &d1);
+    dp_civil_from_days((int32_t)(to / 86400), &y2, &m2, &d2);
+    const char *last = "no_data_for_zone";
+    for (int pass = 0; pass < 2; pass++) {
+        const char *prod = pass ? export_product : product;
+        if (!prod || !prod[0]) continue;
+        char url[300];
+        snprintf(url, sizeof(url), "https://api.octopus.energy/v1/products/%s/electricity-tariffs/E-1R-%s-%s/"
+                 "standard-unit-rates/?period_from=%04d-%02d-%02dT00:00Z&period_to=%04d-%02d-%02dT00:00Z&page_size=200",
+                 prod, prod, z->id, y1, m1, d1, y2, m2, d2);
+        int status; const char *err = NULL;
+        cJSON *j = get_json(url, 48 * 1024, &status, &err);
+        if (!j) { if (!pass) last = err; continue; }
+        const cJSON *e;
+        cJSON_ArrayForEach(e, cJSON_GetObjectItem(j, "results")) {
+            const cJSON *v = cJSON_GetObjectItem(e, "value_inc_vat");
+            uint32_t f = parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "valid_from")));
+            uint32_t u = parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "valid_to")));
+            if (!cJSON_IsNumber(v) || !f) continue;
+            if (!pass) put_entry(st, f, u, (float)(v->valuedouble / 100.0), stored);
+            else {                                           /* export rate → sell of the matching entry */
+                portENTER_CRITICAL(&s_st_mux);
+                for (int i = 0; i < s_st[st].n; i++)
+                    if (s_st[st].e[i].from == f) { s_st[st].e[i].sell = (float)(v->valuedouble / 100.0); s_st[st].dirty = true; }
+                portEXIT_CRITICAL(&s_st_mux);
+            }
+        }
+        cJSON_Delete(j);
+    }
+    return *stored ? NULL : last;
+}
+
 /* Fetch the network store st now for provider/zone. Returns the error code or NULL. */
 static const char *fetch_store(int st, const char *provider, const char *zone)
 {
@@ -620,7 +861,16 @@ static const char *fetch_store(int st, const char *provider, const char *zone)
     uint32_t end   = start + 3 * 86400;
     int stored = 0;
     const char *err = "no_data_for_zone";
-    if (!strcmp(provider, "energy_charts")) err = fetch_energy_charts(st, zone, start, end, &stored);
+    const dp_provider_t *pv = provider_by_id(provider);
+    const dp_zone_t *z = zone_of(pv, zone);
+    dp_cfg_t c; cfg_get(&c);
+    if (!z) err = "no_data_for_zone";
+    else if (!strcmp(provider, "energy_charts"))     err = fetch_energy_charts(st, zone, start, end, &stored);
+    else if (!strcmp(provider, "nordpool"))          err = fetch_nordpool(st, z, now, &stored);
+    else if (!strcmp(provider, "elprisetjustnu"))    err = fetch_daily_file(st, z, "www.elprisetjustnu.se", now, &stored);
+    else if (!strcmp(provider, "hvakosterstrommen")) err = fetch_daily_file(st, z, "www.hvakosterstrommen.no", now, &stored);
+    else if (!strcmp(provider, "energyzero"))        err = fetch_energyzero(st, now, &stored);
+    else if (!strcmp(provider, "octopus"))           err = fetch_octopus(st, z, c.product, c.export_product, now, &stored);
     s_last_fetch = now;
     if (!err) {
         rbpower_diag_printf("price: %s %s stored %d periods (valid until %lu)", provider, zone, stored,
@@ -717,8 +967,8 @@ void rbdynprice_init(void)
     dp_cfg_t c; cfg_get(&c);
     if (strcmp(s_st[ST_NET_P].provider, c.source) || strcmp(s_st[ST_NET_P].zone, c.zone)) st_clear(ST_NET_P);
     if (strcmp(s_st[ST_NET_B].provider, c.backup) || strcmp(s_st[ST_NET_B].zone, c.zone)) st_clear(ST_NET_B);
-    strncpy(s_st[ST_NET_P].provider, c.source, 15); strncpy(s_st[ST_NET_P].zone, c.zone, 11);
-    strncpy(s_st[ST_NET_B].provider, c.backup, 15); strncpy(s_st[ST_NET_B].zone, c.zone, 11);
+    strncpy(s_st[ST_NET_P].provider, c.source, 23); strncpy(s_st[ST_NET_P].zone, c.zone, 11);
+    strncpy(s_st[ST_NET_B].provider, c.backup, 23); strncpy(s_st[ST_NET_B].zone, c.zone, 11);
     if (xTaskCreate(fetch_task, "rbdynprice", 8192, NULL, 3, NULL) != pdPASS) ESP_LOGE(TAG, "no fetch task");
     ESP_LOGI(TAG, "dynamic prices: %s, source %s, backup %s, zone %s", c.enabled ? "on" : "off", c.source, c.backup,
              c.zone[0] ? c.zone : "-");
@@ -753,6 +1003,8 @@ cJSON *rbdynprice_config_json(void)
     cJSON_AddStringToObject(o, "sell_mode", SELL_MODES[c.sell_mode < 3 ? c.sell_mode : 0]);
     add_num_or_null(o, "k_sell", c.k_sell);
     add_num_or_null(o, "feedin_fee", c.feedin_fee);
+    cJSON_AddStringToObject(o, "product", c.product);
+    cJSON_AddStringToObject(o, "export_product", c.export_product);
     cJSON_AddBoolToObject(o, "token_set", false);
     cJSON_AddBoolToObject(o, "backup_token_set", false);
     cJSON_AddStringToObject(o, "currency", rbpower_tariff_currency());
@@ -835,6 +1087,16 @@ esp_err_t rbdynprice_set_config(const cJSON *d, char *ef, size_t efl, char *em, 
         if (m < 0) REJECT("sell_mode", "sell_mode: source | plan | formula");
         c.sell_mode = (uint8_t)m;
     }
+    if ((v = cJSON_GetObjectItem(d, "product"))) {
+        if (!cJSON_IsString(v) || strlen(v->valuestring) >= sizeof(c.product) || strpbrk(v->valuestring, "/?&# "))
+            REJECT("product", "product: a tariff product code");
+        snprintf(c.product, sizeof(c.product), "%s", v->valuestring);
+    }
+    if ((v = cJSON_GetObjectItem(d, "export_product"))) {
+        if (!cJSON_IsString(v) || strlen(v->valuestring) >= sizeof(c.export_product) || strpbrk(v->valuestring, "/?&# "))
+            REJECT("export_product", "export_product: a product code or \"\"");
+        snprintf(c.export_product, sizeof(c.export_product), "%s", v->valuestring);
+    }
     if ((v = cJSON_GetObjectItem(d, "zones_stack"))) { if (!cJSON_IsBool(v)) REJECT("zones_stack", "true/false"); c.zones_stack = cJSON_IsTrue(v); }
     if ((v = cJSON_GetObjectItem(d, "hourly_mean"))) { if (!cJSON_IsBool(v)) REJECT("hourly_mean", "true/false"); c.hourly_mean = cJSON_IsTrue(v); }
     bool bad = false;
@@ -859,11 +1121,12 @@ esp_err_t rbdynprice_set_config(const cJSON *d, char *ef, size_t efl, char *em, 
     portENTER_CRITICAL(&s_cfg_mux); s_cfg = c; portEXIT_CRITICAL(&s_cfg_mux);
     cfg_save();
     /* a network store follows its provider + zone: changed → drop it and fetch again */
-    if (strcmp(old.source, c.source) || strcmp(old.zone, c.zone)) st_clear(ST_NET_P);
-    if (strcmp(old.backup, c.backup) || strcmp(old.zone, c.zone)) st_clear(ST_NET_B);
+    bool prod_changed = strcmp(old.product, c.product) || strcmp(old.export_product, c.export_product);
+    if (strcmp(old.source, c.source) || strcmp(old.zone, c.zone) || prod_changed) st_clear(ST_NET_P);
+    if (strcmp(old.backup, c.backup) || strcmp(old.zone, c.zone) || prod_changed) st_clear(ST_NET_B);
     portENTER_CRITICAL(&s_st_mux);
-    strncpy(s_st[ST_NET_P].provider, c.source, 15); strncpy(s_st[ST_NET_P].zone, c.zone, 11);
-    strncpy(s_st[ST_NET_B].provider, c.backup, 15); strncpy(s_st[ST_NET_B].zone, c.zone, 11);
+    strncpy(s_st[ST_NET_P].provider, c.source, 23); strncpy(s_st[ST_NET_P].zone, c.zone, 11);
+    strncpy(s_st[ST_NET_B].provider, c.backup, 23); strncpy(s_st[ST_NET_B].zone, c.zone, 11);
     portEXIT_CRITICAL(&s_st_mux);
     s_refetch = true;
     s_gen++;
