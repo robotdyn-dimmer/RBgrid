@@ -29,6 +29,7 @@
 #include "rbhome_types.h"
 #include "rbhome_tariff.h"
 #include "rbdynprice.h"        /* dynamic (spot) prices: stores, providers, per-period price */
+#include "rbpeak.h"            /* import peaks per billing cycle (capacity tariffs, metering only) */
 #include "nvs.h"            /* net-metering billing-period state persisted across reboots */
 
 #include <string.h>
@@ -2565,6 +2566,14 @@ void rbpower_tariff_cost_injected_period(rbpower_unit_id_t unit_id, float energy
     if (!dyn) {
         if (buying  < 0.0f) buying  = 0.0f;
         if (selling < 0.0f) selling = 0.0f;
+    }
+    {   /* import peaks at the grid input (capacity tariffs): every MAIN_SUPPLY point, summed per 15-min period */
+        rbpower_electrical_network_t* net = NULL;
+        if (rbpower_get_network(&net) == RBPOWER_OK && net && unit_id < net->units_count &&
+            net->units[unit_id].has_valid_definition && net->units[unit_id].definition.role == RBPOWER_ROLE_MAIN_SUPPLY) {
+            uint32_t qe = (q_end_ts > 450) ? q_end_ts : (uint32_t)time(NULL);
+            if (!tariff_clock_unset()) rbpeak_add_period(qe, energy_wh);
+        }
     }
     s_cost_rates_all_in = dyn;
     rbpower_update_economics_direct(unit_id, energy_wh / 1000.0f, buying, selling, result_base);

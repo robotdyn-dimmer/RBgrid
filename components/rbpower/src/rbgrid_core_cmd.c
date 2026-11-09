@@ -16,6 +16,7 @@
 #include "rbgrid_config_api.h"
 #include "rbhome_tariff.h"
 #include "rbdynprice.h"
+#include "rbpeak.h"
 #include "rbjson.h"
 #include "littlefs_raw.h"
 #include "esp_app_desc.h"
@@ -99,6 +100,12 @@ static char* cmd_get_section(const cJSON* root, const char* section)
         const cJSON *jf = cJSON_GetObjectItem(root, "from"), *ju = cJSON_GetObjectItem(root, "until");
         cJSON *o = rbdynprice_price_json(cJSON_IsNumber(jf) ? (uint32_t)jf->valuedouble : 0,
                                          cJSON_IsNumber(ju) ? (uint32_t)ju->valuedouble : 0);
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
+        cJSON_Delete(o);
+        return r;
+    }
+    if (strcmp(section, "peaks") == 0) {   /* import peaks per billing cycle (capacity tariffs; metering only) */
+        cJSON *o = rbpeak_json();
         char *r = o ? cJSON_PrintUnformatted(o) : NULL;
         cJSON_Delete(o);
         return r;
@@ -198,6 +205,13 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
 
     char* ack = NULL;
     char msg[96];
+    if (strcmp(section, "peaks") == 0) {   /* {"cycle_day":1..28} | {"reset":true} */
+        char em[64] = "";
+        ack = rbpeak_set(data, em, sizeof(em)) == ESP_OK ? cmd_ack_json("set", section, "ok", "peaks updated", id)
+                                                        : cmd_ack_json("set", section, "error", em, id);
+        free(data_str);
+        return ack;
+    }
     if (strcmp(section, "dynprice") == 0) {   /* provider config; a rejection names the field */
         char ef[24] = "", em[128] = "";
         if (rbdynprice_set_config(data, ef, sizeof(ef), em, sizeof(em)) == ESP_OK) {

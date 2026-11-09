@@ -68,6 +68,14 @@ void rbdynprice_init(void);
  */
 bool rbdynprice_resolve(uint32_t ts, float zone_buy, float zone_sell, rbdp_price_t *out);
 
+struct rbpower_tariff_plan_s;
+/**
+ * @brief rbdynprice_resolve() with the fees/VAT of a given plan instead of the active one — the replay hook for a
+ *        tariff "what-if" over stored history (backlog C4). plan = NULL → no fees, no VAT.
+ */
+bool rbdynprice_resolve_plan(uint32_t ts, float zone_buy, float zone_sell, const struct rbpower_tariff_plan_s *plan,
+                             rbdp_price_t *out);
+
 /* ---- Home Assistant store (`set price`) ---------------------------------------------------------- */
 
 /**

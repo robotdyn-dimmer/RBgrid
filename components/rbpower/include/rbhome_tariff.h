@@ -450,7 +450,7 @@ typedef struct
 /**
  * @brief Complete tariff plan
  */
-typedef struct
+typedef struct rbpower_tariff_plan_s
 {
     // === BASIC INFORMATION ===
     char plan_name[RBPOWER_TARIFF_NAME_LENGTH];          ///< Plan name

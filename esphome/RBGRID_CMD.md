@@ -183,6 +183,15 @@ each closed 15-min period:
 - Each state change writes an event line `price: state A -> B (source …, valid until …)`, which reaches HA as
   `rbgrid_event` kind `price`. A failed fetch gives `FAIL price: …`.
 
+**`{"cmd":"get","section":"peaks"}`** returns the import peaks at the grid input per billing cycle, the base for capacity
+tariffs. It is metering only and changes no money.
+- Reply: `{"type":"peaks","cycle_day","cycle_start","max_15min_w","max_15min_end","max_hour_w","max_hour_start",
+  "top_days":[{"hour_start","w"}×3],"top3_days_mean_w","hour_start","hour_wh_so_far","prev":{…}}`.
+- Every MAIN_SUPPLY point's import is summed per 15-min period (three phases = one peak).
+- The cycle starts on `cycle_day` at local midnight.
+- `{"cmd":"set","section":"peaks","data":{"cycle_day":15}}` changes the start day (1…28); `{"reset":true}` clears
+  the figures.
+
 **HTTP** (web-app build): the same functions.
 - `GET`/`POST /api/v1/dynprice`;
 - `GET /api/v1/price?from=&until=` (add `&log=1` for the price log);

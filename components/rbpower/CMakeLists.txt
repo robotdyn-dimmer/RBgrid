@@ -33,6 +33,7 @@ set(RBPOWER_SRCS
     "src/rbfault.c"                          # fault injection (empty unless RBGRID_FAULT_INJECT test builds)
     "src/rbhome_tariff.c"                    # tariff/economics/billing engine (also #include'd by rbpower.c)
     "src/rbdynprice.c"                       # dynamic (spot) prices: providers, stores, fetch, per-period price
+    "src/rbpeak.c"                           # import peaks per billing cycle (capacity tariffs; metering only)
     # --- flash statistics data layer (history/summary/DAY+ aggregation persistence) ---
     "src/rbstorage.c"
     "src/rbstorage_transfer_types.c"

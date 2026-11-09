@@ -26,7 +26,8 @@
 #include "rbgrid_core.h"      /* rbgrid_nvs_open */
 #include "rbhome_tariff.h"    /* plan, currency, zone rates */
 #include "rbhome_types.h"     /* rbpower_diag_printf */
-#include "littlefs_raw.h"     /* price log: one file per UTC day on the config partition */
+#include "littlefs_raw.h"
+#include "rbpeak.h"     /* price log: one file per UTC day on the config partition */
 
 static const char *TAG = "RBDYNPRICE";
 
@@ -190,9 +191,8 @@ static const char *store_provider(const dp_cfg_t *c, int st)
 
 /* ============================================== resolver ============================================= */
 
-static void plan_fees(float *fees, float *vat)
+static void plan_fees_of(const struct rbpower_tariff_plan_s *pl, float *fees, float *vat)
 {
-    const rbpower_tariff_plan_t *pl = rbpower_tariff_get_current_plan();
     *fees = pl ? pl->grid_usage_fee_per_kwh + pl->energy_tax_per_kwh + pl->renewable_levy_per_kwh : 0.0f;
     *vat  = pl ? pl->vat_percent / 100.0f : 0.0f;
 }
@@ -227,8 +227,14 @@ static bool st_price_at(int st, uint32_t ts, bool hourly, float *raw, float *raw
 
 bool rbdynprice_resolve(uint32_t ts, float zone_buy, float zone_sell, rbdp_price_t *out)
 {
+    return rbdynprice_resolve_plan(ts, zone_buy, zone_sell, rbpower_tariff_get_current_plan(), out);
+}
+
+bool rbdynprice_resolve_plan(uint32_t ts, float zone_buy, float zone_sell, const struct rbpower_tariff_plan_s *plan,
+                             rbdp_price_t *out)
+{
     dp_cfg_t c; cfg_get(&c);
-    float fees, vat; plan_fees(&fees, &vat);
+    float fees, vat; plan_fees_of(plan, &fees, &vat);
     memset(out, 0, sizeof(*out));
     out->prov = RBDP_PROV_PLAN;
     out->buy  = (zone_buy + fees) * (1.0f + vat);
@@ -647,6 +653,7 @@ static void fetch_task(void *arg)
         if (now - last_save >= 60) { st_save_dirty(); last_save = now; }
         if (!clock_ok()) continue;
         plog_tick(now);
+        rbpeak_tick(now);
         {   /* one event line per state change (reaches the event log, HA events, the web app's log view) */
             static char prev_state[16] = "";
             const char *st_now = rbdynprice_state();
@@ -705,6 +712,7 @@ void rbdynprice_init(void)
     strcpy(s_st[ST_HA].provider, "ha");
     cfg_load();
     st_load_all();
+    rbpeak_init();
     /* a store saved for another provider/zone than the config now names is stale */
     dp_cfg_t c; cfg_get(&c);
     if (strcmp(s_st[ST_NET_P].provider, c.source) || strcmp(s_st[ST_NET_P].zone, c.zone)) st_clear(ST_NET_P);
