@@ -103,6 +103,14 @@ static char* cmd_get_section(const cJSON* root, const char* section)
         cJSON_Delete(o);
         return r;
     }
+    if (strcmp(section, "price_log") == 0) {   /* applied price per closed 15-min period (audit) */
+        const cJSON *jf = cJSON_GetObjectItem(root, "from"), *ju = cJSON_GetObjectItem(root, "until");
+        cJSON *o = rbdynprice_price_log_json(cJSON_IsNumber(jf) ? (uint32_t)jf->valuedouble : 0,
+                                             cJSON_IsNumber(ju) ? (uint32_t)ju->valuedouble : 0);
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
+        cJSON_Delete(o);
+        return r;
+    }
     if (strcmp(section, "dynprice") == 0) {   /* provider config + status + catalogue */
         cJSON *o = rbdynprice_config_json();
         char *r = o ? cJSON_PrintUnformatted(o) : NULL;

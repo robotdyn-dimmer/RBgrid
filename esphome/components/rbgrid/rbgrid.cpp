@@ -72,6 +72,8 @@ static const char *event_kind(const char *m, bool fail) {
       {"(node disabled)", "node_disabled"},      {"espnow: node", "node"},                  {"boot: reset", "boot"},
       {"tariff", "tariff"},                      {"OTA", "firmware"},
   };
+  // dynamic prices: "price: …" / "FAIL price: …" at the line start
+  if (!strncmp(m, "price:", 6) || !strncmp(m, "FAIL price:", 11)) return "price";
   // reboot-gap / period reconciliation lines ("m0 gap …", "QTR m0 … anchor=…", "cnt=+nanWh"): diagnostics, not news
   if (strstr(m, "anchor=") || strstr(m, " cnt=+") || strstr(m, " cnt=-") || strstr(m, "QTR m")) return "diag";
   for (const char *g = strstr(m, " gap "); g != nullptr; g = strstr(g + 1, " gap ")) {   // "m<N> gap …"

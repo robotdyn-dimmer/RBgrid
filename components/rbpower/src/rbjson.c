@@ -3536,34 +3536,26 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
                 /* Live tariff frame — active zone, buy/sell rates and the instant currency/hour at the
                  * system net power ("cost per hour right now"). Rates 0 = no active plan. cost_rate_h sign follows net_power (negative = earning on export). */
                 {
-                    int zid = -1; float buy = 0, sell = 0;
-                    rbpower_tariff_get_diag(NULL, NULL, NULL, NULL, &zid, &buy, &sell, NULL);
+                    rbgrid_tariff_now_t tn;           /* the plan zone, or the dynamic price when one covers now */
+                    rbgrid_core_tariff_now(&tn);
                     cJSON* tar = cJSON_CreateObject();
                     if (tar) {
-                        if (zid >= 0 && zid < RBPOWER_TARIFF_ZONE_COUNT)
-                            cJSON_AddStringToObject(tar, "zone", rbpower_tariff_zone_type_text[zid]);
-                        cJSON_AddRoundedDouble(tar, "buy_rate", buy, 6);
-                        cJSON_AddRoundedDouble(tar, "sell_rate", sell, 6);
-                        /* Same basis as cost_day / record c (a rate at the bare zone price next to an all-in
-                         * "Today" total does not add up): consumption is booked
-                         * as (zone rate + per-kWh fees) × (1 + VAT); feed-in revenue is the plain sell rate. */
-                        double buy_all = buy;
-                        {
-                            const rbpower_tariff_plan_t* tp = rbpower_tariff_get_current_plan();
-                            if (tp && buy > 0) {
-                                double fees = (double)tp->grid_usage_fee_per_kwh + (double)tp->energy_tax_per_kwh + (double)tp->renewable_levy_per_kwh;
-                                buy_all = ((double)buy + fees) * (1.0 + (double)tp->vat_percent / 100.0);
-                            }
-                        }
-                        cJSON_AddRoundedDouble(tar, "buy_rate_all_in", buy_all, 6);
-                        double rate_h = (net_power / 1000.0) * (net_power >= 0 ? buy_all : sell);
+                        if (tn.zone[0]) cJSON_AddStringToObject(tar, "zone", tn.zone);
+                        cJSON_AddRoundedDouble(tar, "buy_rate", tn.buy_rate, 6);
+                        cJSON_AddRoundedDouble(tar, "sell_rate", tn.sell_rate, 6);
+                        /* Same basis as cost_day / record c: consumption at the all-in rate ((zone rate + per-kWh
+                         * fees) × (1 + VAT), or the dynamic all-in price); feed-in revenue at the plain sell rate. */
+                        cJSON_AddRoundedDouble(tar, "buy_rate_all_in", tn.buy_rate_all_in, 6);
+                        double rate_h = (net_power / 1000.0) * (net_power >= 0 ? tn.buy_rate_all_in : tn.sell_rate);
                         cJSON_AddRoundedDouble(tar, "cost_rate_h", rate_h, 6);
-                        cJSON_AddStringToObject(tar, "currency", rbpower_tariff_currency());
-                        {   /* money is computed off the built-in demo plan until the user saves one */
-                            const rbpower_tariff_plan_t* tpp = rbpower_tariff_get_current_plan();
-                            if (tpp && rbpower_tariff_plan_is_placeholder(tpp->plan_name, tpp->provider_name))
-                                cJSON_AddBoolToObject(tar, "placeholder", true);
-                        }
+                        cJSON_AddStringToObject(tar, "currency", tn.currency);
+                        if (tn.placeholder) cJSON_AddBoolToObject(tar, "placeholder", true);   /* demo plan until the user saves one */
+                        /* dynamic prices: live state for the app (no polling of get dynprice) */
+                        cJSON_AddBoolToObject(tar, "dynamic", tn.external);
+                        cJSON_AddStringToObject(tar, "price_state", tn.price_state);
+                        cJSON_AddStringToObject(tar, "price_source", tn.price_source);
+                        cJSON_AddNumberToObject(tar, "price_valid_until", tn.price_valid_until);
+                        cJSON_AddNumberToObject(tar, "price_gen", rbdynprice_generation());
                         cJSON_AddItemToObject(sys, "tariff", tar);
                     }
                 }

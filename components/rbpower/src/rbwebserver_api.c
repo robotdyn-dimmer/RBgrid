@@ -2759,5 +2759,8 @@ esp_err_t rbwebserver_api_price_handler(httpd_req_t *req)
         if (httpd_query_key_value(q, "from", v, sizeof(v)) == ESP_OK) from = (uint32_t)strtoul(v, NULL, 10);
         if (httpd_query_key_value(q, "until", v, sizeof(v)) == ESP_OK) until = (uint32_t)strtoul(v, NULL, 10);
     }
-    return dp_send_json(req, rbdynprice_price_json(from, until), NULL);
+    bool log = false;
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK && httpd_query_key_value(q, "log", v, sizeof(v)) == ESP_OK)
+        log = (v[0] == '1' || v[0] == 't');
+    return dp_send_json(req, log ? rbdynprice_price_log_json(from, until) : rbdynprice_price_json(from, until), NULL);
 }

@@ -115,6 +115,13 @@ esp_err_t rbdynprice_set_config(const cJSON *data, char *err_field, size_t field
  */
 cJSON *rbdynprice_price_json(uint32_t from, uint32_t until);
 
+/**
+ * @brief `get price_log`: the price applied to each closed 15-min period, [from, until) (default: the last 24 h),
+ *        `{"type":"price_log","currency","cols":["from","buy","sell","prov"],"rows":[[…]],"more"}`, ≤ 400 rows.
+ *        prov: source | backup | ha_push | plan, "+hourly_mean" appended when the hourly mean applied.
+ */
+cJSON *rbdynprice_price_log_json(uint32_t from, uint32_t until);
+
 #ifdef __cplusplus
 }
 #endif

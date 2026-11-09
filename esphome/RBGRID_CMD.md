@@ -169,9 +169,23 @@ Assistant push:
 - Order does not matter, and pages add up. `{"clear":true}` drops them all.
 - Errors: missing `buy`/`from`/`until`, values outside ±100, `until` ≤ `from`. Entries before the bad one stay stored.
 
+**`{"cmd":"get","section":"price_log","from":unix?,"until":unix?}`** is the audit log of the price the hub applied to
+each closed 15-min period:
+- Reply: `{"type":"price_log","currency","cols":["from","buy","sell","prov"],"rows":[[…]],"more"}`; `buy` is all-in.
+- `prov` is `source | backup | ha_push | plan`, with `+hourly_mean` appended when the hourly mean applied.
+- Default range: the last 24 h; at most 400 rows per reply (`more`: ask again from the last `from` + 900).
+- Kept 40 days, one file per UTC day on the config partition. The period in progress at a boot is not logged.
+
+**Live state** without polling:
+- Telemetry `system.tariff` (3 s, WS/MQTT) carries `dynamic`, `price_state`, `price_source`, `price_valid_until`, and
+  `price_gen` (bumps on every change of stored prices or state); `buy_rate_all_in` / `sell_rate` are the price in
+  force now.
+- Each state change writes an event line `price: state A -> B (source …, valid until …)`, which reaches HA as
+  `rbgrid_event` kind `price`. A failed fetch gives `FAIL price: …`.
+
 **HTTP** (web-app build): the same functions.
 - `GET`/`POST /api/v1/dynprice`;
-- `GET /api/v1/price?from=&until=`;
+- `GET /api/v1/price?from=&until=` (add `&log=1` for the price log);
 - `POST /api/v1/price` (body as `data` above).
 
 `GET /api/v1/schema` → `capabilities.dynamicTariffs: true`.
@@ -247,7 +261,7 @@ Every line of the device's event log, except the periodic trace, is sent to HA a
 
 | Field | Value |
 |---|---|
-| `kind` | `reverse_flow`, `module_absent`, `module_restored`, `module_poll_fail`, `bus_stuck`, `node_online`, `node_offline`, `boot`, `tariff`, `firmware`, `node_disabled`, `diag` (reboot-gap / period reconciliation detail); otherwise `fail` or `event` |
+| `kind` | `reverse_flow`, `module_absent`, `module_restored`, `module_poll_fail`, `bus_stuck`, `node_online`, `node_offline`, `boot`, `tariff`, `firmware`, `node_disabled`, `price` (dynamic price state change or fetch failure), `diag` (reboot-gap / period reconciliation detail); otherwise `fail` or `event` |
 | `level` | `fail` (an invariant / error line, "FAIL …"), `debug` (a `diag` line that is not a failure: hide by default) or `event` |
 | `message` | The log line as the device wrote it |
 

@@ -26,6 +26,7 @@
 #include "rbgrid_core.h"      /* rbgrid_nvs_open */
 #include "rbhome_tariff.h"    /* plan, currency, zone rates */
 #include "rbhome_types.h"     /* rbpower_diag_printf */
+#include "littlefs_raw.h"     /* price log: one file per UTC day on the config partition */
 
 static const char *TAG = "RBDYNPRICE";
 
@@ -425,6 +426,108 @@ esp_err_t rbdynprice_ha_put(float buy, float sell, uint32_t from, uint32_t until
 void rbdynprice_ha_clear(void) { st_clear(ST_HA); }
 void rbdynprice_set_ha_present(bool present) { s_ha_present = present; }
 
+/* ============================================= price log ============================================ */
+/* The price the hub applied to each closed 15-min period (system-wide): one file per UTC day, /plog/<day number>,
+ * 12 B per period, rewritten whole at each boundary (≤ 1.2 KB). 40 days kept (a monthly bill + margin). */
+
+#define PLOG_DIR   "/plog"
+#define PLOG_DAYS  40
+#define PLOG_SLOTS 100            /* 96 + DST days */
+typedef struct { uint16_t slot; uint8_t prov; uint8_t flags; float buy, sell; } plog_rec_t;   /* flags bit0 hourly_mean */
+static plog_rec_t s_plog[PLOG_SLOTS];
+static int s_plog_n = 0;
+static uint32_t s_plog_day = 0;   /* UTC day number of s_plog[] */
+static uint32_t s_plog_last_b = 0;
+
+static void plog_path(uint32_t day, char *out, size_t n) { snprintf(out, n, PLOG_DIR "/%lu", (unsigned long)day); }
+
+static void plog_load_day(uint32_t day)
+{
+    char path[32]; plog_path(day, path, sizeof(path));
+    size_t got = 0;
+    s_plog_n = 0;
+    if (littlefs_raw_exists(path) && littlefs_raw_read(path, s_plog, sizeof(s_plog), &got) == ESP_OK)
+        s_plog_n = (int)(got / sizeof(plog_rec_t));
+    s_plog_day = day;
+}
+
+/* Log the 15-min period that closed at boundary b. */
+static void plog_record(uint32_t b)
+{
+    if (!littlefs_raw_is_mounted()) return;
+    uint32_t from = b - 900, day = from / 86400;
+    if (day != s_plog_day) {
+        littlefs_raw_mkdir(PLOG_DIR);
+        plog_load_day(day);
+        for (uint32_t d = day - PLOG_DAYS - 5; d <= day - PLOG_DAYS; d++) {   /* retire old days (a few, in case the hub was off) */
+            char old[32]; plog_path(d, old, sizeof(old));
+            if (littlefs_raw_exists(old)) littlefs_raw_remove(old);
+        }
+    }
+    float zb, zs;
+    rbpower_tariff_zone_rates_at(from + 450, &zb, &zs);
+    rbdp_price_t pr;
+    rbdynprice_resolve(from + 450, zb, zs, &pr);
+    plog_rec_t r = { (uint16_t)((from % 86400) / 900), (uint8_t)pr.prov, (uint8_t)(pr.hourly_mean ? 1 : 0), pr.buy, pr.sell };
+    int i;
+    for (i = 0; i < s_plog_n && s_plog[i].slot != r.slot; i++) {}
+    if (i == s_plog_n) { if (s_plog_n >= PLOG_SLOTS) return; s_plog_n++; }
+    s_plog[i] = r;
+    char path[32]; plog_path(day, path, sizeof(path));
+    littlefs_raw_write(path, s_plog, s_plog_n * sizeof(plog_rec_t));
+}
+
+static void plog_tick(uint32_t now)
+{
+    uint32_t b = now - now % 900;
+    if (!s_plog_last_b) { s_plog_last_b = b; return; }        /* boot: the period in progress is not logged */
+    if (b != s_plog_last_b && now - b >= 5) { plog_record(b); s_plog_last_b = b; }
+}
+
+cJSON *rbdynprice_price_log_json(uint32_t from, uint32_t until)
+{
+    uint32_t now = (uint32_t)time(NULL);
+    if (!until) until = now;
+    if (!from) from = until > 86400 ? until - 86400 : 0;
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "type", "price_log");
+    cJSON_AddStringToObject(o, "currency", rbpower_tariff_currency());
+    cJSON *cols = cJSON_AddArrayToObject(o, "cols");
+    const char *cn[] = {"from", "buy", "sell", "prov"};
+    for (int k = 0; k < 4; k++) cJSON_AddItemToArray(cols, cJSON_CreateString(cn[k]));
+    cJSON *rows = cJSON_AddArrayToObject(o, "rows");
+    plog_rec_t *buf = malloc(sizeof(s_plog));
+    int count = 0; bool more = false;
+    for (uint32_t day = from / 86400; buf && day <= until / 86400 && !more; day++) {
+        char path[32]; plog_path(day, path, sizeof(path));
+        size_t got = 0;
+        if (!littlefs_raw_exists(path) || littlefs_raw_read(path, buf, sizeof(s_plog), &got) != ESP_OK) continue;
+        int n = (int)(got / sizeof(plog_rec_t));
+        /* files hold slots in write order: emit sorted by slot */
+        for (int slot = 0; slot < PLOG_SLOTS && !more; slot++) {
+            for (int i = 0; i < n; i++) {
+                if (buf[i].slot != slot) continue;
+                uint32_t f = day * 86400 + slot * 900;
+                if (f < from || f >= until) break;
+                if (count >= 400) { more = true; break; }
+                cJSON *r = cJSON_CreateArray();
+                cJSON_AddItemToArray(r, cJSON_CreateNumber(f));
+                cJSON_AddItemToArray(r, cJSON_CreateNumber(round((double)buf[i].buy * 1e6) / 1e6));
+                cJSON_AddItemToArray(r, cJSON_CreateNumber(round((double)buf[i].sell * 1e6) / 1e6));
+                char pc[24]; snprintf(pc, sizeof(pc), "%s%s", rbdynprice_prov_code((rbdp_prov_t)buf[i].prov),
+                                      (buf[i].flags & 1) ? "+hourly_mean" : "");
+                cJSON_AddItemToArray(r, cJSON_CreateString(pc));
+                cJSON_AddItemToArray(rows, r);
+                count++;
+                break;
+            }
+        }
+    }
+    free(buf);
+    cJSON_AddBoolToObject(o, "more", more);
+    return o;
+}
+
 /* =============================================== fetch ============================================== */
 
 /* GET url into buf (NUL-terminated). Returns bytes or -1; *status = HTTP status. */
@@ -543,6 +646,20 @@ static void fetch_task(void *arg)
         uint32_t now = (uint32_t)time(NULL);
         if (now - last_save >= 60) { st_save_dirty(); last_save = now; }
         if (!clock_ok()) continue;
+        plog_tick(now);
+        {   /* one event line per state change (reaches the event log, HA events, the web app's log view) */
+            static char prev_state[16] = "";
+            const char *st_now = rbdynprice_state();
+            if (strcmp(prev_state, st_now)) {
+                bool bk = false;
+                const char *src = rbdynprice_source_now(&bk);
+                if (prev_state[0])
+                    rbpower_diag_printf("price: state %s -> %s (source %s%s, valid until %lu)", prev_state, st_now, src,
+                                        bk ? " backup" : "", (unsigned long)rbdynprice_valid_until());
+                snprintf(prev_state, sizeof(prev_state), "%s", st_now);
+                s_gen++;
+            }
+        }
         dp_cfg_t c; cfg_get(&c);
         if (s_refetch) { memset(s_next_try, 0, sizeof(s_next_try)); s_refetch = false; }
         if (!c.enabled) { s_next_fetch = 0; continue; }
