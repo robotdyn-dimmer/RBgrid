@@ -142,6 +142,14 @@ rbgrid:
     name: "Sell price"
   tariff_zone:
     name: "Tariff zone"
+  provider_price:
+    name: "Provider price"
+  price_state:
+    name: "Price state"
+  price_source:
+    name: "Price source"
+  price_valid_until:
+    name: "Price valid until"
   config_version:
     name: "Config version"
   time_valid:

@@ -22,6 +22,7 @@ extern "C" {
 #include "esp_now_hub.h"
 #include "rbamp_bridge.h"   // module counts   // points switched off by the user free their slots
 #include "rbevlog.h"    // event lines → HA events
+#include "rbdynprice.h"  // dynamic prices: HA is a provider here
 }
 #include "freertos/queue.h"
 #ifdef USE_API
@@ -145,6 +146,7 @@ static void start_task(void *) {
 
 void RBgridComponent::setup() {
   this->started_ms_ = millis();
+  rbdynprice_set_ha_present(true);   // this build talks to Home Assistant: offer it as a price provider
   if (this->events_) s_ev_q = xQueueCreate(16, sizeof(EvItem));
   if (xTaskCreatePinnedToCore(start_task, "rbgrid_start", 8192, nullptr, 2, nullptr, 0) != pdPASS) {
     ESP_LOGE(TAG, "could not create the start task");
@@ -229,6 +231,24 @@ void RBgridComponent::publish_frame_() {
   if (this->time_valid_ != nullptr) this->time_valid_->publish_state(tn.time_valid);
   if (this->tariff_placeholder_ != nullptr) this->tariff_placeholder_->publish_state(tn.placeholder);
   if (this->external_price_ != nullptr) this->external_price_->publish_state(tn.external);
+  if (this->price_state_ != nullptr && this->price_state_->state != tn.price_state)
+    this->price_state_->publish_state(tn.price_state);
+  if (this->price_source_ != nullptr && this->price_source_->state != tn.price_source)
+    this->price_source_->publish_state(tn.price_source);
+  if (this->price_valid_until_ != nullptr) {
+    char iso[24] = "";
+    if (tn.price_valid_until) {
+      time_t vu = (time_t) tn.price_valid_until;
+      struct tm g;
+      gmtime_r(&vu, &g);
+      strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", &g);
+    }
+    if (this->price_valid_until_->state != iso) this->price_valid_until_->publish_state(iso);
+  }
+  if (this->provider_price_ != nullptr) {
+    if (tn.external) pub_(this->provider_price_, (float) (std::round((double) tn.buy_rate * 1e5) / 1e5));
+    else if (!std::isnan(this->provider_price_->state)) this->provider_price_->publish_state(NAN);
+  }
   if (!this->currency_warned_ && tn.currency[0] && this->currency_ != tn.currency) {
     this->currency_warned_ = true;   // the money unit is fixed at build time; HA only labels it
     ESP_LOGW(TAG, "tariff currency is %s but the money entities are labelled %s (set `currency:` in YAML)", tn.currency,

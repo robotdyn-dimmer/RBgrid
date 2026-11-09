@@ -28,6 +28,7 @@
 #include "rbpower_constants.h"
 #include "rbhome_types.h"
 #include "rbhome_tariff.h"
+#include "rbdynprice.h"        /* dynamic (spot) prices: stores, providers, per-period price */
 #include "nvs.h"            /* net-metering billing-period state persisted across reboots */
 
 #include <string.h>
@@ -1040,6 +1041,7 @@ esp_err_t rbpower_tariff_system_init(void)
     // === SET READY FLAGS ===
     g_tariff_system_initialized = true;
     g_tariff_system_enabled = g_tariff_global_config.tariff_system_enabled;
+    rbdynprice_init();                 /* dynamic prices: config + stored prices + fetch task */
 
     ESP_LOGI("RBHOME_TARIFF", "=== Tariff system initialized successfully ===");
     ESP_LOGI("RBHOME_TARIFF", "- Tariff plan: '%s' (%d zones)",
@@ -2334,6 +2336,9 @@ bool rbpower_tariff_zone_recently_changed(uint32_t seconds_threshold)
 /* Zone the per-zone attribution in rbpower_update_economics_direct() uses for the call in progress (the injected
  * quarter's own zone); -1 = the cache's current zone. Set and cleared inside one call, under the home lock. */
 static int s_cost_zone_override = -1;
+/* The rates passed to rbpower_update_economics_direct() are already all-in (a dynamic price): no progressive tier,
+ * no fees, no VAT on top. Set and cleared inside one call, under the home lock. */
+static bool s_cost_rates_all_in = false;
 static inline rbpower_tariff_zone_type_t cost_zone(void)
 {
     return s_cost_zone_override >= 0 ? (rbpower_tariff_zone_type_t)s_cost_zone_override
@@ -2396,14 +2401,19 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
         // Progressive (block-tier) overlay: scale the zone buying rate by the tier the cumulative
         // monthly import has reached (opt-in; no-op when progressive_config is disabled). Uses the
         // import-so-far BEFORE this event is added below, so this kWh is priced at the tier it enters.
-        if (pl->progressive_config.is_enabled && unit_id < RBPOWER_MAX_HOME_UNITS) {
-            buying_rate = progressive_effective_rate(buying_rate, g_net_metering[unit_id].period_consumed_kwh);
+        double cost;
+        if (s_cost_rates_all_in) {
+            cost = (double)energy_kwh * buying_rate;     /* dynamic price: already all-in */
+        } else {
+            if (pl->progressive_config.is_enabled && unit_id < RBPOWER_MAX_HOME_UNITS) {
+                buying_rate = progressive_effective_rate(buying_rate, g_net_metering[unit_id].period_consumed_kwh);
+            }
+            double energy_cost  = (double)energy_kwh * buying_rate;
+            double per_kwh_fees = (double)energy_kwh *
+                ((double)pl->grid_usage_fee_per_kwh + (double)pl->energy_tax_per_kwh + (double)pl->renewable_levy_per_kwh);
+            double subtotal = energy_cost + per_kwh_fees;
+            cost = subtotal * (1.0 + (double)pl->vat_percent / 100.0);   // VAT-inclusive all-in
         }
-        double energy_cost  = (double)energy_kwh * buying_rate;
-        double per_kwh_fees = (double)energy_kwh *
-            ((double)pl->grid_usage_fee_per_kwh + (double)pl->energy_tax_per_kwh + (double)pl->renewable_levy_per_kwh);
-        double subtotal = energy_cost + per_kwh_fees;
-        double cost = subtotal * (1.0 + (double)pl->vat_percent / 100.0);   // VAT-inclusive all-in
         result_base->cost_consumed += cost;
         lifetime_cost_add(unit_id, cost, 0.0);          /* system/unit cost_day / cost_total */
         // Real per-zone cost distribution (replaces the faked single-zone split in reports):
@@ -2440,7 +2450,7 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
         if (energy_kwh >= 0.0f) {
             const rbpower_tariff_plan_t* pl = &g_current_tariff_plan;
             float per_kwh_fees = pl->grid_usage_fee_per_kwh + pl->energy_tax_per_kwh + pl->renewable_levy_per_kwh;
-            ref_rate = (buying_rate + per_kwh_fees) * (1.0f + pl->vat_percent / 100.0f);
+            ref_rate = s_cost_rates_all_in ? buying_rate : (buying_rate + per_kwh_fees) * (1.0f + pl->vat_percent / 100.0f);
         } else {
             ref_rate = selling_rate;
         }
@@ -2465,67 +2475,37 @@ void rbpower_update_economics_direct(rbpower_unit_id_t unit_id,
  * Replaces the zone's energy rate per kWh for [from, until); the plan's per-kWh fees and VAT still apply on top, and the
  * zone still names the period. Outside every entry the plan's zone rates apply (the fixed tariff is the fallback).
  * RAM only: after a restart the price source sends the prices again. */
-#define EXT_PRICE_MAX RBPOWER_EXT_PRICE_MAX   /* 2 days of 15-min prices; the oldest start goes first */
-typedef struct { uint32_t from, until; float buy, sell; } ext_price_t;
-static ext_price_t s_ext_price[EXT_PRICE_MAX];
-static int s_ext_price_n = 0;
-static portMUX_TYPE s_ext_price_mux = portMUX_INITIALIZER_UNLOCKED;
-
+/* The stores, providers and the per-period price live in rbdynprice.c (dynamic prices). These wrappers keep the
+ * `set price` entry points: a push lands in the Home Assistant store. */
 esp_err_t rbpower_tariff_set_external_price(float buy, float sell, uint32_t from, uint32_t until)
 {
-    if (!(buy >= 0.0f) || buy > 100.0f || sell > 100.0f || until <= from) return ESP_ERR_INVALID_ARG;
-    ext_price_t e = { from, until, buy, sell };
-    portENTER_CRITICAL(&s_ext_price_mux);
-    /* Drop the entry this replaces and entries that ended over an hour ago by the clock (the hour keeps the price
-     * of a period that just closed; booking runs at its end). Age is measured from now, not from the new entry:
-     * an ascending today+tomorrow list must not purge today's entries. Clock unset: no age purge. */
-    uint32_t now = (uint32_t)time(NULL);
-    uint32_t keep_after = now > 1600000000u ? now - 3600u : 0u;
-    int k = 0;
-    for (int i = 0; i < s_ext_price_n; i++)
-        if (s_ext_price[i].until > keep_after && s_ext_price[i].from != from)
-            s_ext_price[k++] = s_ext_price[i];
-    s_ext_price_n = k;
-    if (s_ext_price_n == EXT_PRICE_MAX) {                   /* full: drop the oldest start */
-        int o = 0;
-        for (int i = 1; i < s_ext_price_n; i++) if (s_ext_price[i].from < s_ext_price[o].from) o = i;
-        s_ext_price[o] = s_ext_price[--s_ext_price_n];
-    }
-    s_ext_price[s_ext_price_n++] = e;
-    portEXIT_CRITICAL(&s_ext_price_mux);
-    return ESP_OK;
+    return rbdynprice_ha_put(buy, sell, from, until);
 }
 
-void rbpower_tariff_clear_external_price(void)
-{
-    portENTER_CRITICAL(&s_ext_price_mux);
-    s_ext_price_n = 0;
-    portEXIT_CRITICAL(&s_ext_price_mux);
-}
+void rbpower_tariff_clear_external_price(void) { rbdynprice_ha_clear(); }
 
 bool rbpower_tariff_external_price_at(uint32_t ts, float *buy, float *sell)
 {
-    bool hit = false; ext_price_t best = {0};
-    portENTER_CRITICAL(&s_ext_price_mux);
-    for (int i = 0; i < s_ext_price_n; i++)                 /* the latest-starting entry covering ts */
-        if (s_ext_price[i].from <= ts && ts < s_ext_price[i].until && (!hit || s_ext_price[i].from >= best.from)) {
-            best = s_ext_price[i]; hit = true;
-        }
-    portEXIT_CRITICAL(&s_ext_price_mux);
-    if (hit) { if (buy) *buy = best.buy; if (sell && best.sell >= 0.0f) *sell = best.sell; }
-    return hit;
+    rbdp_price_t pr;
+    float zb = buy ? *buy : 0.0f, zs = sell ? *sell : 0.0f;
+    if (!rbdynprice_resolve(ts, zb, zs, &pr)) return false;
+    if (buy) *buy = pr.raw;
+    if (sell) *sell = pr.sell;
+    return true;
 }
 
-int rbpower_tariff_external_prices(rbpower_ext_price_t *out, int max)
+/* The plan zone's energy and sell rates at an instant (UTC s): the zone of that local time, the default zone when
+ * the clock is unset or no zone matches. */
+void rbpower_tariff_zone_rates_at(uint32_t ts, float *buy, float *sell)
 {
-    portENTER_CRITICAL(&s_ext_price_mux);
-    int n = s_ext_price_n < max ? s_ext_price_n : max;
-    for (int i = 0; i < n; i++) {
-        out[i].from = s_ext_price[i].from; out[i].until = s_ext_price[i].until;
-        out[i].buy = s_ext_price[i].buy; out[i].sell = s_ext_price[i].sell;
+    rbpower_tariff_zone_t *z = NULL;
+    if (g_tariff_system_initialized && g_tariff_system_enabled && g_current_tariff_plan.is_active && !tariff_clock_unset()) {
+        time_t t = (time_t)ts; struct tm tmv;
+        if (rbgrid_localtime_r(&t, &tmv)) z = find_active_tariff_zone(&tmv);
     }
-    portEXIT_CRITICAL(&s_ext_price_mux);
-    return n;
+    if (!z && g_tariff_system_initialized && g_current_tariff_plan.is_active) z = find_default_tariff_zone();
+    if (buy)  *buy  = z ? z->rate_buying_per_kwh  : rbpower_get_current_tariff_rate_simple();
+    if (sell) *sell = z ? z->rate_selling_per_kwh : g_active_zone_cache.current_selling_rate;
 }
 
 /* Cost a single INJECTED period RESULT (rbAmp / external-source path). The 3-sec accumulation path costs
@@ -2573,14 +2553,22 @@ void rbpower_tariff_cost_injected_period(rbpower_unit_id_t unit_id, float energy
         buying  = rbpower_get_current_tariff_rate_simple();      // zone-aware cached buying rate
         selling = g_active_zone_cache.current_selling_rate;      // zone-aware selling / feed-in rate
     }
-    if (g_tariff_test_time_override_s < 0 && !tariff_clock_unset()) {   /* external price for the period's midpoint */
+    bool dyn = false;
+    if (g_tariff_test_time_override_s < 0 && !tariff_clock_unset()) {   /* dynamic price for the period's midpoint */
         uint32_t now_s = (uint32_t)time(NULL);
         uint32_t end = (q_end_ts > 450) ? q_end_ts : now_s;
-        if (end > 450) rbpower_tariff_external_price_at(end - 450, &buying, &selling);
+        rbdp_price_t pr;
+        if (end > 450 && rbdynprice_resolve(end - 450, buying, selling, &pr)) {
+            buying = pr.buy; selling = pr.sell; dyn = true;   /* all-in; may be negative */
+        }
     }
-    if (buying  < 0.0f) buying  = 0.0f;
-    if (selling < 0.0f) selling = 0.0f;
+    if (!dyn) {
+        if (buying  < 0.0f) buying  = 0.0f;
+        if (selling < 0.0f) selling = 0.0f;
+    }
+    s_cost_rates_all_in = dyn;
     rbpower_update_economics_direct(unit_id, energy_wh / 1000.0f, buying, selling, result_base);
+    s_cost_rates_all_in = false;
     s_cost_zone_override = -1;
 }
 
@@ -2615,8 +2603,7 @@ void rbpower_tariff_get_diag(int* hour, int* wday, int* mday, int* mon,
     if (mday)    *mday    = ti.tm_mday;
     if (mon)     *mon     = ti.tm_mon + 1;       // 1..12
     if (zone_id) *zone_id = (int)g_active_zone_cache.current_zone_id;
-    float b = g_active_zone_cache.current_buying_rate, sl = g_active_zone_cache.current_selling_rate;
-    if (g_tariff_test_time_override_s < 0 && !tariff_clock_unset()) rbpower_tariff_external_price_at((uint32_t)time(NULL), &b, &sl);
+    float b = g_active_zone_cache.current_buying_rate, sl = g_active_zone_cache.current_selling_rate;   /* plan zone */
     if (buying)  *buying  = b;
     if (selling) *selling = sl;
     if (is_holiday) *is_holiday = date_is_holiday(ti.tm_mon + 1, ti.tm_mday) ? 1 : 0;

@@ -62,6 +62,10 @@ CONF_REVENUE_DAY = "revenue_day"
 CONF_BUY_PRICE = "buy_price"
 CONF_SELL_PRICE = "sell_price"
 CONF_TARIFF_ZONE = "tariff_zone"
+CONF_PRICE_STATE = "price_state"
+CONF_PRICE_SOURCE = "price_source"
+CONF_PRICE_VALID_UNTIL = "price_valid_until"
+CONF_PROVIDER_PRICE = "provider_price"
 CONF_CONFIG_VERSION = "config_version"
 CONF_TIME_VALID = "time_valid"
 CONF_TARIFF_PLACEHOLDER = "tariff_placeholder"
@@ -132,6 +136,8 @@ def _system_schema(config):
                                                               state_class=STATE_CLASS_MEASUREMENT),
             cv.Optional(CONF_SELL_PRICE): sensor.sensor_schema(unit_of_measurement=f"{cur}/kWh", accuracy_decimals=4,
                                                                state_class=STATE_CLASS_MEASUREMENT),
+            cv.Optional(CONF_PROVIDER_PRICE): sensor.sensor_schema(unit_of_measurement=f"{cur}/kWh", accuracy_decimals=4,
+                                                                   state_class=STATE_CLASS_MEASUREMENT),
         },
         extra=cv.ALLOW_EXTRA,
     )
@@ -219,7 +225,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_REVENUE_DAY): cv.valid,
             cv.Optional(CONF_BUY_PRICE): cv.valid,
             cv.Optional(CONF_SELL_PRICE): cv.valid,
+            cv.Optional(CONF_PROVIDER_PRICE): cv.valid,
             cv.Optional(CONF_TARIFF_ZONE): text_sensor.text_sensor_schema(),
+            cv.Optional(CONF_PRICE_STATE): text_sensor.text_sensor_schema(entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
+            cv.Optional(CONF_PRICE_SOURCE): text_sensor.text_sensor_schema(entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
+            cv.Optional(CONF_PRICE_VALID_UNTIL): text_sensor.text_sensor_schema(
+                device_class="timestamp", entity_category=ENTITY_CATEGORY_DIAGNOSTIC),
             cv.Optional(CONF_MODULES_TOTAL): sensor.sensor_schema(**_COUNT),
             cv.Optional(CONF_MODULES_ONLINE): sensor.sensor_schema(**_COUNT),
             cv.Optional(CONF_NODES_TOTAL): sensor.sensor_schema(**_COUNT),
@@ -273,11 +284,14 @@ async def to_code(config):
                         (CONF_REVENUE_DAY, "set_revenue_day_sensor"), (CONF_BUY_PRICE, "set_buy_price_sensor"),
                         (CONF_SELL_PRICE, "set_sell_price_sensor"), (CONF_MODULES_TOTAL, "set_modules_total_sensor"),
                         (CONF_MODULES_ONLINE, "set_modules_online_sensor"), (CONF_NODES_TOTAL, "set_nodes_total_sensor"),
-                        (CONF_NODES_ONLINE, "set_nodes_online_sensor")):
+                        (CONF_NODES_ONLINE, "set_nodes_online_sensor"),
+                        (CONF_PROVIDER_PRICE, "set_provider_price_sensor")):
         if key in config:
             s = await sensor.new_sensor(config[key])
             cg.add(getattr(var, setter)(s))
-    for key, setter in ((CONF_TARIFF_ZONE, "set_tariff_zone_sensor"), (CONF_CONFIG_VERSION, "set_config_version_sensor")):
+    for key, setter in ((CONF_TARIFF_ZONE, "set_tariff_zone_sensor"), (CONF_CONFIG_VERSION, "set_config_version_sensor"),
+                        (CONF_PRICE_STATE, "set_price_state_sensor"), (CONF_PRICE_SOURCE, "set_price_source_sensor"),
+                        (CONF_PRICE_VALID_UNTIL, "set_price_valid_until_sensor")):
         if key in config:
             s = await text_sensor.new_text_sensor(config[key])
             cg.add(getattr(var, setter)(s))

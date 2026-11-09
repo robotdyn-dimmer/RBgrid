@@ -32,6 +32,7 @@ set(RBPOWER_SRCS
     "src/littlefs_raw.c"                     # raw littlefs IO for config/token/registry
     "src/rbfault.c"                          # fault injection (empty unless RBGRID_FAULT_INJECT test builds)
     "src/rbhome_tariff.c"                    # tariff/economics/billing engine (also #include'd by rbpower.c)
+    "src/rbdynprice.c"                       # dynamic (spot) prices: providers, stores, fetch, per-period price
     # --- flash statistics data layer (history/summary/DAY+ aggregation persistence) ---
     "src/rbstorage.c"
     "src/rbstorage_transfer_types.c"
@@ -83,6 +84,7 @@ idf_component_register(
         esp_wifi
         esp_netif
         esp_http_server
+        esp_http_client
         esp_https_server
         esp_event
         mqtt

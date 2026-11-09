@@ -248,7 +248,10 @@ typedef struct {
     char   currency[8];       ///< Plan currency (ISO code)
     bool   placeholder;       ///< Money is computed off the built-in demo plan (no plan saved yet)
     bool   time_valid;        ///< The wall clock is set (zones need it)
-    bool   external;          ///< The energy rate comes from an external price (set price), not the plan zone
+    bool   external;          ///< A dynamic price covers now (buy/sell come from it, not the plan zone)
+    char   price_state[16];   ///< Dynamic price state code: ok|backup|today_only|stale|plan_fallback|disabled
+    char   price_source[28];  ///< Provider in use now ("plan" if none), "(backup)" appended for the backup
+    uint32_t price_valid_until; ///< End of the continuous dynamic-price coverage from now (UTC s), 0 = none
 } rbgrid_tariff_now_t;
 
 /**

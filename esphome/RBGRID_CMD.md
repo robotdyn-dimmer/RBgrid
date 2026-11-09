@@ -56,7 +56,8 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
 | `i2c` | `/api/v1/i2c`: buses, board pin profile, modules | |
 | `espnow` | `/api/v1/espnow`: nodes, pairing state. `nodes_total` / `nodes_online` = paired nodes / online now; `paired_count` = nodes paired in the current pairing window (a restart gives them their points) | |
 | `events` | The device's event log since a cursor: `"since":seq` (0 = oldest in RAM), `"limit"` ≤ 100 (default 50), `"level"` `event` (default: events + fails) \| `fail` \| `all`. Reply `{"type":"events","boot","first","next","more","lines":[{"seq","ts","up","lvl","msg"}]}`; pass `next` as the next `since`. This boot's RAM ring only. Use it after a reconnect to pick up what fired while HA was away (boot lines go out before HA connects) | |
-| `price` | External prices stored (see below): `{"type":"price","now","active","prices":[{"from","until","buy","sell"?}]}` | |
+| `price` | Dynamic prices: state, the HA store and the resolved price per 15-min period (see "Dynamic prices") | |
+| `dynprice` | Price provider config, status and the provider catalogue (see "Dynamic prices") | |
 
 ### Change
 
@@ -72,7 +73,8 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
 | `{"cmd":"set","section":"espnow","data":{"action":"pair","seconds":180}}` | ESP-NOW actions (`pair`, `pair_cancel`, `configure`, `remove`, `disable`, `enable`, `latch`) |
 | `{"cmd":"set","section":"espnow","data":{"action":"configure","mac":"E8:DB:84:3D:42:E8","config":{"period_s":900,"channels":[{"ch":5,"enabled":false}]}}}` | A node's input settings. `channels[]`: `ch` (the node's channel id, as `get espnow` lists it), optional `enabled`, optional `ct_code` 1…7; only the listed channels change. `period_s` is optional and must be 900. `channels` may also sit next to `action` without `config`. At least one channel must stay on. Applies when the node acknowledges (`config_state` pending → applied in `get espnow`) |
 | `{"cmd":"set","section":"espnow","data":{"action":"disable","mac":"…"}}` | `disable` / `enable` / `remove` a node by `mac`; `pair` opens the window for `seconds`; `latch` closes the current period on every node now |
-| `{"cmd":"set","section":"price","data":{"buy":0.12,"sell":0.05,"from":unix,"until":unix}}` | External energy price for [`from`, `until`); `"prices":[...]` sets many at once, `{"clear":true}` drops them all. See below |
+| `{"cmd":"set","section":"price","data":{"buy":0.12,"sell":0.05,"from":unix,"until":unix}}` | Home Assistant price push for [`from`, `until`); `"prices":[...]` sets many at once, `{"clear":true}` drops them all. See "Dynamic prices" |
+| `{"cmd":"set","section":"dynprice","data":{...}}` | Price providers (primary / backup), zone, contract formula. See "Dynamic prices" |
 
 ### Points: `{"cmd":"unit","op":...}`
 
@@ -86,23 +88,93 @@ These are the web app's point routes. The reply carries `data.code` (HTTP-style)
 | `rename` | `"unit":"0100","data":{"point":"kitchen"}` | Change the point slug |
 | `delete` | `"unit":"0100"` | Its history stays on flash, unreachable |
 
-### External price (Nord Pool, Tibber, … through HA)
+### Dynamic prices: providers, `dynprice`, `price`
 
-`{"cmd":"set","section":"price","data":{"prices":[{"buy":0.112,"sell":0.04,"from":1794139200,"until":1794142800}, ...]}}`
+Design: `hello_world/documents/architecture/DYNAMIC_TARIFFS_DESIGN.md`. The hub owns the price loop. The user picks a
+**primary** and an optional **backup** provider. For each 15-min period the hub uses a primary entry if one covers
+the period's midpoint, else a backup entry, else the tariff plan's zone.
 
-- `buy` replaces the tariff zone's **energy rate** (currency/kWh, 0…100) for [`from`, `until`). The plan's per-kWh fees
-  (grid usage, energy tax, levy) and VAT are still added, so the `Buy price` entity shows the all-in rate. `sell`
-  (optional) replaces the feed-in rate; leave it out to keep the plan's.
-- A 15-min period is priced at its midpoint, like the zones. Energy is booked when the period closes, so a price
-  must cover the period's middle by then; sending the day-ahead prices once a day is the intended use.
-- An entry with the same `from` is replaced; entries that ended more than an hour ago (by the device clock) are dropped;
-  up to 192 are kept = 2 days of 15-min prices (when full, the oldest start goes first). Order inside `prices[]` does
-  not matter. Entries add up across commands, so a long list can go in pages (≤ 48 entries ≈ 3 KB per command is a
-  comfortable size); `{"clear":true}` first if the new list must replace everything.
-- **Outside every entry the tariff plan's zone rates apply** (the fixed tariff is the fallback): if HA stops sending,
-  money keeps accruing at the plan. The `External price` entity is on while an entry covers now.
-- Prices live in RAM: after a restart, send them again (HA can re-send on the device's reconnect).
-- Errors: missing `buy`/`from`/`until`, `buy` outside 0…100, `until` ≤ `from`. Entries before the bad one stay stored.
+**Providers** (P1):
+- `energy_charts` (network): the hub fetches it itself, 15-min day-ahead, EUR/MWh → EUR/kWh, spot class. Only the
+  CC BY 4.0 zones are offered: AT, BE, CH, CZ, DE-LU, DK1, DK2, FR, HU, IT-North, NL, NO2, PL, SE4, SI. It needs a plan
+  in EUR (no FX in P1).
+- `ha` (local): Home Assistant pushes with `set price`. Its class (`spot` / `all_in`) is set in the config.
+
+**`{"cmd":"get","section":"dynprice"}`** returns the config, the status and the provider catalogue:
+```
+{"type":"dynprice","enabled":false,"source":"ha","backup_source":"none","zone":"","country":"",
+ "ha_class":"spot","factor":1,"markup":0,"zones_stack":false,"hourly_mean":false,"floor_buy":null,"floor_sell":null,
+ "sell_mode":"source","k_sell":1,"feedin_fee":0,"token_set":false,"backup_token_set":false,"currency":"EUR",
+ "price_state":"disabled","source_now":"plan","backup_now":false,"valid_until":0,"last_fetch":0,"next_fetch":0,
+ "last_error":"none",
+ "providers":[{"id":"energy_charts","name":"…","class":"spot","local":false,"available":true,"needs_token":false,
+   "resolution_s":900,"zones":[{"id":"NL","name":"Netherlands","country":"NL","currency":"EUR"},…],
+   "terms_url":"…","attribution":"Bundesnetzagentur | SMARD.de / Energy-Charts (CC BY 4.0)"},
+  {"id":"ha","name":"Home Assistant","class":"spot","local":true,"available":true,…}]}
+```
+- `available` for `ha` is true in the ESPHome build, or once a push has arrived.
+- `attribution` is shown verbatim wherever a price from that provider is shown.
+
+**`{"cmd":"set","section":"dynprice","data":{…}}`** merges any of these fields:
+
+| Field | Meaning |
+|---|---|
+| `enabled` | Off (default): only HA pushes apply, as a spot price with factor 1 and no markup (the behaviour before `dynprice`). On: the provider config below applies |
+| `source`, `backup_source` | Provider ids; backup may be `"none"` and must differ from the source |
+| `zone` | Zone id of the network provider(s). It must be one of the provider's zones, and its currency must equal the plan's currency |
+| `ha_class` | `spot` \| `all_in` — what HA pushes |
+| `factor`, `markup` | Spot → energy rate = spot × factor + markup (currency/kWh) |
+| `zones_stack` | Add the plan zone's rate to the spot (time-of-use grid fees on top of spot) |
+| `hourly_mean` | Bill each 15-min period at the mean of its hour's four 15-min prices |
+| `floor_buy`, `floor_sell` | Lowest final buy / sell price; `null` = none (negative prices pass through) |
+| `sell_mode` | `source` (the entry's sell, else the plan's) \| `plan` \| `formula` (raw × `k_sell` − `feedin_fee`) |
+
+- **Final buy price.** spot class: (energy rate + the plan's per-kWh fees) × (1 + VAT). all_in class: the price as is.
+  Then `floor_buy` applies. Negative values are real prices.
+- **Errors** name the field: `{"result":"error","message":"…","field":"zone"}`. Over HTTP the same rejection is
+  `400 {"error":"…","field":"zone"}`.
+
+**`price_state`** (also the `Price state` entity):
+
+| Code | Meaning |
+|---|---|
+| `ok` | The primary covers now |
+| `backup` | The backup covers now |
+| `today_only` | After 15:00 UTC, tomorrow is not in yet |
+| `stale` | HA is the primary and nothing covers now |
+| `plan_fallback` | A network primary and nothing covers now |
+| `disabled` | Off |
+
+- States follow coverage: a missed push or a failed fetch changes nothing while stored entries still cover now.
+- **`last_error`:** `none | fetch_failed | http_status | parse | auth | no_data_for_zone | rate_limited`.
+
+**Fetch schedule:**
+- **Today:** whenever now is not covered.
+- **Tomorrow:** from 11:00 UTC (= 12:00 CET / 13:00 CEST), every 15 min until 15:00 UTC, then hourly, until tomorrow's
+  noon is covered. A failure retries on the same steps.
+- **Persistence:** stored prices of every provider are saved to NVS (≤ 1 min after a change) and restored at boot, so
+  a reboot keeps them.
+
+**`{"cmd":"get","section":"price","from":unix?,"until":unix?}`** returns the state plus:
+- `prices[]`: the HA store, the legacy shape `{from, until, buy, sell?}`;
+- `resolved[]`: the price per 15-min period as the hub books it, `{from, until, buy, sell, raw?, prov, hourly_mean?}`.
+  - `prov`: `source | backup | ha_push | plan`;
+  - default range: now − 1 h → end of coverage; at most 200 periods.
+
+**`{"cmd":"set","section":"price","data":{"prices":[{"buy":0.112,"sell":0.04,"from":…,"until":…},…]}}`** is the Home
+Assistant push:
+- `buy` and `sell` may be −100…100; `sell` missing or `null` = none.
+- A pushed entry with the same `from` replaces the old one. Entries that ended over an hour ago drop. Up to 200 are
+  kept (when full, the oldest start goes).
+- Order does not matter, and pages add up. `{"clear":true}` drops them all.
+- Errors: missing `buy`/`from`/`until`, values outside ±100, `until` ≤ `from`. Entries before the bad one stay stored.
+
+**HTTP** (web-app build): the same functions.
+- `GET`/`POST /api/v1/dynprice`;
+- `GET /api/v1/price?from=&until=`;
+- `POST /api/v1/price` (body as `data` above).
+
+`GET /api/v1/schema` → `capabilities.dynamicTariffs: true`.
 
 ### History: `{"cmd":"history","unit":"0100","period":"hour|day|week|month|year","type":"electrical|energy|economics|quality|direction","offset":0,"limit":50}`
 
@@ -153,7 +225,10 @@ Energy and money per stored period, joined on the device:
 | Tariff zone | text |
 | Config version | text, diagnostic |
 | Clock set, Demo tariff | binary, diagnostic |
-| External price | binary, diagnostic: an external price covers now |
+| External price | binary, diagnostic: a dynamic price covers now (Buy / Sell price then come from it) |
+| Provider price | currency/kWh, measurement: the provider's raw price now (spot or all-in); unknown when none covers now |
+| Price state, Price source | text, diagnostic: `price_state` code; provider in use now (`energy_charts`, `ha`, `plan`; "(backup)" appended) |
+| Price valid until | timestamp, diagnostic: end of the continuous dynamic-price coverage from now |
 | Modules, Modules online | count, diagnostic: configured rbAmp modules / those that answer (fewer than 3 failed polls in a row) |
 | Nodes, Nodes online | count, diagnostic: paired ESP-NOW nodes / those online (a disabled node is not online) |
 | Point N name / power / energy in / energy out / current (voltage, cost optional: `slot_voltage`, `slot_cost`; cost = monetary, total; `Online` = connectivity, diagnostic: the point's source answers, unknown on an empty slot, `slot_online` default on) | 12 slots; a new point takes the first free slot. With `slot_devices: true` each slot is its own HA device `Point N` (declared under `esphome: devices:` as `rbgrid_point_N`), and its entity names are short: Name, Power, Energy in, Energy out, Current |

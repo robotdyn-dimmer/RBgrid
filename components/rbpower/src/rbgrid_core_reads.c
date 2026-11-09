@@ -414,6 +414,7 @@ char *rbgrid_build_schema_json(void)
     cJSON *cap = cJSON_AddObjectToObject(root, "capabilities");
     cJSON_AddBoolToObject(cap, "espnow", true);
     cJSON_AddBoolToObject(cap, "pointNesting", true);   /* units-config `inside`, PATCH units/{id} {inside} */
+    cJSON_AddBoolToObject(cap, "dynamicTariffs", true);   /* get/set dynprice, get/set price (DYNAMIC_TARIFFS_DESIGN) */
     cJSON_AddBoolToObject(cap, "economics", true);
     cJSON_AddBoolToObject(cap, "summary", true);
     cJSON_AddBoolToObject(cap, "exportCsv", true);

@@ -178,6 +178,8 @@ esp_err_t rbwebserver_api_tariff_plan_config_handler(httpd_req_t *req);
  *         (4xx/5xx, including 401/403/429 from the token guard).
  */
 esp_err_t rbwebserver_api_telemetry_config_handler(httpd_req_t *req);
+esp_err_t rbwebserver_api_dynprice_handler(httpd_req_t *req);   /* /api/v1/dynprice */
+esp_err_t rbwebserver_api_price_handler(httpd_req_t *req);      /* /api/v1/price */
 
 /**
  * @brief GET /api/system/wifi-config — Wi-Fi configuration. No auth.

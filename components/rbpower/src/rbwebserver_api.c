@@ -15,6 +15,8 @@
  * All HTTP handlers run on the httpd task; reads of g_home_network take rbpower_home_lock().
  */
 
+#include "rbdynprice.h"
+#include <math.h>
 #include "rbwebserver_internal.h"
 #include "rbstats_migrate.h"   /* history 503 during deferred format migration */
 #include "rbhome_types.h"            /* g_home_network + rbpower_home_lock/unlock */
@@ -2655,3 +2657,107 @@ esp_err_t rbwebserver_api_schema_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+
+/* ==== Dynamic prices (DYNAMIC_TARIFFS_DESIGN §6): the same core functions as `cmd get/set dynprice|price` ==== */
+
+static esp_err_t dp_send_json(httpd_req_t *req, cJSON *o, const char *status)
+{
+    char *s = o ? cJSON_PrintUnformatted(o) : NULL;
+    cJSON_Delete(o);
+    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json"); return ESP_FAIL; }
+    if (status) httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, s, strlen(s));
+    free(s);
+    return ESP_OK;
+}
+
+static cJSON *dp_read_body(httpd_req_t *req)
+{
+    int len = req->content_len;
+    if (len <= 0 || len > 24 * 1024) return NULL;
+    char *body = malloc(len + 1);
+    if (!body) return NULL;
+    int got = rbapi_recv_body(req, body, len);
+    cJSON *j = got > 0 ? cJSON_ParseWithLength(body, got) : NULL;
+    free(body);
+    return j;
+}
+
+static esp_err_t dp_options(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Access-Control-Max-Age", "86400");
+    httpd_resp_set_status(req, "204 No Content");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+static esp_err_t dp_error(httpd_req_t *req, const char *field, const char *msg)
+{
+    cJSON *e = cJSON_CreateObject();
+    cJSON_AddStringToObject(e, "error", msg);
+    cJSON_AddStringToObject(e, "field", field ? field : "");
+    return dp_send_json(req, e, "400 Bad Request");
+}
+
+/* GET /api/v1/dynprice → config + status + providers[]; POST → merge config (400 {error, field} on a bad field). */
+esp_err_t rbwebserver_api_dynprice_handler(httpd_req_t *req)
+{
+    add_cors_headers(req);
+    if (req->method == HTTP_OPTIONS) return dp_options(req);
+    if (req->method == HTTP_POST) {
+        if (!rbapi_require_auth(req)) return ESP_FAIL;
+        cJSON *j = dp_read_body(req);
+        if (!j) return dp_error(req, "", "body must be a JSON object");
+        char ef[24] = "", em[128] = "";
+        esp_err_t r = rbdynprice_set_config(j, ef, sizeof(ef), em, sizeof(em));
+        cJSON_Delete(j);
+        if (r != ESP_OK) return dp_error(req, ef, em);
+        return dp_send_json(req, rbdynprice_config_json(), NULL);
+    }
+    if (!rbapi_require_read(req)) return ESP_FAIL;
+    return dp_send_json(req, rbdynprice_config_json(), NULL);
+}
+
+/* GET /api/v1/price[?from=&until=] → state + HA store + resolved prices; POST {prices:[…]} | {buy,from,until} |
+ * {clear:true} → the Home Assistant / external store (same rules as `cmd set price`). */
+esp_err_t rbwebserver_api_price_handler(httpd_req_t *req)
+{
+    add_cors_headers(req);
+    if (req->method == HTTP_OPTIONS) return dp_options(req);
+    if (req->method == HTTP_POST) {
+        if (!rbapi_require_auth(req)) return ESP_FAIL;
+        cJSON *j = dp_read_body(req);
+        if (!j) return dp_error(req, "", "body must be a JSON object");
+        if (cJSON_IsTrue(cJSON_GetObjectItem(j, "clear"))) {
+            rbpower_tariff_clear_external_price();
+            cJSON_Delete(j);
+            return dp_send_json(req, rbdynprice_price_json(0, 0), NULL);
+        }
+        const cJSON *arr = cJSON_GetObjectItem(j, "prices");
+        int n = cJSON_IsArray(arr) ? cJSON_GetArraySize(arr) : 1;
+        for (int k = 0; k < n; k++) {
+            const cJSON *e = cJSON_IsArray(arr) ? cJSON_GetArrayItem(arr, k) : j;
+            const cJSON *jb = cJSON_GetObjectItem(e, "buy"), *js = cJSON_GetObjectItem(e, "sell");
+            const cJSON *jf = cJSON_GetObjectItem(e, "from"), *ju = cJSON_GetObjectItem(e, "until");
+            if (!cJSON_IsNumber(jb) || !cJSON_IsNumber(jf) || !cJSON_IsNumber(ju) || (js && !cJSON_IsNumber(js) && !cJSON_IsNull(js)) ||
+                rbpower_tariff_set_external_price((float)jb->valuedouble, cJSON_IsNumber(js) ? (float)js->valuedouble : NAN,
+                                                  (uint32_t)jf->valuedouble, (uint32_t)ju->valuedouble) != ESP_OK) {
+                char m[128];
+                snprintf(m, sizeof(m), "price %d: needs buy/sell -100..100 and from < until (unix s); %d stored before it", k, k);
+                cJSON_Delete(j);
+                return dp_error(req, "prices", m);
+            }
+        }
+        cJSON_Delete(j);
+        return dp_send_json(req, rbdynprice_price_json(0, 0), NULL);
+    }
+    if (!rbapi_require_read(req)) return ESP_FAIL;
+    uint32_t from = 0, until = 0;
+    char q[96], v[16];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK) {
+        if (httpd_query_key_value(q, "from", v, sizeof(v)) == ESP_OK) from = (uint32_t)strtoul(v, NULL, 10);
+        if (httpd_query_key_value(q, "until", v, sizeof(v)) == ESP_OK) until = (uint32_t)strtoul(v, NULL, 10);
+    }
+    return dp_send_json(req, rbdynprice_price_json(from, until), NULL);
+}

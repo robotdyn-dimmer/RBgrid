@@ -36,6 +36,10 @@ class RBgridComponent : public Component {
   void set_buy_price_sensor(sensor::Sensor *s) { buy_price_ = s; }
   void set_sell_price_sensor(sensor::Sensor *s) { sell_price_ = s; }
   void set_tariff_zone_sensor(text_sensor::TextSensor *s) { tariff_zone_ = s; }
+  void set_price_state_sensor(text_sensor::TextSensor *s) { price_state_ = s; }
+  void set_price_source_sensor(text_sensor::TextSensor *s) { price_source_ = s; }
+  void set_price_valid_until_sensor(text_sensor::TextSensor *s) { price_valid_until_ = s; }
+  void set_provider_price_sensor(sensor::Sensor *s) { provider_price_ = s; }
   void set_config_version_sensor(text_sensor::TextSensor *s) { config_version_ = s; }
   void set_time_valid_sensor(binary_sensor::BinarySensor *s) { time_valid_ = s; }
   void set_tariff_placeholder_sensor(binary_sensor::BinarySensor *s) { tariff_placeholder_ = s; }
@@ -114,6 +118,10 @@ class RBgridComponent : public Component {
   sensor::Sensor *nodes_total_{nullptr};
   sensor::Sensor *nodes_online_{nullptr};
   text_sensor::TextSensor *tariff_zone_{nullptr};
+  text_sensor::TextSensor *price_state_{nullptr};
+  text_sensor::TextSensor *price_source_{nullptr};
+  text_sensor::TextSensor *price_valid_until_{nullptr};
+  sensor::Sensor *provider_price_{nullptr};
   text_sensor::TextSensor *config_version_{nullptr};
   binary_sensor::BinarySensor *time_valid_{nullptr};
   binary_sensor::BinarySensor *tariff_placeholder_{nullptr};

@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <math.h>
 #include "rbjson.h"
+#include "rbdynprice.h"
 #include "rbextflash_operations.h"   /* rbpower_flash_unit_has_history — units-config `history` */
 #include "esp_log.h"
 #include "esp_system.h"
@@ -405,7 +406,19 @@ void rbgrid_core_tariff_now(rbgrid_tariff_now_t *t)
     snprintf(t->currency, sizeof(t->currency), "%s", rbpower_tariff_currency());
     t->placeholder = tp && rbpower_tariff_plan_is_placeholder(tp->plan_name, tp->provider_name);
     t->time_valid = rbtime_is_time_valid();
-    t->external = t->time_valid && rbpower_tariff_external_price_at((uint32_t)time(NULL), NULL, NULL);
+    /* dynamic price in force now: it replaces the plan figures */
+    rbdp_price_t pr;
+    if (t->time_valid && rbdynprice_resolve((uint32_t)time(NULL), buy, sell, &pr)) {
+        t->external = true;
+        t->buy_rate = pr.raw;
+        t->buy_rate_all_in = pr.buy;
+        t->sell_rate = pr.sell;
+    }
+    bool bk = false;
+    const char *src = rbdynprice_source_now(&bk);
+    snprintf(t->price_state, sizeof(t->price_state), "%s", rbdynprice_state());
+    snprintf(t->price_source, sizeof(t->price_source), "%s%s", src, bk ? " (backup)" : "");
+    t->price_valid_until = rbdynprice_valid_until();
 }
 
 /* Version of the active configuration: CRC32 of the points + tariff plan JSON, as 8 hex digits. Builds both

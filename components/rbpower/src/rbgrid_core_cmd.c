@@ -15,6 +15,7 @@
 #include "rbgrid_config_storage.h"
 #include "rbgrid_config_api.h"
 #include "rbhome_tariff.h"
+#include "rbdynprice.h"
 #include "rbjson.h"
 #include "littlefs_raw.h"
 #include "esp_app_desc.h"
@@ -94,25 +95,17 @@ static char* cmd_get_section(const cJSON* root, const char* section)
     if (strcmp(section, "schema") == 0)  return rbgrid_build_schema_json();
     if (strcmp(section, "sensors") == 0) return rbgrid_json_create_sensors_list(rbgrid_core_json_ctx());
     if (strcmp(section, "espnow") == 0)  return s_espnow_status_provider ? s_espnow_status_provider() : NULL;
-    if (strcmp(section, "price") == 0) {   /* external energy prices in force / ahead */
-        static rbpower_ext_price_t ep[RBPOWER_EXT_PRICE_MAX];
-        int n = rbpower_tariff_external_prices(ep, RBPOWER_EXT_PRICE_MAX);
-        cJSON* o = cJSON_CreateObject();
-        cJSON_AddStringToObject(o, "type", "price");
-        cJSON_AddNumberToObject(o, "now", (double)time(NULL));
-        float b = -1, sl = -1;
-        bool on = rbpower_tariff_external_price_at((uint32_t)time(NULL), &b, &sl);
-        cJSON_AddBoolToObject(o, "active", on);
-        cJSON* a = cJSON_AddArrayToObject(o, "prices");
-        for (int i = 0; i < n; i++) {
-            cJSON* e = cJSON_CreateObject();
-            cJSON_AddNumberToObject(e, "from", ep[i].from);
-            cJSON_AddNumberToObject(e, "until", ep[i].until);
-            cJSON_AddNumberToObject(e, "buy", round((double)ep[i].buy * 1e6) / 1e6);
-            if (ep[i].sell >= 0) cJSON_AddNumberToObject(e, "sell", round((double)ep[i].sell * 1e6) / 1e6);
-            cJSON_AddItemToArray(a, e);
-        }
-        char* r = cJSON_PrintUnformatted(o);
+    if (strcmp(section, "price") == 0) {   /* dynamic prices: state, HA store, resolved per 15-min period */
+        const cJSON *jf = cJSON_GetObjectItem(root, "from"), *ju = cJSON_GetObjectItem(root, "until");
+        cJSON *o = rbdynprice_price_json(cJSON_IsNumber(jf) ? (uint32_t)jf->valuedouble : 0,
+                                         cJSON_IsNumber(ju) ? (uint32_t)ju->valuedouble : 0);
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
+        cJSON_Delete(o);
+        return r;
+    }
+    if (strcmp(section, "dynprice") == 0) {   /* provider config + status + catalogue */
+        cJSON *o = rbdynprice_config_json();
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
         cJSON_Delete(o);
         return r;
     }
@@ -197,6 +190,24 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
 
     char* ack = NULL;
     char msg[96];
+    if (strcmp(section, "dynprice") == 0) {   /* provider config; a rejection names the field */
+        char ef[24] = "", em[128] = "";
+        if (rbdynprice_set_config(data, ef, sizeof(ef), em, sizeof(em)) == ESP_OK) {
+            ack = cmd_ack_json("set", section, "ok", "dynamic price config saved", id);
+        } else {
+            ack = cmd_ack_json("set", section, "error", em, id);
+            cJSON *o = ack ? cJSON_Parse(ack) : NULL;
+            cJSON *d = o ? cJSON_GetObjectItem(o, "data") : NULL;
+            if (d) {
+                cJSON_AddStringToObject(d, "field", ef);
+                char *re = cJSON_PrintUnformatted(o);
+                if (re) { free(ack); ack = re; }
+            }
+            cJSON_Delete(o);
+        }
+        free(data_str);
+        return ack;
+    }
     if (strcmp(section, "price") == 0) {
         /* external energy price: {"buy","sell"?,"from","until"} | {"prices":[...]} | {"clear":true} */
         if (cJSON_IsTrue(cJSON_GetObjectItem(data, "clear"))) {
@@ -212,10 +223,10 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
                 const cJSON *jb = cJSON_GetObjectItem(e, "buy"), *js = cJSON_GetObjectItem(e, "sell");
                 const cJSON *jf = cJSON_GetObjectItem(e, "from"), *ju = cJSON_GetObjectItem(e, "until");
                 if (!cJSON_IsNumber(jb) || !cJSON_IsNumber(jf) || !cJSON_IsNumber(ju)) { why = "each price needs buy, from, until (unix s)"; break; }
-                if (js && !cJSON_IsNumber(js)) { why = "sell must be a number"; break; }
-                if (rbpower_tariff_set_external_price((float)jb->valuedouble, js ? (float)js->valuedouble : -1.0f,
+                if (js && !cJSON_IsNumber(js) && !cJSON_IsNull(js)) { why = "sell must be a number"; break; }
+                if (rbpower_tariff_set_external_price((float)jb->valuedouble, cJSON_IsNumber(js) ? (float)js->valuedouble : NAN,
                                                       (uint32_t)jf->valuedouble, (uint32_t)ju->valuedouble) != ESP_OK)
-                    { why = "bad price (buy 0..100) or until <= from"; break; }
+                    { why = "bad price (buy/sell -100..100) or until <= from"; break; }
                 okc++;
             }
             if (why) { snprintf(msg, sizeof(msg), "%s (%d stored before it)", why, okc); ack = cmd_ack_json("set", section, "error", msg, id); }
