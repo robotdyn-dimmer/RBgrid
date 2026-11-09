@@ -2,7 +2,7 @@
 
 Firmware for a remote metering node. The node reads rbAmp metering modules and sends their data to an RBgrid hub over ESP-NOW. It needs no Wi-Fi network of its own and no channel setting.
 
-Node firmware 1.5. Works with RBgrid hub firmware 1.1.7 or later; estimated energy for current-only modules and long-outage records need hub 1.1.8 or later.
+Node firmware 1.5. Works with RBgrid hub firmware 1.1.7 or later; long-outage records need hub 1.1.8 or later.
 
 ## Hardware
 
@@ -11,7 +11,7 @@ Node firmware 1.5. Works with RBgrid hub firmware 1.1.7 or later; estimated ener
 - **I2C pins:** SDA = GPIO 25, SCL = GPIO 26. Other pins: build with `-DRBN_I2C_SDA=<n> -DRBN_I2C_SCL=<n>`.
 - The node must be within ESP-NOW range of the hub.
 
-- **Energy records:** a module that measures voltage gives measured energy. A current-only module gives an estimate from the hub's nominal voltage (hub 1.1.8+), marked as estimated in history. A three-phase STD-U3I3 is read phase by phase: each current channel uses its own phase voltage.
+- **Energy records:** a module that measures voltage gives measured energy. A current-only module gives live current only: the hub books no energy for it. A three-phase STD-U3I3 is read phase by phase: each current channel uses its own phase voltage.
 
 The hub uses up to 4 inputs per node and up to 6 nodes. The hub keeps history for 12 points in total, its own points and node points together; a point beyond that shows live values only.
 

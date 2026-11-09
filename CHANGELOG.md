@@ -9,9 +9,10 @@
   (NTP, or by hand); the event log says "mqtt: TLS broker — waiting for the clock". Plain `mqtt://` is not delayed.
 
 ### Remote nodes
-- **Energy records from a node with current-only modules.** A node period with no voltage (voltage 0, energy 0,
-  current > 0) is estimated from the hub's nominal voltage, like the live values; the hour is flagged `ESTIMATED`.
-  Needs node firmware 1.5 (older nodes send no records without a voltage module).
+- **A current-only node input books no energy.** Node 1.5 sends a record for an input without a voltage module
+  (voltage 0, current only). The hub does not turn it into energy from the nominal voltage: that would not be real
+  energy. The hour stays without data; live values still show the current. `get espnow` counts these records in
+  `periods_curonly_skipped`.
 - **A node period longer than 15 minutes** (energy the node counted before it had the hub's clock, e.g. it started
   while the hub was out of reach) is kept: it goes into that period's hour, flagged `OUTAGE`.
 - **Live values from all 4 inputs of a node** (was 3).
@@ -23,8 +24,8 @@ Hub 1.1.8 works with node 1.4 and 1.5; these need 1.5:
 - **A node follows only the hub it is paired to.** With two RBgrid hubs on one Wi-Fi channel, node 1.4 accepted
   both hubs' time beacons. Its clock then never settled ("Clock sync" lost on the node card) while energy and periods
   kept arriving. Update nodes to 1.5 if a second hub runs on the same router.
-- **Current-only modules give energy records** (see above). A voltage module with no mains on its voltage input
-  (< 50 V) is handled as current-only.
+- A voltage module with no mains on its voltage input (< 50 V) is handled as current-only (see above: no energy
+  is booked for it).
 - All three inputs of a module are reported (was two). Live values come from all 4 inputs of a node.
 - The first record covers boot → the first full 15-minute boundary.
 - Periods are kept in flash until the hub has them; a power cut while a period is being written no longer loses the
