@@ -53,9 +53,9 @@ The key is kept on the node. After a restart it reconnects without pairing again
 ## What the node does
 
 - Follows the hub's channel. If the router moves the hub to another channel, the node finds it again.
-- Keeps its clock in step with the hub and closes a period every 15 minutes, on the hub's quarter boundaries.
-- Sends live readings, and one period record per quarter with the energy from the modules' own counters.
-- While the hub is out of reach, it keeps closing quarters on time and holds up to 8 of them. They are sent when the link is back. A power cut on the node loses the quarter that was open.
+- Keeps its clock in step with the hub and closes a period every 15 minutes, on the hub's 15-minute boundaries.
+- Sends live readings, and one record per period with the energy from the modules' own counters.
+- While the hub is out of reach, it keeps closing periods on time and holds up to 8 of them. They are sent when the link is back. A power cut on the node loses the period that was open.
 - Takes its settings from the hub: each input on or off, and the clamp model.
 
 ## Development builds
