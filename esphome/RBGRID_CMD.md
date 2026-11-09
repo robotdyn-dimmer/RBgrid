@@ -196,6 +196,38 @@ each closed 15-min period:
 - Each state change writes an event line `price: state A -> B (source …, valid until …)`, which reaches HA as
   `rbgrid_event` kind `price`. A failed fetch gives `FAIL price: …`.
 
+**Cheap windows: `{"cmd":"get","section":"rules"}` / `{"cmd":"set","section":"rules","data":{…}}`.** The hub computes
+and notifies; it controls nothing. Rules act on the all-in buy price of each 15-min period (dynamic price, or the plan
+zone where none covers). Up to 8 rules; `set` with `"rules":[…]` replaces them all.
+
+| `kind` | Fields | Active when |
+|---|---|---|
+| `threshold` | `on_below`, `off_above` (≥ on_below) | buy ≤ `on_below`; stays on until buy ≥ `off_above` |
+| `cheapest` | `from_h` 0…23, `to_h` 0…24 (local; `to_h` < `from_h` crosses midnight, 0…24 = all day), `periods` 1…96, `consecutive` | the current period is one of the `periods` cheapest of that day's window (or of the cheapest consecutive block) |
+| `deadline` | `deadline_h` 0…23, `periods`, `consecutive` | the same, over the 24 h ending at `deadline_h` ("N periods of run time before 07:00") |
+
+- Common fields: `id` (1…255), `name` (≤ 23 chars), `enabled` (default true).
+- **`get rules`** returns each rule with `state: {active, active_until, next_start, window_from?, window_until?}`
+  (UTC s).
+- **Recompute:** windows are recomputed every ~30 s from the stored prices. Periods without a stored price count at the
+  plan's rate, so a window can move when tomorrow's prices arrive.
+- **Events:** each on/off writes `price: window 'NAME' on until T` / `off, next T`, which reaches HA as `rbgrid_event`
+  kind `price`.
+- **Signal flags:** `"signal":{"buy_cheap_below":x|null,"sell_low_below":y|null}`.
+
+**Price notification: `{"cmd":"get","section":"signal"}`** returns the same JSON the hub publishes to MQTT
+`rbgrid/<mac>/price` (retained, at each 15-min boundary and on change; web-app build with MQTT on):
+```
+{"v":1,"ts","period_from","period_until","currency","buy","sell","price_state","provenance",
+ "rank_buy","rank_sell","periods_today","windows":[{"rule_id","name","active","active_until","next_start"}],
+ "sell_low","buy_cheap"}
+```
+- `buy` / `sell` are all-in and may be negative.
+- `rank_*` ranks the period within its local day, 1 = cheapest (92/100 on DST days); `periods_today` gives the count.
+- `windows[]` ≤ 8; payload < 1 KB.
+- Consumers (ACRouter, automations) map it to their own actions; when `price_state` ≠ `ok` or
+  now > `period_until`, they fall back to their defaults.
+
 **`{"cmd":"get","section":"peaks"}`** returns the import peaks at the grid input per billing cycle, the base for capacity
 tariffs. It is metering only and changes no money.
 - Reply: `{"type":"peaks","cycle_day","cycle_start","max_15min_w","max_15min_end","max_hour_w","max_hour_start",

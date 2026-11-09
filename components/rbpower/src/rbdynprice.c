@@ -27,7 +27,8 @@
 #include "rbhome_tariff.h"    /* plan, currency, zone rates */
 #include "rbhome_types.h"     /* rbpower_diag_printf */
 #include "littlefs_raw.h"
-#include "rbpeak.h"     /* price log: one file per UTC day on the config partition */
+#include "rbpeak.h"
+#include "rbactivation.h"     /* price log: one file per UTC day on the config partition */
 
 static const char *TAG = "RBDYNPRICE";
 
@@ -881,6 +882,7 @@ static const char *fetch_store(int st, const char *provider, const char *zone)
 }
 
 static volatile bool s_refetch = true;
+void rbdynprice_kick(void) { s_refetch = true; }
 static uint32_t s_next_try[ST_N];
 
 /* Does network store st need a fetch now? today = now not covered; tomorrow = after 11:00 UTC (12:00 CET winter,
@@ -904,6 +906,7 @@ static void fetch_task(void *arg)
         if (!clock_ok()) continue;
         plog_tick(now);
         rbpeak_tick(now);
+        rbact_tick(now);
         {   /* one event line per state change (reaches the event log, HA events, the web app's log view) */
             static char prev_state[16] = "";
             const char *st_now = rbdynprice_state();
@@ -963,6 +966,7 @@ void rbdynprice_init(void)
     cfg_load();
     st_load_all();
     rbpeak_init();
+    rbact_init();
     /* a store saved for another provider/zone than the config now names is stale */
     dp_cfg_t c; cfg_get(&c);
     if (strcmp(s_st[ST_NET_P].provider, c.source) || strcmp(s_st[ST_NET_P].zone, c.zone)) st_clear(ST_NET_P);

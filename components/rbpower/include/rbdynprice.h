@@ -100,6 +100,8 @@ const char *rbdynprice_source_now(bool *is_backup);
 uint32_t rbdynprice_valid_until(void);
 /** @brief Stable code of a provenance. */
 const char *rbdynprice_prov_code(rbdp_prov_t p);
+/** @brief Wake the dynprice task now (config changed): fetch / re-evaluate within ~2 s. */
+void rbdynprice_kick(void);
 /** @brief Bump on every change of stored prices or state; hosts poll it to publish. */
 uint32_t rbdynprice_generation(void);
 

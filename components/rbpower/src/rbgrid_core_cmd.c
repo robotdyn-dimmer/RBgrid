@@ -17,6 +17,7 @@
 #include "rbhome_tariff.h"
 #include "rbdynprice.h"
 #include "rbpeak.h"
+#include "rbactivation.h"
 #include "rbjson.h"
 #include "littlefs_raw.h"
 #include "esp_app_desc.h"
@@ -100,6 +101,12 @@ static char* cmd_get_section(const cJSON* root, const char* section)
         const cJSON *jf = cJSON_GetObjectItem(root, "from"), *ju = cJSON_GetObjectItem(root, "until");
         cJSON *o = rbdynprice_price_json(cJSON_IsNumber(jf) ? (uint32_t)jf->valuedouble : 0,
                                          cJSON_IsNumber(ju) ? (uint32_t)ju->valuedouble : 0);
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
+        cJSON_Delete(o);
+        return r;
+    }
+    if (strcmp(section, "rules") == 0 || strcmp(section, "signal") == 0) {   /* cheap windows / price notification */
+        cJSON *o = strcmp(section, "rules") == 0 ? rbact_rules_json() : rbact_signal_json();
         char *r = o ? cJSON_PrintUnformatted(o) : NULL;
         cJSON_Delete(o);
         return r;
@@ -205,6 +212,20 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
 
     char* ack = NULL;
     char msg[96];
+    if (strcmp(section, "rules") == 0) {   /* {"rules":[…]} and/or {"signal":{…}}; a rejection names the field */
+        char ef[24] = "", em[128] = "";
+        if (rbact_set(data, ef, sizeof(ef), em, sizeof(em)) == ESP_OK) {
+            ack = cmd_ack_json("set", section, "ok", "rules saved", id);
+        } else {
+            ack = cmd_ack_json("set", section, "error", em, id);
+            cJSON *o = ack ? cJSON_Parse(ack) : NULL;
+            cJSON *dd = o ? cJSON_GetObjectItem(o, "data") : NULL;
+            if (dd) { cJSON_AddStringToObject(dd, "field", ef); char *re = cJSON_PrintUnformatted(o); if (re) { free(ack); ack = re; } }
+            cJSON_Delete(o);
+        }
+        free(data_str);
+        return ack;
+    }
     if (strcmp(section, "peaks") == 0) {   /* {"cycle_day":1..28} | {"reset":true} */
         char em[64] = "";
         ack = rbpeak_set(data, em, sizeof(em)) == ESP_OK ? cmd_ack_json("set", section, "ok", "peaks updated", id)
