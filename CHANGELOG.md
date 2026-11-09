@@ -18,6 +18,19 @@
 - **Node point edits survive a restart.** Node points are rebuilt from the node list at boot; their name, role,
   ratings, clamp orientation and `inside` were reset to defaults. They are now re-applied from the saved settings.
 
+### Node firmware 1.5 (ships with this release)
+Hub 1.1.8 works with node 1.4 and 1.5; these need 1.5:
+- **A node follows only the hub it is paired to.** With two RBgrid hubs on one Wi-Fi channel, node 1.4 accepted
+  both hubs' time beacons. Its clock then never settled ("Clock sync" lost on the node card) while energy and periods
+  kept arriving. Update nodes to 1.5 if a second hub runs on the same router.
+- **Current-only modules give energy records** (see above). A voltage module with no mains on its voltage input
+  (< 50 V) is handled as current-only.
+- All three inputs of a module are reported (was two). Live values come from all 4 inputs of a node.
+- The first record covers boot → the first full 15-minute boundary.
+- Periods are kept in flash until the hub has them; a power cut while a period is being written no longer loses the
+  next one.
+- Re-pairing or moving a node needs no flash erase: the node asks to pair again after 150 s without a reply.
+
 ### Points measured inside other points
 - A point can be marked as measured **inside** another one (a charger inside a metered sub-panel):
   `PATCH /api/v1/units/{id}` `{"inside": <point id>}` (number or hex string; 0, "" or null clears). It must be an
@@ -25,6 +38,10 @@
   point. `units-config` shows `inside`; deleting
   a point makes the points inside it top-level. The hub's own totals don't change (they are taken at the input);
   the app uses it so the "unmetered" figure doesn't count a nested load twice. `capabilities.pointNesting: true`.
+
+### Platform
+- **ESP32-S3 (module N16R8: 16 MB flash, octal PSRAM)** is supported next to the ESP32-WROVER: rbAmp bus on SDA 8 /
+  SCL 9, the S3 pin profile. The ESP32 bench relay fail-safe is not built for the S3. Released as a separate image.
 
 ### API
 - `GET /api/v1/schema` → `quality_bits` now names every bit the hub sets: `SRC_RESTART` (9), `SRC_FW` (10),
