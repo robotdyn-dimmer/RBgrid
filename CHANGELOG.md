@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.8 — unreleased
+## v1.1.8 — 2026-11-10
 
 ### Security
 - **`mqtts://`: the broker certificate's dates are checked** (valid from / valid to). An expired certificate, or one
@@ -29,7 +29,11 @@ Hub 1.1.8 works with node 1.4 and 1.5; these need 1.5:
 - The first record covers boot → the first full 15-minute boundary.
 - Periods are kept in flash until the hub has them; a power cut while a period is being written no longer loses the
   next one.
-- Re-pairing or moving a node needs no flash erase: the node asks to pair again after 150 s without a reply.
+- Re-pairing or moving a node needs no flash erase: the node asks to pair again after 150 s without a reply. This
+  also works when the old hub is gone (switched off or replaced): after 150 s without its beacons the node takes the
+  new hub's beacon and asks to pair.
+- Node updates are over USB with all three files (bootloader, partition table, app): 1.5 adds a flash partition
+  (`rbnhold`) for the kept periods.
 
 ### Points measured inside other points
 - A point can be marked as measured **inside** another one (a charger inside a metered sub-panel):

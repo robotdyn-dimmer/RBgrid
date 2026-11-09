@@ -3,4 +3,4 @@ dependencies:
   # rbAmp I2C metering client — same public release the hub uses (Task 5).
   rbamp:
     git: https://github.com/rb-amp/rbamp-esp-idf.git
-    version: "v1.3.0"
+    version: "v1.7.2"

@@ -4,3 +4,6 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 # console/log on UART0 (default). Keep ESP-NOW long-range off for now.
 CONFIG_ESP_TASK_WDT_INIT=y
+# Own partition table: factory app + `rbnhold` (finished periods kept until the hub acknowledges them).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

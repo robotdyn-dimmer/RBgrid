@@ -1,0 +1,7 @@
+# RBgrid Node, 4 MB flash. `rbnhold` keeps finished 15-min periods until the hub acknowledges them (survives a
+# power cut; about 5 days at one period every 15 min).
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xF000,   0x1000,
+factory,  app,  factory, 0x10000,  0x180000,
+rbnhold,  data, 0x40,    0x190000, 0x40000,

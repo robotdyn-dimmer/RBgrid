@@ -2,7 +2,7 @@
 
 Firmware for a remote metering node. The node reads rbAmp metering modules and sends their data to an RBgrid hub over ESP-NOW. It needs no Wi-Fi network of its own and no channel setting.
 
-Works with RBgrid hub firmware 1.1.7 or later.
+Node firmware 1.5. Works with RBgrid hub firmware 1.1.7 or later; estimated energy for current-only modules and long-outage records need hub 1.1.8 or later.
 
 ## Hardware
 
@@ -10,6 +10,8 @@ Works with RBgrid hub firmware 1.1.7 or later.
 - **rbAmp modules** on I2C, at addresses `0x50`, `0x51` and/or `0x52` (the modules' own setting). The node finds the ones present at start.
 - **I2C pins:** SDA = GPIO 25, SCL = GPIO 26. Other pins: build with `-DRBN_I2C_SDA=<n> -DRBN_I2C_SCL=<n>`.
 - The node must be within ESP-NOW range of the hub.
+
+- **Energy records:** a module that measures voltage gives measured energy. A current-only module gives an estimate from the hub's nominal voltage (hub 1.1.8+), marked as estimated in history. A three-phase STD-U3I3 is read phase by phase: each current channel uses its own phase voltage.
 
 The hub uses up to 4 inputs per node and up to 6 nodes. The hub keeps history for 12 points in total, its own points and node points together; a point beyond that shows live values only.
 
@@ -40,7 +42,7 @@ or with esptool, from `build/`:
 esptool.py --chip esp32 -p <PORT> -b 460800 write_flash 0x1000 bootloader/bootloader.bin 0x8000 partition_table/partition-table.bin 0x10000 rbgrid_node.bin
 ```
 
-The node has no update over the air. Update it over USB.
+The node has no update over the air. Update it over USB, with all three files: since 1.5 the partition table has a `rbnhold` partition for the kept periods.
 
 ## Pair with the hub
 
@@ -48,14 +50,18 @@ The node has no update over the air. Update it over USB.
 2. Power up the node, or reset it.
 3. The node finds the hub's channel, and the two exchange keys. The node appears in the list, and its points appear at once.
 
-The key is kept on the node. After a restart it reconnects without pairing again. To move the node to another hub, remove it on the old hub, erase the node's flash (`idf.py -p <PORT> erase-flash`), flash it again and pair it with the new hub.
+The key is kept on the node. After a restart it reconnects without pairing again.
+
+To pair the node again (it was removed on the hub) or to move it to another hub: open the pairing window on that hub and reset the node. A paired node that hears no reply for about 2½ minutes starts asking to pair by itself, so a reset only makes it immediate. Erasing the node's flash (`idf.py -p <PORT> erase-flash`, then flash it again) is optional: a clean start.
 
 ## What the node does
 
 - Follows the hub's channel. If the router moves the hub to another channel, the node finds it again.
 - Keeps its clock in step with the hub and closes a period every 15 minutes, on the hub's 15-minute boundaries.
-- Sends live readings, and one record per period with the energy from the modules' own counters.
-- While the hub is out of reach, it keeps closing periods on time and holds up to 8 of them. They are sent when the link is back. A power cut on the node loses the period that was open.
+- Sends live readings, and one record per 15-minute period with the energy from the modules.
+- While the hub is out of reach, it keeps closing 15-minute periods on time and keeps them in its flash until the hub confirms them: about 5 days of periods, and they survive a power cut on the node. They are sent when the link is back.
+- Its first record after a start covers the time from the start to the end of the first full 15-minute period, so nothing is lost. Energy the modules counted while the node was off (the node restarted, the modules kept power) goes into it too.
+- Up to 3 modules and 3 inputs per module, 4 inputs per node in total: the first 4 in address order (the hub takes 4 inputs per node).
 - Takes its settings from the hub: each input on or off, and the clamp model.
 
 ## Development builds

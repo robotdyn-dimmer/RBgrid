@@ -14,3 +14,5 @@ build_output/
 # managed components are fetched at build time (versions pinned in dependencies.lock)
 managed_components/
 build55/
+sdkconfig.v55
+tools/hold_host_test/hold_code.inc
