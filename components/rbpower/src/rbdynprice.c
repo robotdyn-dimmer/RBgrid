@@ -809,15 +809,18 @@ static const char *fetch_daily_file(int st, const dp_zone_t *z, const char *host
 /* EnergyZero public API: {"all_in_with_vat":[{"start","end","price":{"value":"0.25"}}]} — the all-in user price. */
 static const char *fetch_energyzero(int st, uint32_t now, int *stored)
 {
+    /* A date's answer covers the day before it too (~94 KB for two days): ask for tomorrow first — it brings today
+     * along — and for today only when tomorrow is not published yet (404). Today's answer after publication spans
+     * three days (~140 KB), so it is not asked for then. */
     const char *last = "no_data_for_zone";
-    for (int k = 0; k < 2; k++) {
+    for (int k = 1; k >= 0; k--) {
         int y, m, d; market_date(now, k, &y, &m, &d);
         char url[200];
         snprintf(url, sizeof(url), "https://public.api.energyzero.nl/public/v1/prices?date=%02d-%02d-%04d"
                  "&interval=INTERVAL_QUARTER&energyType=ENERGY_TYPE_ELECTRICITY", d, m, y);
         int status; const char *err = NULL;
-        cJSON *j = get_json(url, 160 * 1024, &status, &err);
-        if (!j) { if (k == 0) last = err; continue; }
+        cJSON *j = get_json(url, 256 * 1024, &status, &err);
+        if (!j) { last = err; continue; }
         const cJSON *e;
         cJSON_ArrayForEach(e, cJSON_GetObjectItem(j, "all_in_with_vat")) {
             const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(e, "price"), "value"));
@@ -826,6 +829,7 @@ static const char *fetch_energyzero(int st, uint32_t now, int *stored)
                       parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "end"))), strtof(v, NULL), stored);
         }
         cJSON_Delete(j);
+        if (*stored) break;                              /* tomorrow's answer had today too */
     }
     return *stored ? NULL : last;
 }
