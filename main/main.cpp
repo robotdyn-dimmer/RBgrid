@@ -1966,10 +1966,11 @@ extern "C" void rbgrid_ha_discovery_request(void)
 
 #define OTA_CONFIRM_GRACE_S 60   ///< uptime on the network (s) before a fresh OTA image is marked valid
 /** Mark a fresh OTA image valid after OTA_CONFIRM_GRACE_S, then release a deferred stats migration. */
-static void ota_confirm_task(void *arg)
+/* esp_timer one-shot (runs in the esp_timer task): no stack of its own, so it can't fail to start when internal RAM
+ * is short at boot — a confirm that never runs rolls a good image back at the next reset. */
+static void ota_confirm_cb(void *arg)
 {
     (void)arg;
-    vTaskDelay(pdMS_TO_TICKS(OTA_CONFIRM_GRACE_S * 1000));
     esp_err_t mv = esp_ota_mark_app_valid_cancel_rollback();
     if (mv == ESP_OK) {
         ESP_LOGI(TAG, "OTA image marked VALID (rollback cancelled)");
@@ -1978,7 +1979,6 @@ static void ota_confirm_task(void *arg)
         rbpower_diag_printf("FAIL ota: confirm failed: %s", esp_err_to_name(mv));
     }
     rbgrid_core_image_confirmed();   /* releases a deferred stats migration */
-    vTaskDelete(NULL);
 }
 
 /** Boot: did the bootloader roll back a fresh image? esp_ota_get_last_invalid_partition() stays set until
@@ -2038,8 +2038,12 @@ void wifi_event_callback(rbwifi_status_t status, void* user_data)
                 rbpower_diag_printf("ota: new image on network — confirming in %ds unless it resets", OTA_CONFIRM_GRACE_S);
                 /* a failed create would leave a good image unconfirmed → rolled back at the next reset:
                  * retry on the next Wi-Fi event instead of marking it started */
-                s_confirm_started = xTaskCreate(ota_confirm_task, "ota_confirm", 3072, NULL, 3, NULL) == pdPASS;
-                if (!s_confirm_started) rbpower_diag_printf("FAIL ota: confirm task not created (low RAM) — retry on the next Wi-Fi event");
+                static esp_timer_handle_t s_cf_timer = NULL;
+                const esp_timer_create_args_t ta = { .callback = ota_confirm_cb, .arg = NULL,
+                                                     .dispatch_method = ESP_TIMER_TASK, .name = "ota_confirm" };
+                s_confirm_started = (s_cf_timer || esp_timer_create(&ta, &s_cf_timer) == ESP_OK) &&
+                                    esp_timer_start_once(s_cf_timer, (uint64_t)OTA_CONFIRM_GRACE_S * 1000000ull) == ESP_OK;
+                if (!s_confirm_started) rbpower_diag_printf("FAIL ota: confirm timer not created (low RAM) — retry on the next Wi-Fi event");
             }
         } else {
             esp_ota_mark_app_valid_cancel_rollback();   /* no-op unless pending; kept for symmetry */
@@ -2085,7 +2089,9 @@ void wifi_event_callback(rbwifi_status_t status, void* user_data)
         // burst in the MQTT event task would trip the task-WDT (boot loop).
         if (!s_ha_discovery_sem) {
             s_ha_discovery_sem = xSemaphoreCreateBinary();
-            xTaskCreate(ha_discovery_task, "ha_disc", 6144, NULL, tskIDLE_PRIORITY + 1, NULL);
+            static StackType_t s_hd_stack[6144];   /* static: created once, and a heap stack can fail at boot */
+            static StaticTask_t s_hd_tcb;
+            xTaskCreateStatic(ha_discovery_task, "ha_disc", sizeof(s_hd_stack), NULL, tskIDLE_PRIORITY + 1, s_hd_stack, &s_hd_tcb);
         }
         rbmqtt_register_connect_cb(ha_discovery_on_connect);
         // Enable the bidirectional command/config channel: config is fully manageable over MQTT
@@ -2147,11 +2153,16 @@ static esp_err_t espnow_http_post(httpd_req_t *req)
  * gotcha where `espnow on` issued before WiFi-ready returned "ok" but left running=0 (no beacons → nodes can't
  * acquire). A configured hub (≥1 registered node) now brings ESP-NOW up itself — important after an OTA reboot
  * so remote nodes reconnect without a manual verb. One-shot; a manual `espnow off` later still wins. */
-static void espnow_autostart_task(void *arg)
+/* 500 ms esp_timer (esp_timer task): no stack of its own — a heap-stack task failed to start when internal RAM was
+ * short at boot, and the hub then never started. Waits up to ~60 s for STA association (hub channel = router channel). */
+static esp_timer_handle_t s_as_timer = NULL;
+static void espnow_autostart_cb(void *arg)
 {
+    (void)arg;
+    static int s_tries = 0;
     wifi_ap_record_t ap;
-    for (int i = 0; i < 120 && esp_wifi_sta_get_ap_info(&ap) != ESP_OK; i++)
-        vTaskDelay(pdMS_TO_TICKS(500));   /* up to ~60s for STA association (hub channel = router channel) */
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK && ++s_tries < 120) return;
+    esp_timer_stop(s_as_timer);
     espnow_registry_t reg;
     int8_t en = esp_now_hub_enabled_setting();   /* off wins; on starts even without a node (ready to pair) */
     if (!esp_now_hub_running() && en != 0 && (en == 1 || (esp_now_registry_load(&reg) && reg.node_count > 0))) {
@@ -2159,7 +2170,6 @@ static void espnow_autostart_task(void *arg)
         ESP_LOGW(TAG, "ESP-NOW auto-start (setting %d): %s, running=%d",
                  (int)en, esp_err_to_name(e), (int)esp_now_hub_running());
     }
-    vTaskDelete(NULL);
 }
 
 /** GET /api/system/provisioning: onboarding/provisioning progress for the web app's resumable
@@ -2316,14 +2326,19 @@ static void start_webserver(void)
         ESP_LOGI(TAG, "WebSocket: /ws/telemetry");
         
         // Create WebSocket maintenance task
-        xTaskCreate(rbwebsocket_maintenance_task, "ws_maintenance", 4096, NULL, 5, NULL);
+        if (xTaskCreate(rbwebsocket_maintenance_task, "ws_maintenance", 4096, NULL, 5, NULL) != pdPASS)
+            rbpower_diag_printf("FAIL ws: maintenance task not started (internal RAM)");
         ESP_LOGI(TAG, "WebSocket maintenance task started");
 
         register_espnow_http();   // ESP-NOW management + health API onto the running server
         rbevlog_register_http();  // GET /api/v1/system/events (+ POST /api/v1/debug/cmd on debug builds)
         modfw_register_http();    // STD module firmware update API (main/modfw.c)
         rbi2c_register_http();    // I2C buses / scan / module address API (main/rbi2c_api.c)
-        xTaskCreate(espnow_autostart_task, "espnow_autostart", 4096, NULL, 4, NULL);  // auto-start hub when WiFi ready
+        const esp_timer_create_args_t ta = { .callback = espnow_autostart_cb, .arg = NULL,
+                                             .dispatch_method = ESP_TIMER_TASK, .name = "espnow_as" };
+        if (!s_as_timer && esp_timer_create(&ta, &s_as_timer) != ESP_OK) s_as_timer = NULL;
+        if (!s_as_timer || esp_timer_start_periodic(s_as_timer, 500000) != ESP_OK)
+            rbpower_diag_printf("FAIL espnow: auto-start timer not created — start the hub from the app");
     } else {
         ESP_LOGE(TAG, "Web server start error: %d", err);
     }

@@ -438,15 +438,19 @@ static esp_err_t events_get(httpd_req_t *req)
         k += got;
         if (!got) break;
     }
-    char tail[320];
+    char tail[448];
+    const uint32_t ic = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;   /* heap: internal RAM is what task stacks need */
     uint32_t now = rbtime_is_time_valid() ? (uint32_t)rbtime_get_unix_timestamp() : 0;
     snprintf(tail, sizeof(tail),
              "],\"boot\":%lu,\"seq_last\":%lu,\"ram_first\":%lu,\"next\":%lu,\"more\":%s,"
-             "\"persist\":%s,\"dropped\":%lu,\"fail_boot\":%lu,\"up\":%lu,\"now\":%lu}",
+             "\"persist\":%s,\"dropped\":%lu,\"fail_boot\":%lu,\"up\":%lu,\"now\":%lu,"
+             "\"heap\":{\"int_free\":%u,\"int_min\":%u,\"int_largest\":%u,\"psram_free\":%u}}",
              (unsigned long)s_boot, (unsigned long)seq_last, (unsigned long)ram_first,
              (unsigned long)(o.emitted ? o.last_seq : (has_since ? since : seq_last)),
              more ? "true" : "false", s_persist_ok ? "true" : "false",
-             (unsigned long)s_dropped, (unsigned long)s_fail_boot, (unsigned long)up_s(), (unsigned long)now);
+             (unsigned long)s_dropped, (unsigned long)s_fail_boot, (unsigned long)up_s(), (unsigned long)now,
+             (unsigned)heap_caps_get_free_size(ic), (unsigned)heap_caps_get_minimum_free_size(ic),
+             (unsigned)heap_caps_get_largest_free_block(ic), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     out_raw(&o, tail);
     out_flush(&o);
     httpd_resp_send_chunk(req, NULL, 0);

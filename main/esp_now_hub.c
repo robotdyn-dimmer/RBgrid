@@ -1096,9 +1096,11 @@ esp_err_t esp_now_hub_start(uint8_t channel)
 {
     if (s_running) { ESP_LOGW(TAG, "already running"); return ESP_OK; }
     /* a stop just before: the static stacks are reused, so the previous tasks must have exited first */
-    for (int w = 0; w < 50 && (s_beacon_task || s_inject_task); w++) vTaskDelay(pdMS_TO_TICKS(100));
-    if (s_beacon_task || s_inject_task) { ESP_LOGE(TAG, "previous hub tasks still running — start refused"); return ESP_ERR_INVALID_STATE; }
-    vTaskDelay(pdMS_TO_TICKS(50));   /* let the idle task finish the self-deleted tasks */
+    if (s_beacon_task || s_inject_task) {
+        for (int w = 0; w < 50 && (s_beacon_task || s_inject_task); w++) vTaskDelay(pdMS_TO_TICKS(100));
+        if (s_beacon_task || s_inject_task) { ESP_LOGE(TAG, "previous hub tasks still running — start refused"); return ESP_ERR_INVALID_STATE; }
+        vTaskDelay(pdMS_TO_TICKS(50));   /* let the idle task finish the self-deleted tasks */
+    }
     hub_pmk_load();   /* the installation key: NVS, generated at the first start */
 
     if (channel > 0) {
