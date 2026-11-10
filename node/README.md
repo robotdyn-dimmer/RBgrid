@@ -52,6 +52,8 @@ The node has no update over the air. Update it over USB, with all three files: s
 
 The key is kept on the node. After a restart it reconnects without pairing again.
 
+The node also keeps the hub it is paired to and ignores time beacons from any other RBgrid hub on the same Wi-Fi channel (two hubs in one home no longer disturb its clock). A node paired under firmware 1.4 needs no re-pairing after the update to 1.5: it takes the hub that answers it as its paired hub and keeps it.
+
 To pair the node again (it was removed on the hub) or to move it to another hub: open the pairing window on that hub and reset the node. A paired node that hears no reply for about 2½ minutes starts asking to pair by itself, so a reset only makes it immediate. Erasing the node's flash (`idf.py -p <PORT> erase-flash`, then flash it again) is optional: a clean start.
 
 ## What the node does
