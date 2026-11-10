@@ -207,7 +207,10 @@ static void rbapi_base_w_task(void *arg)
 bool rbgrid_base_w(rbpower_unit_id_t unit, float *base_w, int *hours, int *nights)
 {
     s_bw_unit = unit;
-    if (!s_bw_task) xTaskCreate(rbapi_base_w_task, "base_w", 4096, NULL, 1, &s_bw_task);
+    if (!s_bw_task && xTaskCreate(rbapi_base_w_task, "base_w", 4096, NULL, 1, &s_bw_task) != pdPASS) {
+        s_bw_task = NULL;
+        rbpower_diag_printf("FAIL base_w: task not started (internal RAM) — retried on the next request");
+    }
     bool mine = (s_bw_done_unit == unit);
     if (base_w) *base_w = mine ? s_bw_w : NAN;
     if (hours)  *hours = mine ? s_bw_h : 0;
