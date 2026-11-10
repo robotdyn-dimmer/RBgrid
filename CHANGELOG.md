@@ -17,9 +17,15 @@
     `tls_error`, or `off` for plain MQTT;
   - `ca`: `custom` or `bundle`.
 
-  Each certificate refusal also writes an event line.
+  Each certificate refusal also writes an event line. After the broker drops a working connection, `state` reads
+  `connecting` (not `ok`) until it is back.
 
 ### Remote nodes
+- **Node data could stop being processed.** The hub's task that books node data was started with a stack from
+  internal RAM. When that RAM was short at the hub's start, the task didn't start and nothing said so: nodes read
+  offline, their live values and 15-min periods were not booked (periods stayed on the node, un-acknowledged). The
+  hub's node tasks now have memory reserved at build time. `get espnow` shows `inject_age_ms` (time since that task
+  last ran; -1 = not running).
 - **A current-only node input books no energy.** Node 1.5 sends a record for an input without a voltage module
   (voltage 0, current only). The hub does not turn it into energy from the nominal voltage: that would not be real
   energy. The hour stays without data; live values still show the current. `get espnow` counts these records in
@@ -34,7 +40,8 @@
 Hub 1.1.8 works with node 1.4 and 1.5; these need 1.5:
 - **A node follows only the hub it is paired to.** With two RBgrid hubs on one Wi-Fi channel, node 1.4 accepted
   both hubs' time beacons. Its clock then never settled ("Clock sync" lost on the node card) while energy and periods
-  kept arriving. Update nodes to 1.5 if a second hub runs on the same router.
+  kept arriving. Update nodes to 1.5 if a second hub runs on the same router. A node paired under 1.4 needs no
+  re-pairing: after the update it takes the hub that answers it (encrypted) as its paired hub and keeps it.
 - A voltage module with no mains on its voltage input (< 50 V) is handled as current-only (see above: no energy
   is booked for it).
 - All three inputs of a module are reported (was two). Live values come from all 4 inputs of a node.
@@ -52,7 +59,7 @@ Hub 1.1.8 works with node 1.4 and 1.5; these need 1.5:
   `PATCH /api/v1/units/{id}` `{"inside": <point id>}` (number or hex string; 0, "" or null clears). It must be an
   existing point other than this one, not the input, and not make a loop; the input itself can't be inside another
   point. `units-config` shows `inside`; deleting
-  a point makes the points inside it top-level. The hub's own totals don't change (they are taken at the input);
+  a point (also by removing its node) makes the points inside it top-level. The hub's own totals don't change (they are taken at the input);
   the app uses it so the "unmetered" figure doesn't count a nested load twice. `capabilities.pointNesting: true`.
 
 ### Platform
