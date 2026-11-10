@@ -52,7 +52,8 @@ the bench tools.
    - right after flashing, the install page asks for your network and password (Improv over USB);
    - or join the hub's own access point (`rbgrid-hub-xxxxxx`, password `RBGRID123`) and pick your network on the page
      that opens.
-3. **Home Assistant** finds the hub (ESPHome integration). Add it, then install **RBgrid** via HACS: custom repository
+3. **Home Assistant** finds the hub. Add it in the **ESPHome** integration first (one click: the ready-made image has no
+   API encryption key; adopt the hub in the ESPHome dashboard to give it one), then install **RBgrid** via HACS: custom repository
    `https://github.com/rb-amp/rbgrid-ha` (category Integration), then Settings → Devices & services → Add integration →
    RBgrid. A hub on this component is also found automatically. Issues: https://github.com/rb-amp/rbgrid-ha/issues.
    The integration sets the time zone and the currency and opens the RBgrid panel. Its own README covers the wizard,
