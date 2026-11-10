@@ -570,6 +570,22 @@ char *rbgrid_build_schema_json(void)
         { "/api/system/ui-commit",      "POST",     "n/a",       true,  false, "force (query); body=ui-manifest.json" },
         { "/api/system/ap",             "GET,POST", "n/a",       true,  false, "GET: AP ssid/password (admin token, armed hub only); POST {password}: the user sets the AP password (\"\" = setup password)" },
         { "/api/system/lang",           "GET,POST", "n/a",       true,  false, "code (query, ISO 639-1); body=language pack JSON ≤ 200 KB; one pack kept; served at /lang/<code>.json" },
+        /* routes served but listed here only from 1.2.0 (the API reference is generated from this table) */
+        { "/api/system/mqtt-ca",        "GET,POST,DELETE","n/a", true,  true,  "POST body = PEM (<= 8192 B, one or more certificates); DELETE = public CA bundle" },
+        { "/api/system/time-config",    "GET",      "composite", false, false, "read-only time settings view" },
+        { "/api/system/wifi-config",    "GET",      "composite", false, false, "read-only Wi-Fi settings view" },
+        { "/api/system/restore-system-config","POST","n/a",      true,  false, "body = system-config JSON" },
+        { "/api/v1/schema",             "GET",      "1",         false, false, "this description" },
+        { "/api/v1/system/events",      "GET",      "composite", false, false, "since,limit(<=1000),level(all|event|fail)" },
+        { "/api/v1/i2c",                "GET",      "composite", false, false, "buses, board pin profile, modules" },
+        { "/api/v1/i2c/scan",           "POST",     "n/a",       true,  false, "bus" },
+        { "/api/v1/i2c/modules",        "POST",     "n/a",       true,  false, "bus,addr" },
+        { "/api/v1/i2c/modules/{m}/address","POST", "n/a",       true,  false, "addr" },
+        { "/api/v1/dynprice",           "GET,POST", "composite", true,  false, "dynamic price config, providers, live state" },
+        { "/api/v1/price",              "GET,POST", "composite", true,  false, "price push (HA source) / resolved prices / log" },
+        { "/api/v1/rules",              "GET,POST", "composite", true,  false, "cheap windows (threshold|cheapest|deadline)" },
+        { "/api/v1/signal",             "GET",      "composite", false, false, "price_signal v1" },
+        { "/api/v1/peaks",              "GET,POST", "composite", true,  false, "cycle_day(1..28) | reset" },
     };
     cJSON *eps = cJSON_AddArrayToObject(root, "endpoints");
     for (unsigned i = 0; i < sizeof(EP) / sizeof(EP[0]); i++) {
