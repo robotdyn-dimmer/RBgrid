@@ -12,6 +12,8 @@
 #include <cstring>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_task_wdt.h"
+#include "esp_ota_ops.h"
 
 extern "C" {
 #include "rbgrid_app.h"
@@ -150,7 +152,7 @@ void RBgridComponent::setup() {
   this->started_ms_ = millis();
   rbdynprice_set_ha_present(true);   // this build talks to Home Assistant: offer it as a price provider
   if (this->events_) s_ev_q = xQueueCreate(16, sizeof(EvItem));
-  if (xTaskCreatePinnedToCore(start_task, "rbgrid_start", 8192, nullptr, 2, nullptr, 0) != pdPASS) {
+  if (xTaskCreatePinnedToCore(start_task, "rbgrid_start", 12288, nullptr, 2, nullptr, 0) != pdPASS) {
     ESP_LOGE(TAG, "could not create the start task");
     this->mark_failed();
     return;
@@ -159,10 +161,22 @@ void RBgridComponent::setup() {
     xTaskCreatePinnedToCore(version_task, "rbgrid_ver", 6144, nullptr, 1, &s_version_task, 0);
 }
 
+// ESPHome restarts the chip itself (OTA, restart button/action): leave the same state behind as a planned restart.
+void RBgridComponent::on_shutdown() {
+  if (s_core_up.load()) rbgrid_core_prepare_restart();
+}
+
 void RBgridComponent::loop() {
-  if (!this->confirmed_ && millis() - this->started_ms_ > CONFIRM_AFTER_MS) {
-    this->confirmed_ = true;
-    rbgrid_core_image_confirmed();   // releases a deferred stats migration; ESPHome confirms the OTA image itself
+  // A deferred stats migration is released only once the image can no longer roll back: ESPHome confirms the
+  // OTA image itself (safe_mode), so wait for that, checked every 5 s after the grace period.
+  if (!this->confirmed_ && millis() - this->started_ms_ > CONFIRM_AFTER_MS && millis() - this->confirm_check_ms_ > 5000) {
+    this->confirm_check_ms_ = millis();
+    esp_ota_img_states_t st;
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    if (run == nullptr || esp_ota_get_state_partition(run, &st) != ESP_OK || st != ESP_OTA_IMG_PENDING_VERIFY) {
+      this->confirmed_ = true;
+      rbgrid_core_image_confirmed();
+    }
   }
   if (frame_ready.exchange(false)) this->publish_frame_();
   if (s_ev_q != nullptr) {
@@ -367,7 +381,11 @@ void RBgridComponent::run_command(const std::string &json) {
   cJSON_Delete(q);
   this->cache_.clear();
   this->cache_.shrink_to_fit();
+  // a config save / rule evaluation can block the loop task for seconds (flash): keep the task watchdog out of it
+  const bool wdt_sub = esp_task_wdt_status(nullptr) == ESP_OK;
+  if (wdt_sub) esp_task_wdt_delete(nullptr);
   this->last_reply_ = this->command(json);
+  if (wdt_sub) esp_task_wdt_add(nullptr);
   if (changing) version_kick();
   cJSON *r = cJSON_Parse(this->last_reply_.c_str());
   if (r == nullptr) {

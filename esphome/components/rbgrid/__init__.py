@@ -272,6 +272,15 @@ async def to_code(config):
     esp32.add_idf_sdkconfig_option("CONFIG_ESP_TIMER_TASK_STACK_SIZE", 8192)
     # TLS (price fetch over HTTPS): check certificate validity dates, as the standalone firmware does
     esp32.add_idf_sdkconfig_option("CONFIG_MBEDTLS_HAVE_TIME_DATE", True)
+    # TLS buffers in PSRAM: an HTTPS fetch needs ~40 KB that internal RAM often can't give in one block
+    esp32.add_idf_sdkconfig_option("CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC", True)
+    # full root bundle, as the standalone firmware: price providers sit behind many different CAs
+    esp32.add_idf_sdkconfig_option("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE", True)
+    esp32.add_idf_sdkconfig_option("CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL", True)
+    # I2C to the rbAmp modules: ISR keeps working while flash is busy (stats writes), and the driver timeout
+    # the core is tuned for
+    esp32.add_idf_sdkconfig_option("CONFIG_I2C_ISR_IRAM_SAFE", True)
+    esp32.add_idf_sdkconfig_option("CONFIG_RBAMP_I2C_TIMEOUT_MS", 30)
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)

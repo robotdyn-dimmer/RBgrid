@@ -20,6 +20,7 @@ class RBgridComponent : public Component {
  public:
   void setup() override;
   void loop() override;
+  void on_shutdown() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
@@ -134,6 +135,7 @@ class RBgridComponent : public Component {
   bool map_loaded_{false};
   uint32_t started_ms_{0};
   bool confirmed_{false};
+  uint32_t confirm_check_ms_{0};
 
   std::string last_reply_;
   bool last_ok_{false};

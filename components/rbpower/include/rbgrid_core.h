@@ -91,6 +91,10 @@ void rbgrid_core_notify_reboot(void);
  * Idempotent.
  */
 void rbgrid_core_image_confirmed(void);
+/** Planned-restart steps for a host that restarts the chip itself (ESPHome on_shutdown): flush the open hours,
+ *  persist the lifetime totals, run the pre-restart hook and mark the restart planned. No deinit, no restart.
+ *  Idempotent; a no-op before the core is up is the caller's job. */
+void rbgrid_core_prepare_restart(void);
 
 /* ---- NVS (RBgrid's own data) ------------------------------------------------------------------ */
 
