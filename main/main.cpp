@@ -1134,6 +1134,7 @@ static int rbgrid_dbg_rmunit(int argc, char **argv) {
         rbbench_reply("rmunit 0x%04X: FAILED (%d — unknown/invalid unit)", (unsigned)id, (int)e);
         return 1;
     }
+    rbpower_home_clear_inside_refs((rbpower_unit_id_t)id);   /* points measured inside it become top-level */
     esp_err_t se = rbgrid_storage_save_units(NULL);
     rbbench_reply("rmunit 0x%04X: REMOVED (compute stopped + slot erased/freed); units.json: %s",
                   (unsigned)id, esp_err_to_name(se));

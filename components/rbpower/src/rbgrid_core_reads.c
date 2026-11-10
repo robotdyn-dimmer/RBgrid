@@ -406,7 +406,7 @@ char *rbgrid_build_schema_json(void)
         cJSON_AddNumberToObject(qb, "SRC_RESTART", 9);    /* module restarted inside the period */
         cJSON_AddNumberToObject(qb, "SRC_FW", 10);        /* module firmware changed inside the period */
         cJSON_AddNumberToObject(qb, "REVERSE_LOST", 11);  /* reverse flow on a direction-less source, not in the energy */
-        cJSON_AddNumberToObject(qb, "OUTAGE", 12);        /* energy counted while the hub was off > 24 h */
+        cJSON_AddNumberToObject(qb, "OUTAGE", 12);        /* energy outside the period's time (hub off > 24 h, or a node period > 15 min) */
     }
 
     // Explicit capability flags (schema-driven UI; more reliable than inferring from endpoints[]).

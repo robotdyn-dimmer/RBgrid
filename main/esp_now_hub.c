@@ -994,7 +994,7 @@ static void inject_task(void *arg)
                  * voltage is not real energy (operator 2026-11-10: wrong figures), so by default such a record is not
                  * booked: the hour stays without data rather than showing an estimate (live values still show current).
                  * RBGRID_CURONLY_ENERGY_ESTIMATE=1 restores the estimate (flagged ESTIMATED). */
-                if (v_rec <= 0.0f && fabsf(e_wh) < 1e-6f && rec->current_avg_a > 0.0f && !RBGRID_CURONLY_ENERGY_ESTIMATE) {
+                if (v_rec <= 0.0f && fabsf(e_wh) < 1e-6f && !RBGRID_CURONLY_ENERGY_ESTIMATE) {   /* also at 0 A: no 0 Wh hours between gaps */
                     s_curonly_skipped++;
                     continue;
                 }
@@ -1370,7 +1370,10 @@ uint32_t esp_now_hub_delnode_cascade(const uint8_t mac[6])
             if (memcmp(reg.nodes[i].mac, mac, 6) != 0) continue;
             for (int c = 0; c < reg.nodes[i].ch_count; c++) {
                 rbpower_unit_id_t uid = rbgrid_create_espnow_unit_id(mac, reg.nodes[i].channels[c].ch);
-                if (rbpower_home_remove_unit(uid) == RBPOWER_OK) removed++;
+                if (rbpower_home_remove_unit(uid) == RBPOWER_OK) {
+                    removed++;
+                    rbpower_home_clear_inside_refs(uid);   /* points measured inside it become top-level */
+                }
             }
             break;
         }

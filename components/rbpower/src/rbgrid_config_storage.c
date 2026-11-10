@@ -1575,6 +1575,7 @@ esp_err_t rbgrid_storage_reapply_espnow_units(void)
     cJSON *data = cJSON_GetObjectItem(root, "data");
     cJSON *units = cJSON_GetObjectItem(data ? data : root, "units");
     int applied = 0, failed = 0;
+    rbgrid_units_set_persist(false);   /* RAM only: the file already holds these fields */
     for (int pass = 0; pass < 2; pass++) {   /* pass 0: own fields; pass 1: nesting (its parent may be re-applied in pass 0) */
         cJSON *unit = NULL;
         cJSON_ArrayForEach(unit, units) {
@@ -1612,6 +1613,7 @@ esp_err_t rbgrid_storage_reapply_espnow_units(void)
             free(js);
         }
     }
+    rbgrid_units_set_persist(true);
     cJSON_Delete(root);
     ESP_LOGI(TAG, "ESP-NOW points: saved fields re-applied (%d patch(es), %d failed)", applied, failed);
     return failed ? ESP_FAIL : ESP_OK;

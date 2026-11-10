@@ -117,6 +117,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             break;
         case MQTT_EVENT_DISCONNECTED:
             s_connected = false;
+            /* "ok" no longer holds; a certificate reason set by the ERROR event before this one is kept */
+            if (!strcmp(s_tls_state, "ok")) s_tls_state = "connecting";
             ESP_LOGW(TAG, "disconnected from broker");
             break;
         case MQTT_EVENT_DATA:
