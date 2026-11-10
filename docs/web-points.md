@@ -12,11 +12,11 @@ There are three kinds of point:
 
 The input and the voltage bus are created for you and can't be deleted: *"The main input and the voltage bus cannot be deleted."* By default the input is module 0, channel I0. The input role can't be changed from the app.
 
-The modules themselves, and how to add one, are on the [Sensors and modules](sensors.md) page.
+The modules themselves, and how to add one, are on the [Sensors and modules](web-sensors.md) page.
 
 ## The Points page
 
-Open **Management → Points**. The page lists your rbAmp modules, your points and the free channels. At the top are **Add a module** (see [Adding modules](sensors.md#adding-modules)) and **Refresh**.
+Open **Management → Points**. The page lists your rbAmp modules, your points and the free channels. At the top are **Add a module** (see [Adding modules](web-sensors.md#adding-modules)) and **Refresh**.
 
 ![Points: modules and bound points](https://www.rbgrid.io/assets/img/webapp-docs/wa-points-page.webp)
 
@@ -35,15 +35,16 @@ The modules share one I2C bus. If something on it goes wrong, a warning appears 
 
 The page has these sections, in order:
 
-1. **rbAmp modules (*n*)**: one card per module (see [Module cards](sensors.md#module-cards)).
-2. **Points (*n*)**: your bound points, each as a live tile. Under each tile is its address, "module *m* · *channel* · I2C bus *b* · 0x*addr* · *model*" (for a three-phase input: "module *m* · L1–L3 (3 phases) · I2C bus *b*"), and an **Unbind** button.
-3. **Free sensors (*n*)**: channels not bound to a point yet, each with a **Bind** button. A channel that the fitted module doesn't have isn't offered. When every channel is taken, the page says: "No free channels. To add a point, connect another rbAmp module or unbind a point you don't need."
+1. **Remote nodes (ESP-NOW)**: on a hub that can run nodes this section sits at the top — the hub's radio for nodes and one card per paired node. A node's channels are points like any other (see [Remote nodes](web-nodes.md)).
+2. **rbAmp modules (*n*)**: one card per module (see [Module cards](web-sensors.md#module-cards)).
+3. **Points (*n*)**: your bound points, each as a live tile. Under each tile is its address, "module *m* · *channel* · I2C bus *b* · 0x*addr* · *model*" (for a three-phase input: "module *m* · L1–L3 (3 phases) · I2C bus *b*"), and an **Unbind** button.
+4. **Free sensors (*n*)**: channels not bound to a point yet, each with a **Bind** button. A channel that the fitted module doesn't have isn't offered. When every channel is taken, the page says: "No free channels. To add a point, connect another rbAmp module or unbind a point you don't need."
 
 ### Unbinding a point
 
 **Unbind** removes a point from its channel. The input, a backup input and the voltage bus have no **Unbind** button, and their role can't be changed from the app.
 
-The app asks you to confirm. The point stops being metered and leaves the overview; the sensor channel stays free and can be bound again. **Unbind** and **Delete point** (on the point's page) are the same action: both remove the point and **erase its stored history for good**. If you may need the point's records later, download them first in [History](history.md#downloads) (CSV).
+The app asks you to confirm. The point stops being metered and leaves the overview; the sensor channel stays free and can be bound again. **Unbind** and **Delete point** (on the point's page) are the same action: both remove the point and **erase its stored history for good**. If you may need the point's records later, download them first in [History](web-history.md#downloads) (CSV).
 
 If the hub can't be reached, the app says "Couldn't unbind the point" or "Unbind request failed (device unreachable?)".
 
@@ -80,6 +81,17 @@ At the bottom: "Home Assistant entities for the new point appear after the hub r
 
 **Generation** and **Storage** aren't offered on BASIC module channels. **Grid input** and **Backup input** aren't in this list: the input role can't be changed from the app.
 
+#### Metering a generation point
+
+**Fit the clamp exactly as you fit every other one: the arrow in the normal direction of flow, which on a generation circuit is from the inverter towards the house.** There is no reversed clamp, no special wiring and no software switch to set. The **role** does the rest: from firmware **v1.1.5** a Generation point counts flow in the arrow's direction — from the source towards the consumers — as **production**, so it reads negative power and its energy goes into **Energy out**.
+
+> ⚠️ **Negative power on a generation point is correct — don't "fix" it.** It is what the role is for. Turning the clamp round to make the sign look positive is the one way to break a correctly fitted generation point: production then lands in **Energy in**, and *Produced* stays at zero.
+
+Two things that do go wrong:
+
+- **`invert_sign` left over from an older firmware.** Before v1.1.5 a Generation point needed it to read production at all. After updating, clear it (`POST /api/v1/units/<id> {"invert_sign": false}`) or the point reads consumption again: `invert_sign` still flips the result on top of the role.
+- **The wrong kind of channel.** A BASIC module's channels count **consumption only** — they don't see export — which is why **Generation** and **Storage** aren't offered on them. Production needs a channel that measures direction. Which modules do: [rbamp.com](https://www.rbamp.com/?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
+
 ### Phase
 
 The phase sets how the channel's load is attributed to a line in per-line summaries. On a BASIC module every channel uses the module's one voltage input, whichever phase you pick.
@@ -90,7 +102,7 @@ The options follow your supply:
 - **single-phase**: not set, L1;
 - **three-phase**: not set, L1, L2, L3, **3 phases**, **L1–L2 (two-pole)**, **L2–L3 (two-pole)**, **L3–L1 (two-pole)**.
 
-An option marked "not validated on hardware" hasn't been checked on real hardware yet. A three-phase input is one STD-U3I3 module set with **Use as the three-phase input** on its module card (see [Sensors and modules](sensors.md#use-as-the-three-phase-input)).
+An option marked "not validated on hardware" hasn't been checked on real hardware yet. A three-phase input is one STD-U3I3 module set with **Use as the three-phase input** on its module card (see [Sensors and modules](web-sensors.md#use-as-the-three-phase-input)).
 
 ### Reusing an ID
 
@@ -129,8 +141,8 @@ When something needs attention, an alert appears under the header:
 |---|---|
 | The channel isn't on the fitted module | The point and its history are kept; data resumes when a module with this channel is back. Don't unbind the point while you wait. |
 | The current sensor seems fitted backwards (BASIC module) | A BASIC module meters forward flow only, so this load is **not** being metered. Turn the sensor round on the wire, with the arrow on its body towards the load. |
-| Readings not corrected for the current transformer | Values may differ from the real ones. The message points you at **Point settings → Current sensor**: set the clamp that is actually fitted. You can also check the model on the module card (see [Sensors and modules](sensors.md#module-cards)). On app v1.1.4 and earlier it pointed at the CT model on the module card instead. |
-| Live values only | The point keeps no stored history (see [History](history.md#incomplete-periods-restarts-and-live-only-points)). |
+| Readings not corrected for the current transformer | Values may differ from the real ones. The message points you at **Point settings → Current sensor**: set the clamp that is actually fitted. You can also check the model on the module card (see [Sensors and modules](web-sensors.md#module-cards)). On app v1.1.4 and earlier it pointed at the CT model on the module card instead. |
+| Live values only | The point keeps no stored history (see [History](web-history.md#incomplete-periods-restarts-and-live-only-points)). |
 | The current hits the sensor's limit | Everything above the limit is clipped and metering under-counts. Fit a sensor with a higher rating. |
 | The load is near the sensor's limit | Above the limit the current is clipped and metering under-counts. |
 
@@ -142,7 +154,7 @@ A three-phase input adds a **Per phase (U3I3)** table: L1, L2, L3 with voltage, 
 
 ### Trend
 
-A small chart with **Power**, **Voltage** or **Energy**, by **Hours**, **Days** or **Weeks**. It shows the last 48 points for lines and the last 24 bars for energy. Generation points draw their output as positive. **As a table** opens the same data in [History](history.md#links-to-a-view).
+A small chart with **Power**, **Voltage** or **Energy**, by **Hours**, **Days** or **Weeks**. It shows the last 48 points for lines and the last 24 bars for energy. Generation points draw their output as positive. **As a table** opens the same data in [History](web-history.md#links-to-a-view).
 
 ### Counters
 
@@ -155,13 +167,15 @@ Not shown for current-only modules.
 
 ### Charging station
 
-A point with the **Charging station** role also shows **Current session**: **Status** and **Energy today**. The hub doesn't keep a per-session charging history; it shows today.
+A point with the **Charging station** role also shows **Current session**: **Status** and **Energy today**.
+
+**Status is derived from the point's power**, on any channel — an ordinary rbAmp one included; no station controller is involved, and the label carries the tooltip "derived from power". It reads **Charging** while the point's power is above the charging threshold — the station's own, otherwise the hub's setting, otherwise 500 W — and **Available** below it. **Energy today** is the point's import today, and the hub doesn't keep a per-session charging history.
 
 ### Point setup
 
 At the bottom, **Point setup** opens the point's settings (see [Point settings](#point-settings)), the **Technical details** (IDs and channel, useful for support) and **Delete point**.
 
-**Delete point** asks you to confirm: the point stops being metered and leaves the overview and the points list, and its stored history is **erased for good** — from firmware **v1.1.6**, its net-metering record with it. The sensor channel becomes free and can be bound again. You then return to **Points**. If you may need the point's records later, download them first in [History](history.md#downloads) (CSV). The input and the voltage bus can't be deleted.
+**Delete point** asks you to confirm: the point stops being metered and leaves the overview and the points list, and its stored history is **erased for good** — from firmware **v1.1.6**, its net-metering record with it. The sensor channel becomes free and can be bound again. You then return to **Points**. If you may need the point's records later, download them first in [History](web-history.md#downloads) (CSV). The input and the voltage bus can't be deleted.
 
 ## Point settings
 
@@ -180,8 +194,26 @@ At the bottom, **Point setup** opens the point's settings (see [Point settings](
 | **Input limit, kW** (input) / **Line rating, kW** (others) | all but the voltage bus | The input's permitted power (the basis for "headroom"), or the line's rating for its load bar. |
 | **Input breaker, A** / **Line breaker, A** | all but the voltage bus | The breaker's rated current. Empty = not set. |
 | **Current sensor** | SCT channels | The clamp model on the channel, with its accurate range. See below. |
-| **This station's «charging» threshold, W** / **idle after a session, min** | Charging station points, when the hub offers them | Empty or 0 uses the hub-wide values from [Settings → Charging stations](settings.md#charging-stations). |
-| **Group** and **Group trunk meter** | regular points | The group is a tab on the energy-flow diagram; create groups in [Settings → Consumer groups](settings.md#consumer-groups). A trunk meter measures the whole group; the group's other points are its breakdown and don't add on top. |
+| **This station's «charging» threshold, W** / **idle after a session, min** | Charging station points, when the hub offers them | Empty or 0 uses the hub-wide values from [Settings → Charging stations](web-settings.md#charging-stations). |
+| **Group** and **Group trunk meter** | regular points | The group is a tab on the energy-flow diagram; create groups in [Settings → Consumer groups](web-settings.md#consumer-groups). A trunk meter measures the whole group; the group's other points are its breakdown and don't add on top. |
+| **Measured inside** | regular points, from firmware **v1.1.8** | Names the point that already measures this one — a charger inside a metered sub-panel. It must be an existing point other than this one, it can't be the input, and it can't make a loop. See *Points inside other points* below. |
+
+### Points inside other points
+
+From firmware **v1.1.8** a point can be marked as measured **inside** another one. Use it whenever one of your clamps already includes another: a sub-panel and a circuit fed from it, a trunk meter and a load behind it. The field says it in one line: *"If this load sits behind another point's meter (a sub-panel with its own meter, say), pick that point. Its power then counts once, in that point, and not again in the rest of the input."*
+
+![Point settings for a car charger, with «Measured inside» set to «Garage sub-panel»](https://www.rbgrid.io/assets/img/webapp-docs/wa-points-inside.webp)
+
+**What it changes, and what it doesn't:**
+
+- the hub's own totals **don't** change — they are taken at the input, and they never depended on your points;
+- the **unmetered** figure stops subtracting the inner load twice. Without the mark, the sub-panel and the load inside it are both counted against the input, so unmetered reads lower than it is, and on a well-metered board it can go negative. → [Economics](web-economics.md#balance-input-and-lines)
+
+> ⚠️ **Mark the inner point, not the outer one.** The setting says "this point is already inside that one". Pointing it the other way describes a board you don't have.
+
+Deleting a point — including by removing the node that carried it — makes the points inside it top-level again, so the figure corrects itself rather than silently keeping a parent that is gone.
+
+Over the API this is `PATCH /api/v1/units/{id}` with `{"inside": <point id>}`; `0`, `""` or `null` clears it, and `units-config` reports `inside` for every point.
 
 ### Checks on limits and breakers
 
@@ -191,7 +223,7 @@ At the bottom, **Point setup** opens the point's settings (see [Point settings](
 
 ### Current sensor
 
-On an **SCT** channel, pick the clamp actually fitted. The new model applies at once and the module restarts; the hub doesn't. If the channel was factory-calibrated with your sensor, that calibration is lost and can't be restored, so change the model only if a different sensor is really fitted. On a **CT** series module, or on an uncalibrated module, the model can't be chosen. The supported models are listed under [Channel CT model](sensors.md#channel-ct-model).
+On an **SCT** channel, pick the clamp actually fitted. The new model applies at once and the module restarts; the hub doesn't. If the channel was factory-calibrated with your sensor, that calibration is lost and can't be restored, so change the model only if a different sensor is really fitted. On a **CT** series module, or on an uncalibrated module, the model can't be chosen. The supported models are listed under [Channel CT model](web-sensors.md#channel-ct-model).
 
 ### After saving
 
@@ -228,14 +260,14 @@ A point you bind while the hub is running starts keeping history after the next 
 
 ## Reading the data
 
-- **History** shows a point by hour, day or month (see [History](history.md)). The trend on the point's page can also show weeks.
-- **Economics** shows a point's cost and export value by period (see [Tariffs](tariffs.md)).
+- **History** shows a point by hour, day or month (see [History](web-history.md)). The trend on the point's page can also show weeks.
+- **Economics** shows a point's cost and export value by period (see [Tariffs](web-tariffs.md)).
 - The REST API and CSV export give you the same records (see [Source & API](https://www.rbgrid.io/source)).
 
 ## Troubleshooting
 
 **A point shows no data**
-- Check that the module is connected and its card shows in **Points → rbAmp modules** (see [Sensors and modules](sensors.md)).
+- Check that the module is connected and its card shows in **Points → rbAmp modules** (see [Sensors and modules](web-sensors.md)).
 - Check that the point is bound to the channel the clamp is on.
 - If the page shows a bus warning, see [Bus warnings](#bus-warnings).
 
@@ -248,5 +280,18 @@ A point you bind while the hub is running starts keeping history after the next 
 
 **A point has live values but no history**
 - If you added it while the hub was running, restart the hub.
-- It may be the thirteenth point or later: only twelve points keep history.
-- Check that the hub's clock is set (see [Time](time.md)). Records without a real date are skipped.
+- It may be the thirteenth point or later: only twelve points keep history, the hub's own and its nodes' together.
+- Check that the hub's clock is set (see [Time](web-time.md)). Records without a real date are skipped.
+
+**The unmetered figure is negative, or far too small**
+- One of your points is already measured by another one — a sub-panel and a circuit behind it. Mark the inner one as **measured inside** the outer (firmware v1.1.8, see *Points inside other points* above).
+- A producing circuit bound with the wrong role lands in the wrong block: generation is not a line and is never subtracted. → [Economics](web-economics.md#balance-input-and-lines)
+
+**A generation point reads consumption**
+- On firmware v1.1.5 and later the role itself sets the direction; an `invert_sign` left over from an older firmware flips it back. Clear it (see *Roles*).
+
+**A node's point lost its name, role or ratings after a restart**
+- That was fixed in firmware **v1.1.8**: node points are rebuilt from the node list at boot, and until v1.1.8 their name, role, ratings, clamp orientation and **measured inside** were reset to defaults. On v1.1.7 and earlier, set them again after each restart — or update the hub. → [Remote nodes](web-nodes.md)
+
+**I can't set «Measured inside»**
+- The target must be an existing point, not this one, not the input, and the chain must not loop back. The field appears only from firmware v1.1.8.

@@ -71,7 +71,7 @@ Always shown.
 | **Site name** | The name of your home or building, for your reference. |
 | **Location** | Where it is, for your reference. |
 
-Save with **Apply** in the saving bar; both apply at once. They're the same fields as **Name** and **Where it is** in the [setup wizard](setup-wizard.md).
+Save with **Apply** in the saving bar; both apply at once. They're the same fields as **Name** and **Where it is** in the [setup wizard](web-setup-wizard.md).
 
 Fields the hub reads only when it starts are listed under **Applies after a hub restart** and saved with **Save and restart**.
 
@@ -139,19 +139,19 @@ The light/dark theme isn't in Settings: its switch is at the bottom of the left 
 
 ![Settings: the Time panel](https://www.rbgrid.io/assets/img/webapp-docs/wa-settings-time.webp)
 
-Always shown. The time zone, the time servers (SNTP) and setting the hub's clock from your browser. The panel says: "NTP sync, the time source and the NTP server apply after a hub restart; the time zone applies at once." See [Time](time.md).
+Always shown. The time zone, the time servers (SNTP) and setting the hub's clock from your browser. The panel says: "NTP sync, the time source and the NTP server apply after a hub restart; the time zone applies at once." See [Time](web-time.md).
 
 ## Tariff
 
 ![Settings: the Tariff panel](https://www.rbgrid.io/assets/img/webapp-docs/wa-settings-tariff.webp)
 
-Always shown. A link card: the tariff plan, its zones and prices are set on the **Tariffs** page. **Open "Tariffs"** takes you there. See [Tariffs](tariffs.md).
+Always shown. A link card: the tariff plan, its zones and prices are set on the **Tariffs** page. **Open "Tariffs"** takes you there. See [Tariffs](web-tariffs.md).
 
 ## Points
 
 ![Settings: the Points panel](https://www.rbgrid.io/assets/img/webapp-docs/wa-settings-points.webp)
 
-Always shown. A link card: each point's name, role, phase, nominals and the input limit are set on that point's page under **Points**. **Open "Points"** takes you there. See [Points](points.md).
+Always shown. A link card: each point's name, role, phase, nominals and the input limit are set on that point's page under **Points**. **Open "Points"** takes you there. See [Points](web-points.md).
 
 ## Telemetry
 
@@ -243,6 +243,16 @@ If the hub already has a login and password stored, it doesn't show them: type t
 
 Press **Save**. The hub connects to the new broker after a restart: press **Restart now**. With no broker saved, MQTT is off. There is no separate switch to turn MQTT off.
 
+**Secure connection (TLS, mqtts).** A switch under the broker fields; the port is usually **8883**. With it on, the hub verifies the broker's certificate and, from firmware **v1.1.8**, says what came of it — *"Secure connection to the broker: certificate verified."*, or the reason it was refused: an expired certificate, one not valid yet, a host name that doesn't match, an unknown authority, *"Waiting for the clock…"*, or a TLS failure. The hub opens a TLS connection only once its clock is set, because an unset clock makes every certificate look not valid yet; a plain `mqtt://` broker is not delayed.
+
+**Broker CA (for mqtts).** From **v1.1.8** this block takes the certificate of **your own** authority — *"For a broker with its own certificate authority, such as Mosquitto in Home Assistant: upload that authority's certificate (a .pem or .crt file, up to 8 KB). Without it the hub connects only to brokers with a public certificate."* With nothing uploaded the button reads **Upload CA certificate**; once one is stored, the block shows its subject, its issuer and the dates it is valid between, with **Replace** and **Remove** beside them. The uploaded CA **replaces** the public bundle and applies at the next restart.
+
+![Settings → Home Assistant: the MQTT broker on port 8883 with the secure-connection switch on, «certificate verified», and a stored broker CA with Replace and Remove](https://www.rbgrid.io/assets/img/webapp-docs/wa-settings-mqtt-ca.webp)
+
+> ⚠️ **Upload the authority's certificate, never a key.** The hub refuses a file that holds a private key, isn't PEM, is over 8 KB, or isn't a CA certificate, and says which of those it was. **Remove the broker CA?** warns first: after a restart the hub trusts public authorities only, so a broker that depends on this CA stops connecting.
+
+The states, the refusals and the API (`POST /api/system/mqtt-ca`): see [MQTT broker](hub-mqtt.md#your-own-broker-ca).
+
 The panel also lists what to pick in Home Assistant's **Energy** dashboard:
 
 | Energy dashboard entry | Sensor |
@@ -252,7 +262,9 @@ The panel also lists what to pick in Home Assistant's **Energy** dashboard:
 | Solar panels | RBGrid *your generation point* · Energy Out |
 | Individual devices | RBGrid *point* · Energy In, for each point |
 
-Topics, discovery and the command channel: see [MQTT broker](mqtt.md).
+> ⚠️ **A point measured inside another needs one extra step in Home Assistant.** On firmware v1.1.8 the panel lists both the sub-panel and the point inside it, plainly and without saying they overlap — so adding both to **Individual devices** makes HA count the inner load twice. Either add only the level you want to see, or add both and set the outer one as the inner device's **upstream device** in HA's Energy dashboard, which is what stops the double count. (The hub's own figures are unaffected; this is about what you select in HA.) → [Points](web-points.md)
+
+Topics, discovery and the command channel: see [MQTT broker](hub-mqtt.md).
 
 ## Security
 

@@ -10,9 +10,50 @@ In the app, open **Settings → Home Assistant** and fill in the **MQTT broker**
 
 Over the API instead: `POST /api/system/mqtt-config` with `{"broker_uri":"mqtt://user:password@host:1883"}`. Reading it back shows the password masked.
 
-Use a plain `mqtt://` address, or `mqtts://` **from v1.1.7** when your broker's certificate comes from a public certificate authority — one on the Mozilla root list, such as Let's Encrypt or DigiCert — **and** matches the broker's host name. A **self-signed** certificate, or one from your own private authority, can't be used: there is no way to add your own certificate to the hub, so such a broker needs a plain `mqtt://` address on a network you trust.
+Use a plain `mqtt://` address, or `mqtts://` for a secure connection:
 
-If the hub can't verify the broker it keeps retrying, and nothing else stops working: **Settings → MQTT** shows MQTT as not connected, and the hub's event log names the reason.
+- **from v1.1.7**, with a certificate from a **public** authority — one on the Mozilla root list, such as Let's Encrypt or DigiCert — that matches the broker's host name;
+- **from v1.1.8**, also with **your own** certificate authority: a home broker with a private CA, or a self-signed certificate, which covers Mosquitto inside Home Assistant with its own certificate. See *Your own broker CA* below.
+
+On **v1.1.7** a private or self-signed certificate could not be used at all, and such a broker needed a plain `mqtt://` address on a network you trust.
+
+### Your own broker CA
+
+**Settings → Home Assistant** has a **Broker CA (for mqtts)** card. While nothing is uploaded it reads *"None uploaded: the hub trusts public certificate authorities only."* **Upload CA certificate** takes the PEM file of your authority — the file that begins with `-----BEGIN CERTIFICATE-----` — and the hub answers *"Certificate saved on the hub. It is used after a restart."* The card then lists what it holds: subject, issuer and the validity dates.
+
+The hub refuses a file that isn't right, and says which:
+
+| What you get | What to do |
+|---|---|
+| *"This isn't a PEM certificate. Choose the file that starts with «-----BEGIN CERTIFICATE-----»."* | export the CA in PEM, not DER or PKCS#12 |
+| *"The file holds a private key. Never upload a key: choose the file with the CA certificate only."* | upload the certificate alone — the key never leaves your broker |
+| *"The file is larger than 8 KB. Upload only the CA certificate."* | the limit is 8 KB; a chain of a few certificates fits, a whole bundle does not |
+| *"not a CA certificate"* | the file is a server certificate, not the authority that signed it |
+
+> ⚠️ **Removing the CA cuts off a broker that depends on it.** **Remove the broker CA?** warns that *"After a restart the hub connects only to brokers with a public certificate. A broker that uses this CA stops connecting."* After it: *"Certificate removed. After a restart the hub trusts public certificate authorities only."*
+
+The uploaded CA **replaces** the public bundle rather than adding to it, and it applies at the next restart. Over the API: `POST /api/system/mqtt-ca` with the PEM, `GET` to see what is stored, `DELETE` to go back to the public bundle.
+
+### Why a secure connection was refused
+
+From **v1.1.8** the hub checks the certificate's **dates** as well as its authority and host name, and says what it found. The card shows one of these:
+
+| What the app says | What it means |
+|---|---|
+| *"Secure connection to the broker: certificate verified."* | working |
+| *"Connecting to the broker over TLS…"* | in progress, or back off after the broker dropped the connection |
+| *"The broker's certificate has expired. Renew it on the broker."* | past its validity |
+| *"The broker's certificate isn't valid yet. Check the hub's time, or the certificate's start date."* | not valid yet — and the hub's own clock is the usual culprit |
+| *"The certificate is for another host name. Use the broker address the certificate was issued for."* | the address you typed isn't the one in the certificate |
+| *"The hub doesn't know this certificate's authority. Upload your broker's CA below."* | a private CA, not yet uploaded |
+| *"Waiting for the clock: the hub checks the broker's certificate once it knows the time."* | the hub has no time yet, see below |
+| *"The secure connection to the broker failed. Check the port (usually 8883) and that the broker speaks TLS."* | TLS didn't start at all |
+
+> ⚠️ **A hub without a clock will not open a TLS connection at all, and that is deliberate.** A clock that isn't set makes every certificate look "not valid yet", so from v1.1.8 the hub waits until it has the time — by NTP or set by hand — before it tries. The event log says *"mqtt: TLS broker — waiting for the clock"*. A plain `mqtt://` broker is **not** delayed. → [Time](web-time.md)
+
+Each refusal also writes a line to the event log. Over the API the same state is in `GET /api/system/mqtt-config` → `tls: {state, ca, ca_uploaded}`, where `state` is `ok`, `expired`, `not_yet_valid`, `name_mismatch`, `unknown_ca`, `waiting_clock`, `connecting`, `tls_error`, or `off` for a plain connection, and `ca` is `custom` or `bundle`.
+
+If the hub can't verify the broker it keeps retrying, and nothing else stops working: **Settings → MQTT** shows MQTT as not connected, and the hub's event log names the reason. → [Events](web-events.md#hub-log)
 
 > **Keep the broker private.** Anyone who can read and write on the broker can read the hub's settings through the command channel, and an admin token sent with a command is visible to every client subscribed to it. Use a broker with its own users and access rules (ACL), on your own network: give the hub its own broker user, and limit access to `rbgrid/<mac>/#` to the hub and the clients you trust. Never use a public broker.
 
@@ -26,6 +67,8 @@ If the hub can't verify the broker it keeps retrying, and nothing else stops wor
 | `rbgrid/<mac>/status` | hub → broker | 1 | yes | `online` when the hub connects. `offline` is the hub's last will: the broker publishes it when the hub drops (within about a minute). A planned restart publishes `offline` first. |
 | `rbgrid/<mac>/cmd` | you → hub | 1 | — | Commands, as JSON (see *Commands*). |
 | `rbgrid/<mac>/cmd/resp` | hub → broker | 1 | no | The answer to each command. |
+| `rbgrid/<mac>/node/<NODEMAC>/status` | hub → broker | 1 | yes | One per remote node: `online`, signal (dBm), lost packets (%) and last heard, refreshed every minute (see [Remote nodes](web-nodes.md)). |
+| `rbgrid/<mac>/event` | hub → broker | 0 | no | Node events: `paired`, `removed`, `node_online`, `node_offline`. |
 | `homeassistant/sensor/rbgrid_<mac>_<key>/<metric>/config` | hub → broker | 0 | yes | Home Assistant discovery, re-sent on every connect. |
 
 ## The telemetry frame
@@ -147,6 +190,10 @@ A successful answer is the same JSON as the matching HTTP endpoint. An error loo
 ```
 
 Identify hubs by `<mac>` in the topic: the `device_id` inside the answers is the same on every hub.
+
+## Reading data without a token in the URL
+
+From **v1.1.7**, MQTT reads need the **read** token when the hub has read and admin tokens set, the same as HTTP reads: `cmd get` and `history` are refused without it. For a browser client that shouldn't carry a token in the address, `POST /api/v1/ws-ticket` returns a single-use ticket valid for 30 seconds. → [Settings → Security](web-settings.md#security)
 
 ## Troubleshooting
 

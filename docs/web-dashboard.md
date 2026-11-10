@@ -1,11 +1,11 @@
-# The Overview (dashboard)
+# Overview
 
 The **Overview** is the first page of the RBgrid app. It shows what your hub measures right now and today: the power at your grid input, the power on each metered line, the phases, the day's energy and, once you've set a tariff, what that energy costs at your rates.
 
 Every figure on the page comes from two places:
 
 - **the hub's measurements**: the rbAmp modules wired to your input and your lines, read live and stored as hourly history on the hub;
-- **your tariff**: the price plan you enter on the [Tariffs](tariffs.md) page. Without a tariff the Overview shows power and energy only.
+- **your tariff**: the price plan you enter on the [Tariffs](web-tariffs.md) page. Without a tariff the Overview shows power and energy only.
 
 RBgrid measures. It doesn't switch or regulate any load; everything on this page is information for you to read.
 
@@ -63,7 +63,7 @@ Money values marked **≈** are the app's estimates at your current rates. The d
 | Solar generation | the part your home uses itself × buy rate + the part exported × sell rate |
 | A day's energy without a hub cost total | energy × today's average price at your input (or the current buy rate) |
 
-The **buy rate** is the hub's all-in rate when it reports one; otherwise the app takes the current zone's rate, adds the per-kWh energy tax, grid fee and renewable levy from your plan, and applies VAT. The **sell rate** is the one in your plan. See [Tariffs](tariffs.md).
+The **buy rate** is the hub's all-in rate when it reports one; otherwise the app takes the current zone's rate, adds the per-kWh energy tax, grid fee and renewable levy from your plan, and applies VAT. The **sell rate** is the one in your plan. See [Tariffs](web-tariffs.md).
 
 ### Summary / Details
 
@@ -130,15 +130,15 @@ The **Today** card shows the day so far:
 - With a three-phase input **metered per phase**, these figures cover the whole input — the three phase points summed by the hub (firmware **v1.1.6** with the matching app package; on **v1.1.5** they covered one phase only).
 - The current zone and rate, for example "Zone: night · 0.18 €/kWh incl. VAT & levies". With no tariff the line isn't shown.
 
-"Today" means the hub's day. If the hub's clock isn't set, a note says that "today" counts from the hub's last midnight or restart, not your calendar day. Set the clock on the [Time](time.md) page.
+"Today" means the hub's day. If the hub's clock isn't set, a note says that "today" counts from the hub's last midnight or restart, not your calendar day. Set the clock on the [Time](web-time.md) page.
 
-If money is still counted with the factory example tariff, the card says so and links to **Set your tariff →**, which opens the [setup wizard](setup-wizard.md).
+If money is still counted with the factory example tariff, the card says so and links to **Set your tariff →**, which opens the [setup wizard](web-setup-wizard.md).
 
 If the hub reports a cost of 0 next to real energy, the app treats the cost as unknown and shows its own estimate (≈ energy × rate) instead of 0.00.
 
 #### Point tiles
 
-One tile per metered **line** (the input and the voltage module aren't tiles), the ones answering first, then by power. Each tile shows an icon guessed from the point's name, the name, its power (Money mode: ≈ cost per hour) and its voltage and current. Click a tile to open that point (see [Points](points.md)).
+One tile per metered **line** (the input and the voltage module aren't tiles), the ones answering first, then by power. Each tile shows an icon guessed from the point's name, the name, its power (Money mode: ≈ cost per hour) and its voltage and current. Click a tile to open that point (see [Points](web-points.md)).
 
 A status word appears only when something deviates: **offline**, **no such channel on the module**, **clipping**, **sensor limit**, or **sensor reversed — not metered** for a basic module wired backwards.
 
@@ -348,7 +348,7 @@ If a frame arrives without phase data, the rows stay and show "no data".
 
 ![«Today by hour»](https://www.rbgrid.io/assets/img/webapp-docs/wa-dashboard-hourly.webp)
 
-24 bars for **today on the hub's clock**: import upwards, export downwards, on one scale. In Money mode the title adds "· in money" and each hour shows its cost from the hub's hourly records (or energy × the current rate when the hub has none). **As a table** opens the same hours in [History](history.md).
+24 bars for **today on the hub's clock**: import upwards, export downwards, on one scale. In Money mode the title adds "· in money" and each hour shows its cost from the hub's hourly records (or energy × the current rate when the hub has none). **As a table** opens the same hours in [History](web-history.md).
 
 - With a solar point (Power mode), each bar shows the house's hour split into **From grid** and **From solar** (from the first generation point).
 - The **running hour** is hatched ("Current / partial hour").
@@ -418,9 +418,9 @@ Banners appear at the top of the Overview, in this order:
 | **data delayed** (chip) | Live frames from the hub arrived with gaps. |
 | *No connection to the device — showing data from {time}.* | The hub doesn't answer; figures dim and show the last data. |
 | *The device withholds live data without a read token…* | The hub needs a read token; enter it in **Settings → Security**. |
-| *The hub still has its factory settings: …* | The site has no name, or money is counted with the sample tariff. **Set up →** opens the [setup wizard](setup-wizard.md); **Hide** hides it in this browser. |
+| *The hub still has its factory settings: …* | The site has no name, or money is counted with the sample tariff. **Set up →** opens the [setup wizard](web-setup-wizard.md); **Hide** hides it in this browser. |
 | Hub access warning | Hub firmware v1.1.2 and later: no API token is set, or the hub's own Wi-Fi still uses its setup password, or both. Without a token the hub doesn't report the access-point status, so the warning stays until both are set. Buttons **Access-point password** and **API token**; **Hide** hides it for this browser session. |
-| Hub time note | The hub's time zone differs from your browser's by 30 minutes or more. If the hub is where you are, set its time zone ([Time](time.md)); otherwise days, hours and tariff zones are shifted. |
+| Hub time note | The hub's time zone differs from your browser's by 30 minutes or more. If the hub is where you are, set its time zone ([Time](web-time.md)); otherwise days, hours and tariff zones are shifted. |
 | Scenario preview | A scenario preview is active in this browser; **Back** ends it. |
 | *Sensors not responding: {n} of {m}. Their readings are not counted.* | At least one point isn't answering. **What to check** opens the Events page. |
 

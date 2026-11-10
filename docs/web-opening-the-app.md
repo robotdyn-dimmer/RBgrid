@@ -34,7 +34,7 @@ The browser remembers the last address, so next time the app opens on your hub.
 
 If you said no, or the app says *No hub answers at this address*, allow it in the browser's site settings (**Local network access**) and connect again. Check the address too: it's the hub's address on your home network, not `192.168.4.1`.
 
-From hub firmware v1.1.3, the hub always accepts the RBgrid app at `https://webapp.rbgrid.io` and `https://demo.rbgrid.io`; there's nothing to set. A hub on v1.1.2 or older accepts any site, unless you limited it in **Settings → Browser access (CORS)**: then add `https://webapp.rbgrid.io` there. → [Settings: Browser access](settings.md#browser-access-cors)
+From hub firmware v1.1.3, the hub always accepts the RBgrid app at `https://webapp.rbgrid.io` and `https://demo.rbgrid.io`; there's nothing to set. A hub on v1.1.2 or older accepts any site, unless you limited it in **Settings → Browser access (CORS)**: then add `https://webapp.rbgrid.io` there. → [Settings: Browser access](web-settings.md#browser-access-cors)
 
 ## Install the app on your hub
 
@@ -43,7 +43,7 @@ The app comes as a separate package with each release, `rbgrid-ui_<version>.zip`
 - If you've set an API token, send it with each call.
 - The swap is atomic: the hub switches to the new app only after the whole package has arrived and been checked.
 
-Then open `http://<hub address>/`. The app opens on the Overview of that hub. On a hub that hasn't been set up yet, a banner says *The hub still has its factory settings*; **Set up →** opens the [setup wizard](setup-wizard.md).
+Then open `http://<hub address>/`. The app opens on the Overview of that hub. On a hub that hasn't been set up yet, a banner says *The hub still has its factory settings*; **Set up →** opens the [setup wizard](web-setup-wizard.md).
 
 Until a package is installed, the hub's address shows only the firmware's minimal built-in page; the API works.
 
