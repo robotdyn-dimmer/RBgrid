@@ -3715,7 +3715,8 @@ cJSON *rbamp_bridge_i2c_state(void)
             bound++;
             if (s_cfg.modules[m].entries[e].source != RBAMP_ENTRY_VOLTAGE) metering++;
         }
-        cJSON_AddNumberToObject(o, "points", bound);
+        cJSON_AddNumberToObject(o, "points", bound);          /* bound entries, the module's mains-voltage point included */
+        cJSON_AddNumberToObject(o, "metering_points", metering); /* current/power points only (what a "Points" column means) */
         /* placeholder: an absent module no metering point depends on (at most the mains-voltage point, which any
          * voltage-capable module feeds). Typical case: the product-default module 0 @0x50 on a hub whose modules
          * answer at other addresses. Clients don't block an add flow on it. */
