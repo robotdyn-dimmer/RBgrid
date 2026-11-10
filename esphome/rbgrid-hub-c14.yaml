@@ -43,6 +43,10 @@ esp32:
   partitions: partitions_rbgrid_esphome.csv
   framework:
     type: esp-idf
+    advanced:
+      # rbgrid_cmd runs in the loop task: config saves (littlefs, cJSON) and price-rule evaluation need more than
+      # ESPHome's 8 KB default (a stack overflow in loopTask was caught at set time / set rules, 2026-11-10)
+      loop_task_stack_size: 16384
 
 psram:
   mode: quad
