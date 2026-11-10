@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.2.0 — TODO date
+## v1.2.0 — 2026-11-10
 
 ### Dynamic electricity prices
 - **The hub follows a market (spot) price** and prices every 15-min period with the price of that period. It is off
