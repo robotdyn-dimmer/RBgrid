@@ -1,4 +1,4 @@
-# RBgrid hub firmware hosted by ESPHome (pilot) on an ESP32-S3 N16R8 (16 MB flash, 8 MB octal PSRAM).
+# RBgrid hub firmware hosted by ESPHome on an ESP32-S3 N16R8 (16 MB flash, 8 MB octal PSRAM).
 # rbAmp bus: SDA GPIO8 / SCL GPIO9 (the S3 default in the RBgrid core).
 substitutions:
   friendly_name: RBgrid Hub
@@ -46,7 +46,7 @@ esp32:
     type: esp-idf
     advanced:
       # rbgrid_cmd runs in the loop task: config saves (littlefs, cJSON) and price-rule evaluation need more than
-      # ESPHome's 8 KB default (a stack overflow in loopTask was caught at set time / set rules, 2026-11-10)
+      # ESPHome's 8 KB default (config saves and price rules overflow it)
       loop_task_stack_size: 16384
 
 psram:
@@ -54,7 +54,7 @@ psram:
   speed: 80MHz
 
 logger:
-  hardware_uart: UART0     # the board's UART-USB port (COM23)
+  hardware_uart: UART0     # the board's USB-UART port
 
 api:
   reboot_timeout: 0s
