@@ -160,6 +160,9 @@ char *rbgrid_units_create(const char *json, int *status);
  * @return malloc'd reply JSON (caller frees), or NULL on OOM.
  */
 char *rbgrid_units_mutate(rbpower_unit_id_t uid, const char *op, const char *json, int *status);
+/** @brief Off: rbgrid_units_mutate() changes RAM only (boot re-apply of saved fields: the file already holds them,
+ *  and per-patch saves would rewrite it from a half-restored state). Default on. */
+void rbgrid_units_set_persist(bool on);
 /**
  * @brief Delete a point (its history stays on flash, unreachable).
  * @param[in]  uid     Point id.

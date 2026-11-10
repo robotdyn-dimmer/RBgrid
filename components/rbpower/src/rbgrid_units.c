@@ -137,6 +137,9 @@ bool rbgrid_ct_model_selectable(const rbamp_sensor_model_info_t *mi)
 }
 
 /* Change a point. @p op NULL/"" = params patch; "rebind" {module,ch}; "rename" {point,reuse?}. */
+static bool s_units_persist = true;
+void rbgrid_units_set_persist(bool on) { s_units_persist = on; }
+
 char *rbgrid_units_mutate(rbpower_unit_id_t uid, const char *op, const char *json, int *status)
 {
     if (!op) op = "";
@@ -299,7 +302,7 @@ char *rbgrid_units_mutate(rbpower_unit_id_t uid, const char *op, const char *jso
         rbpower_home_unlock();
         cJSON_Delete(root);
 
-        esp_err_t supd = rbgrid_storage_save_units(NULL);
+        esp_err_t supd = s_units_persist ? rbgrid_storage_save_units(NULL) : ESP_OK;
         char en[96], esn[64];   /* a name with " or \ broke the 200 body */
         rbgrid_json_escape(def->name, en, sizeof(en));
         rbgrid_json_escape(def->short_name, esn, sizeof(esn));

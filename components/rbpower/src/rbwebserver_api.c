@@ -2833,6 +2833,8 @@ esp_err_t rbwebserver_api_mqtt_ca_handler(httpd_req_t *req)
         int got = rbapi_recv_body(req, pem, len);
         if (got != len) { free(pem); return dp_error(req, "pem", "body not received"); }
         pem[len] = 0;
+        /* a NUL inside the body would hide the rest from the text checks below (private-key scan) */
+        if (memchr(pem, 0, len)) { free(pem); return dp_error(req, "pem", "binary data in the PEM body"); }
         mbedtls_x509_crt chain;
         mbedtls_x509_crt_init(&chain);
         int r = strstr(pem, "-----BEGIN CERTIFICATE-----") ? mbedtls_x509_crt_parse(&chain, (const unsigned char *)pem, len + 1) : -1;
