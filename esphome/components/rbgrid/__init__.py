@@ -270,6 +270,8 @@ async def to_code(config):
     esp32.add_idf_sdkconfig_option("CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL", 16384)
     esp32.add_idf_sdkconfig_option("CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL", 32768)
     esp32.add_idf_sdkconfig_option("CONFIG_ESP_TIMER_TASK_STACK_SIZE", 8192)
+    # TLS (price fetch over HTTPS): check certificate validity dates, as the standalone firmware does
+    esp32.add_idf_sdkconfig_option("CONFIG_MBEDTLS_HAVE_TIME_DATE", True)
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
