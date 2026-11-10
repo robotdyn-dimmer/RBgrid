@@ -15,9 +15,10 @@
     - Octopus Agile (UK, all-in);
     - **Home Assistant** as a local source: prices pushed to the hub (`POST /api/v1/price`, up to 200 periods).
   - **A primary and a backup source:** when the primary has no price for now, the backup is used, then the plan.
-  - **The price you pay:** a spot price becomes your price with a factor, a markup, the plan's per-kWh fees and VAT
-    (`zones_stack`), or is taken as is when the source is already all-in. Optional floors for buy and sell, a sell
-    mode (source / plan / formula), and billing at the hourly mean when your contract settles per hour.
+  - **The price you pay:** spot × factor + markup (+ the plan's zone rate when "zones stack" is on), then the plan's
+    per-kWh tax, grid fee, levy and VAT. An all-in source (EnergyZero, Octopus) is taken as is, so nothing is
+    counted twice. Optional floors for buy and sell; a sell mode (source / plan / formula, with a factor and a
+    feed-in fee); billing at the hourly mean when your contract settles per hour.
   - **Negative prices** are kept as they are, unless a floor is set.
 - **Every booked price is logged:** `GET /api/v1/price?log=1` lists, per 15-min period, the buy and sell price and
   where it came from (40 days).
