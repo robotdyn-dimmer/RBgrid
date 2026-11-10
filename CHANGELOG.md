@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.1 — 2026-11-11
+
+### Fixed
+- **With dynamic prices on, the hub could run out of settings memory (NVS).** v1.2.0 kept the price stores (about
+  3 KB each, rewritten on every fetch) in the 24 KB NVS that also holds the open hours and the energy counters'
+  anchors. Once it filled up, the hub could no longer save the open hour or the anchors (event log:
+  `FAIL hour persist …: ESP_ERR_NVS_NOT_ENOUGH_SPACE`), so a restart could lose part of the current hour. The price
+  stores now live in the file system; on the first start of v1.2.1 they are moved there and the NVS space is freed
+  (event log: `price: stores moved from NVS to the file system`). Update from v1.2.0 if you use dynamic prices.
+
 ## v1.2.0 — 2026-11-10
 
 ### Dynamic electricity prices

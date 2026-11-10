@@ -438,39 +438,54 @@ static void st_save_dirty(void)
         memcpy(buf + sizeof(*hd), s_st[st].e, s_st[st].n * sizeof(dp_entry_t));
         s_st[st].dirty = false;
         portEXIT_CRITICAL(&s_st_mux);
-        nvs_handle_t h;
-        if (rbgrid_nvs_open(DP_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
-            char key[6]; snprintf(key, sizeof(key), "st%d", st);
-            nvs_set_blob(h, key, buf, sizeof(*hd) + hd->n * sizeof(dp_entry_t));
-            nvs_commit(h); nvs_close(h);
-        }
+        /* a file, not an NVS blob: the stores are ~3 KB each and rewritten on every fetch; in the standalone
+         * firmware's 24 KB NVS they starved the hour persistence and the energy anchors (1.2.0, .139) */
+        char path[16]; snprintf(path, sizeof(path), "/dp_st%d", st);
+        littlefs_raw_write(path, buf, sizeof(*hd) + hd->n * sizeof(dp_entry_t));
         free(buf);
     }
 }
 
+/* Apply one stored blob to store st (len checked). */
+static bool st_apply(int st, const uint8_t *buf, size_t len)
+{
+    const dp_st_hdr_t *hd = (const dp_st_hdr_t *)buf;
+    if (len < sizeof(*hd) || hd->magic != DP_ST_MAGIC || hd->n > RBDP_STORE_MAX ||
+        len != sizeof(*hd) + hd->n * sizeof(dp_entry_t)) return false;
+    portENTER_CRITICAL(&s_st_mux);
+    memcpy(s_st[st].provider, hd->provider, sizeof(s_st[st].provider));
+    memcpy(s_st[st].zone, hd->zone, sizeof(s_st[st].zone));
+    s_st[st].provider[23] = 0; s_st[st].zone[11] = 0;
+    memcpy(s_st[st].e, buf + sizeof(*hd), hd->n * sizeof(dp_entry_t));
+    s_st[st].n = hd->n;
+    portEXIT_CRITICAL(&s_st_mux);
+    if (st == ST_HA && hd->n) s_ha_seen = true;
+    return true;
+}
+
 static void st_load_all(void)
 {
-    nvs_handle_t h;
-    if (rbgrid_nvs_open(DP_NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
     size_t sz = sizeof(dp_st_hdr_t) + RBDP_STORE_MAX * sizeof(dp_entry_t);
-    uint8_t *buf = malloc(sz);
-    for (int st = 0; buf && st < ST_N; st++) {
+    uint8_t *buf = heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) buf = malloc(sz);
+    if (!buf) return;
+    nvs_handle_t h; bool nvs_ok = rbgrid_nvs_open(DP_NVS_NS, NVS_READWRITE, &h) == ESP_OK;
+    bool erased = false;
+    for (int st = 0; st < ST_N; st++) {
+        char path[16]; snprintf(path, sizeof(path), "/dp_st%d", st);
+        size_t got = 0;
+        bool from_file = littlefs_raw_exists(path) && littlefs_raw_read(path, buf, sz, &got) == ESP_OK && st_apply(st, buf, got);
+        if (!nvs_ok) continue;
         char key[6]; snprintf(key, sizeof(key), "st%d", st);
         size_t len = sz;
-        if (nvs_get_blob(h, key, buf, &len) != ESP_OK || len < sizeof(dp_st_hdr_t)) continue;
-        dp_st_hdr_t *hd = (dp_st_hdr_t *)buf;
-        if (hd->magic != DP_ST_MAGIC || hd->n > RBDP_STORE_MAX || len != sizeof(*hd) + hd->n * sizeof(dp_entry_t)) continue;
-        portENTER_CRITICAL(&s_st_mux);
-        memcpy(s_st[st].provider, hd->provider, sizeof(s_st[st].provider));
-        memcpy(s_st[st].zone, hd->zone, sizeof(s_st[st].zone));
-        s_st[st].provider[23] = 0; s_st[st].zone[11] = 0;
-        memcpy(s_st[st].e, buf + sizeof(*hd), hd->n * sizeof(dp_entry_t));
-        s_st[st].n = hd->n;
-        portEXIT_CRITICAL(&s_st_mux);
-        if (st == ST_HA && hd->n) s_ha_seen = true;
+        if (nvs_get_blob(h, key, buf, &len) == ESP_OK) {      /* a 1.2.0 store in NVS: move it out, free the space */
+            if (!from_file && st_apply(st, buf, len)) littlefs_raw_write(path, buf, len);
+            nvs_erase_key(h, key); erased = true;
+        }
     }
+    if (nvs_ok) { if (erased) nvs_commit(h); nvs_close(h); }
+    if (erased) rbpower_diag_printf("price: stores moved from NVS to the file system (NVS space freed)");
     free(buf);
-    nvs_close(h);
 }
 
 /* ============================================ HA store API ========================================== */
