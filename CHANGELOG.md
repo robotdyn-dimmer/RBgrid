@@ -67,6 +67,8 @@ Hub 1.1.8 works with node 1.4 and 1.5; these need 1.5:
   SCL 9, the S3 pin profile. The ESP32 bench relay fail-safe is not built for the S3. Released as a separate image.
 
 ### API
+- `GET /api/v1/system/events` adds `heap: {int_free, int_min, int_largest, psram_free}` (internal RAM is what the
+  hub's tasks need; `int_min` = lowest since boot). Additive.
 - `GET /api/v1/schema` → `quality_bits` now names every bit the hub sets: `SRC_RESTART` (9), `SRC_FW` (10),
   `REVERSE_LOST` (11), `OUTAGE` (12), as well as 0–8. Additive.
 - Telemetry: the input's `src` / `src_class` / `present` were taken from the old built-in input id (0006), so an
