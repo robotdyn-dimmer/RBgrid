@@ -122,6 +122,12 @@ static enh_unit_t s_units[ENH_MAX_UNITS];
 static portMUX_TYPE s_units_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t s_units_created = 0;
 static TaskHandle_t s_inject_task = NULL;
+static volatile int64_t s_inject_loop_us = 0;   /* last pass of the inject loop (status: inject_age_ms) */
+/* The hub's two tasks run on static internal stacks: they write NVS/flash (a PSRAM stack is not allowed there), and a
+ * heap stack can't be had once internal RAM is short — seen on .139: xTaskCreate failed silently, the inject task
+ * never ran, and node data (live values, periods, presence) was never processed. */
+static StackType_t  s_beacon_stack[4096], s_inject_stack[4096];   /* bytes on ESP-IDF */
+static StaticTask_t s_beacon_tcb, s_inject_tcb;
 
 /* Per-node runtime state: liveness (online), user disable, and the latest sync health from
  * NODE_STATS. Keyed by MAC; the authoritative node/channel list is the persisted registry. */
@@ -911,6 +917,7 @@ static void inject_task(void *arg)
 {
     uint32_t sweep_div = 0;
     while (s_running) {
+        s_inject_loop_us = esp_timer_get_time();
         /* Firmware upload in progress: hold the injects (they take the home lock and commit the hour image to NVS,
          * which waits behind the OTA flash writes — the stats task then starved on that lock and the task watchdog
          * reset the hub mid-upload, on the bench, twice). PERIOD frames stay queued and un-ACKed; the node keeps
@@ -1088,6 +1095,10 @@ static void inject_task(void *arg)
 esp_err_t esp_now_hub_start(uint8_t channel)
 {
     if (s_running) { ESP_LOGW(TAG, "already running"); return ESP_OK; }
+    /* a stop just before: the static stacks are reused, so the previous tasks must have exited first */
+    for (int w = 0; w < 50 && (s_beacon_task || s_inject_task); w++) vTaskDelay(pdMS_TO_TICKS(100));
+    if (s_beacon_task || s_inject_task) { ESP_LOGE(TAG, "previous hub tasks still running — start refused"); return ESP_ERR_INVALID_STATE; }
+    vTaskDelay(pdMS_TO_TICKS(50));   /* let the idle task finish the self-deleted tasks */
     hub_pmk_load();   /* the installation key: NVS, generated at the first start */
 
     if (channel > 0) {
@@ -1154,8 +1165,8 @@ esp_err_t esp_now_hub_start(uint8_t channel)
         if (esp_now_registry_load(&reg))
             for (int i = 0; i < reg.node_count && i < ESPNOW_REG_MAX_NODES; i++) enh_dedup_restore(reg.nodes[i].mac);
     }
-    xTaskCreate(beacon_task, "espnow_beacon", 4096, NULL, 5, &s_beacon_task);
-    xTaskCreate(inject_task, "espnow_inject", 4096, NULL, 4, &s_inject_task);
+    s_beacon_task = xTaskCreateStatic(beacon_task, "espnow_beacon", sizeof(s_beacon_stack), NULL, 5, s_beacon_stack, &s_beacon_tcb);
+    s_inject_task = xTaskCreateStatic(inject_task, "espnow_inject", sizeof(s_inject_stack), NULL, 4, s_inject_stack, &s_inject_tcb);
     ESP_LOGW(TAG, "ESP-NOW hub UP: ch=%u epoch=0x%08X beacon=%dms (beacon + recv + INJECT into units)",
              s_channel, (unsigned)s_epoch, HUB_BEACON_MS);
     return ESP_OK;
@@ -1445,6 +1456,7 @@ char *esp_now_hub_status_json(void)
     cJSON_AddNumberToObject(root, "periods_curonly_skipped", s_curonly_skipped);   /* current-only records not booked */
     cJSON_AddNumberToObject(root, "periods_dup", s_periods_dup);            /* resends of an injected frame, re-ACKed only */
     cJSON_AddNumberToObject(root, "rt_recv", s_rt_recv);
+    cJSON_AddNumberToObject(root, "inject_age_ms", s_inject_loop_us ? (double)((esp_timer_get_time() - s_inject_loop_us) / 1000) : -1);
     cJSON_AddNumberToObject(root, "stats_recv", s_stats_recv);
     cJSON *nodes = cJSON_AddArrayToObject(root, "nodes");
     int64_t now = esp_timer_get_time();

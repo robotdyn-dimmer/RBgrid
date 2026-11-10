@@ -168,6 +168,10 @@ static volatile bool s_repairing = false;
 static volatile bool s_hub_mac_valid = false;
 static volatile bool s_hub_enc_peer  = false;
 static volatile int64_t s_last_enc_reply_us = 0;   /* last encrypted reply (TIME_RESP/PERIOD_ACK) — liveness */
+/* A node paired by firmware 1.4 has no NVS hubmac (no hub filter). The first encrypted reply from the hub we hold as
+ * the encrypted peer names that hub: pair_task saves it, so the filter works without a re-pair. */
+static volatile bool s_learn_hub_pending = false;
+static uint8_t s_learn_hub[6];
 /* C — hub-commanded LATCH_NOW request (set in on_recv, consumed by period_task). */
 static volatile bool    s_latch_now_req = false;
 static volatile uint8_t s_latch_reason  = 0;
@@ -314,6 +318,8 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         s_period_last_ack = a->ack_seq;
         s_paired = true;   /* B3b: an encrypted reply proves the hub holds us as a registered peer */
         s_last_enc_reply_us = t_rx;
+        if (!s_paired_hub_set && !s_learn_hub_pending && s_hub_enc_peer && info && info->src_addr &&
+            memcmp(info->src_addr, s_hub_mac, 6) == 0) { memcpy(s_learn_hub, info->src_addr, 6); s_learn_hub_pending = true; }
     } else if (h->msg_type == RBN_MSG_CONFIG && len >= (int)sizeof(rbn_config_t)) {
         const rbn_config_t *c = (const rbn_config_t *)data;   /* F5: applied in pair_task (module I2C + NVS) */
         size_t need = sizeof(rbn_config_t) + (size_t)c->chan_count * sizeof(rbn_cfg_chan_t);
@@ -342,6 +348,8 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         }
         s_paired = true;   /* B3b: an encrypted TIME_RESP proves the hub holds us as a registered peer */
         s_last_enc_reply_us = t_rx;
+        if (!s_paired_hub_set && !s_learn_hub_pending && s_hub_enc_peer && info && info->src_addr &&
+            memcmp(info->src_addr, s_hub_mac, 6) == 0) { memcpy(s_learn_hub, info->src_addr, 6); s_learn_hub_pending = true; }
     } else if (h->msg_type == RBN_MSG_NODE_STATS && len >= (int)sizeof(rbn_node_stats_t)) {
         /* master prints the remote node's sync health → read a no-COM node via the hub's UART.
          * loss is reported as a ROLLING window (delta between consecutive NODE_STATS) — the cumulative
@@ -1051,6 +1059,17 @@ static void pair_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(500));
         if (s_ack2_pending) pair_ack2_apply();
         if (s_cfg_pending) node_config_apply();
+        if (s_learn_hub_pending) {   /* 1.4-paired node: keep the hub that answers us encrypted as the paired hub */
+            nvs_handle_t nh;
+            if (nvs_open("espnow", NVS_READWRITE, &nh) == ESP_OK) {
+                nvs_set_blob(nh, "hubmac", s_learn_hub, 6);
+                nvs_commit(nh); nvs_close(nh);
+            }
+            memcpy(s_paired_hub, s_learn_hub, 6); s_paired_hub_set = true; s_paired_hub_seen_us = esp_timer_get_time();
+            ESP_LOGI(TAG, "paired hub learned %02X:%02X:%02X:%02X:%02X:%02X (no hubmac in NVS; other hubs' beacons now ignored)",
+                     s_learn_hub[0], s_learn_hub[1], s_learn_hub[2], s_learn_hub[3], s_learn_hub[4], s_learn_hub[5]);
+            s_learn_hub_pending = false;
+        }
         if (++tick % 10) continue;   /* the rest every 5 s */
         /* Re-pair on stale link: no encrypted reply for >150 s while locked → the hub dropped us (removed) or uses
          * another key (a different hub) — pair again. */
