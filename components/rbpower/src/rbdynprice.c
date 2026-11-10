@@ -599,7 +599,13 @@ static int http_get(const char *url, char *buf, int cap, int *status)
     esp_http_client_handle_t h = esp_http_client_init(&cfg);
     if (!h) return -1;
     int n = -1;
-    if (esp_http_client_open(h, 0) == ESP_OK) {
+    esp_err_t oe = esp_http_client_open(h, 0);
+    if (oe != ESP_OK) {   /* the reason goes to the event log (TLS needs ~40 KB of internal RAM on the classic ESP32) */
+        rbpower_diag_printf("price: https open failed: %s (internal free %u, largest %u)", esp_err_to_name(oe),
+                            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    }
+    if (oe == ESP_OK) {
         esp_http_client_fetch_headers(h);
         *status = esp_http_client_get_status_code(h);
         n = 0;

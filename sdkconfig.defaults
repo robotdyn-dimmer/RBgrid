@@ -89,3 +89,7 @@ CONFIG_PTHREAD_TASK_CORE_DEFAULT=0
 # mqtts: check the broker certificate dates too (valid from / valid to). The MQTT client starts a TLS
 # connection only once the clock is real (rbmqtt.c), since before that every certificate reads "not yet valid".
 CONFIG_MBEDTLS_HAVE_TIME_DATE=y
+
+# mbedTLS buffers in PSRAM: with the web server running, internal RAM is too fragmented for a TLS client
+# handshake (dynamic-price fetch: ESP_ERR_HTTP_CONNECT at 23.5 KB largest internal block, 2026-11-10)
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
