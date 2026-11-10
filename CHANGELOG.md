@@ -1,5 +1,61 @@
 # Changelog
 
+## v1.2.0 — TODO date
+
+### Dynamic electricity prices
+- **The hub follows a market (spot) price** and prices every 15-min period with the price of that period. It is off
+  until you turn it on; the fixed tariff plan stays the fallback.
+  - **Providers:**
+    - Energy-Charts (Fraunhofer ISE; CC BY 4.0 zones: AT, BE, CH, CZ, DE-LU, DK1, DK2, FR, HU, IT-North, NL, NO2,
+      PL, SE4, SI);
+    - Nord Pool;
+    - Elpriset just nu (SE);
+    - Hva koster strømmen (NO, hourly);
+    - EnergyZero (NL, all-in);
+    - Octopus Agile (UK, all-in);
+    - **Home Assistant** as a local source: prices pushed to the hub (`POST /api/v1/price`, up to 200 periods).
+  - **A primary and a backup source:** when the primary has no price for now, the backup is used, then the plan.
+  - **The price you pay:** a spot price becomes your price with a factor, a markup, the plan's per-kWh fees and VAT
+    (`zones_stack`), or is taken as is when the source is already all-in. Optional floors for buy and sell, a sell
+    mode (source / plan / formula), and billing at the hourly mean when your contract settles per hour.
+  - **Negative prices** are kept as they are, unless a floor is set.
+- **Every booked price is logged:** `GET /api/v1/price?log=1` lists, per 15-min period, the buy and sell price and
+  where it came from (40 days).
+- `GET/POST /api/v1/dynprice` (settings, providers, live state), `GET/POST /api/v1/price` (store, resolved prices,
+  log). Telemetry `system.tariff` adds `dynamic`, `price_state`, `price_source`, `price_valid_until`.
+  `capabilities.dynamicTariffs: true`.
+
+### Cheap windows and the price notification
+- **Up to 8 rules** decide when a window is open:
+  - *threshold*: the price is under / over a level;
+  - *cheapest*: the N cheapest periods of a day or a time range;
+  - *deadline*: the N cheapest periods before a set time.
+  `GET/POST /api/v1/rules` shows each rule's state (active, until, next start).
+- **The hub switches nothing itself.** It publishes a price notification for other devices, for example a solar
+  diverter or a charger: `GET /api/v1/signal`, and the same payload on MQTT `rbgrid/<mac>/price` (retained). It
+  carries the buy/sell price now, its rank in the day, the open windows and "cheap now" / "low sell" flags.
+
+### Import peaks
+- **Highest 15-min and hourly import per billing cycle**, plus the top days, for capacity tariffs:
+  `GET/POST /api/v1/peaks` (billing cycle start day 1..28, reset). The current cycle's figures move to "previous"
+  when the cycle day changes.
+
+### Nodes
+- **A node going offline or back online is written to the hub's event log** (the app's Journal):
+  `espnow: node <mac> offline|online`. Before, only MQTT carried it.
+
+### Platform
+- **The hub's own time zone** (POSIX rule, set in the time settings) decides tariff zones and days. It no longer
+  depends on the system time zone.
+- **TLS buffers in PSRAM:** an HTTPS price fetch needs a large block that internal RAM no longer has with the web
+  server running.
+- **Building:** the application is now the component `components/rbgrid_app`, and `main/` is a thin entry. The same
+  core runs in the ESPHome build (released separately as `rb-amp/rbgrid-esphome`).
+
+### API
+- `GET /api/v1/schema` → `endpoints` lists every route the hub serves, including `mqtt-ca`, `system/events`, the I²C
+  add-module path and the price routes. The API reference is generated from it.
+
 ## v1.1.8 — 2026-11-10
 
 ### Security
