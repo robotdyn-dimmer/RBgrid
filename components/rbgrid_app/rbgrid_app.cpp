@@ -2149,7 +2149,15 @@ static void app_espnow_start(void)
     rbgrid_register_unit_deleted_hook(esp_now_on_unit_deleted);        // a deleted node point stays deleted
     rbgrid_register_i2c_action_handler(rbi2c_action);                  // `cmd get|set i2c` → the I2C fleet actions (rbi2c_cmd.c)
     rbgrid_register_espnow_action_handler(esp_now_hub_action);         // MQTT `cmd set espnow` → same actions as HTTP
-    xTaskCreate(espnow_autostart_task, "espnow_autostart", 4096, NULL, 4, NULL);
+    rbpower_diag_printf("heap at hub start: internal free %u largest %u min %u, psram free %u",
+                        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                        (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    /* static stack: a heap stack failed silently when internal RAM was short at boot, and the hub never started */
+    static StackType_t s_as_stack[4096];
+    static StaticTask_t s_as_tcb;
+    xTaskCreateStatic(espnow_autostart_task, "espnow_autostart", sizeof(s_as_stack), NULL, 4, s_as_stack, &s_as_tcb);
 }
 
 #if CONFIG_RBGRID_IF_HTTP

@@ -1015,7 +1015,10 @@ void rbdynprice_init(void)
     if (strcmp(s_st[ST_NET_B].provider, c.backup) || strcmp(s_st[ST_NET_B].zone, c.zone)) st_clear(ST_NET_B);
     strncpy(s_st[ST_NET_P].provider, c.source, 23); strncpy(s_st[ST_NET_P].zone, c.zone, 11);
     strncpy(s_st[ST_NET_B].provider, c.backup, 23); strncpy(s_st[ST_NET_B].zone, c.zone, 11);
-    if (xTaskCreate(fetch_task, "rbdynprice", 8192, NULL, 3, &s_fetch_task_h) != pdPASS) ESP_LOGE(TAG, "no fetch task");
+    /* static internal stack: the task writes the price log (flash), and a heap stack may not be available at boot */
+    static StackType_t s_fetch_stack[8192];
+    static StaticTask_t s_fetch_tcb;
+    if (!s_fetch_task_h) s_fetch_task_h = xTaskCreateStatic(fetch_task, "rbdynprice", sizeof(s_fetch_stack), NULL, 3, s_fetch_stack, &s_fetch_tcb);
     ESP_LOGI(TAG, "dynamic prices: %s, source %s, backup %s, zone %s", c.enabled ? "on" : "off", c.source, c.backup,
              c.zone[0] ? c.zone : "-");
 }
