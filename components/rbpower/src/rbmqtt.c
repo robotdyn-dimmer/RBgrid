@@ -23,6 +23,9 @@
 #include "esp_timer.h"
 #include "mqtt_client.h"
 #include "esp_crt_bundle.h"
+#include "mbedtls/x509.h"
+#include "littlefs_raw.h"   /* the user's broker CA (/mqtt_ca.pem) */
+#include "esp_heap_caps.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/x509_crt.h"
 #include "rbhome_types.h"   /* rbpower_diag_printf */
@@ -45,11 +48,32 @@ static rbmqtt_cmd_handler_t s_cmd_handler = NULL;
 /* TLS verify trace: the bundle's verify callback, wrapped so a rejected certificate leaves a line in the
  * event log (release builds have no console). Records the last failing depth / issuer / flags. */
 static char s_vrfy_note[160];
+static volatile uint32_t s_vrfy_flags = 0;   /* X.509 flags from the bundle's verify step (esp-tls reports 0 there) */
+/* TLS state for the app: off | waiting_clock | connecting | ok | expired | not_yet_valid | unknown_ca | name_mismatch
+ * | tls_error. The CA in use: "bundle" (public CAs) or "custom" (/mqtt_ca.pem, uploaded by the user). */
+static const char *volatile s_tls_state = "off";
+static bool s_tls_custom_ca = false;
+static char *s_ca_pem = NULL;   /* kept for the client's lifetime (esp-tls reads it at every connect) */
+const char *rbmqtt_tls_state(void) { return s_tls_state; }
+bool rbmqtt_tls_custom_ca(void) { return s_tls_custom_ca; }
+
+/* X.509 verify flags → the state code the app shows */
+static const char *tls_state_from_flags(uint32_t f)
+{
+    if (f & MBEDTLS_X509_BADCERT_EXPIRED) return "expired";
+    if (f & MBEDTLS_X509_BADCERT_FUTURE) return "not_yet_valid";
+    if (f & MBEDTLS_X509_BADCERT_CN_MISMATCH) return "name_mismatch";
+    if (f & MBEDTLS_X509_BADCERT_NOT_TRUSTED) return "unknown_ca";
+    return f ? "tls_error" : NULL;
+}
 int esp_crt_verify_callback(void *buf, mbedtls_x509_crt *const crt, const int depth, uint32_t *const flags);  /* esp_crt_bundle.c (not in its header) */
 static int rbmqtt_verify_cb(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags)
 {
     uint32_t in = *flags;
     int r = esp_crt_verify_callback(ctx, crt, depth, flags);
+    /* the bundle refuses an issuer it doesn't hold with an error but no flag: that is an unknown CA */
+    if (r != 0 && *flags == 0) s_vrfy_flags |= MBEDTLS_X509_BADCERT_NOT_TRUSTED;
+    s_vrfy_flags |= *flags;
     if (r != 0 || *flags != 0) {
         char iss[96] = {0};
         mbedtls_x509_dn_gets(iss, sizeof(iss), &crt->issuer);
@@ -73,6 +97,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
             s_connected = true;
+            if (strcmp(s_tls_state, "off")) s_tls_state = "ok";
             ESP_LOGI(TAG, "connected to broker");
             // Mark online (retained) so a late subscriber sees current liveness.
             if (s_lwt_topic[0] && s_client) {
@@ -129,11 +154,26 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             /* Release builds have no console: put the cause in the event log, at most once a minute
              * (esp-mqtt retries every few seconds). TLS failures carry the mbedTLS code + X.509 flags. */
             if (event && event->error_handle) {
+                const esp_mqtt_error_codes_t *e = event->error_handle;
+                /* TLS state for the app: on every failed attempt (the log below is rate-limited) */
+                if (strcmp(s_tls_state, "off")) {
+                    uint32_t vf = (uint32_t)e->esp_tls_cert_verify_flags;
+                    if (vf == 0 || vf == 0xFFFFFFFFu) vf = s_vrfy_flags;   /* 0 / -1 = not reported (bundle path): ours */
+                    s_vrfy_flags = 0;
+                    const char *st = tls_state_from_flags(vf);
+                    if (st) {
+                        if (strcmp(st, s_tls_state)) rbpower_diag_printf("FAIL mqtt: broker certificate refused: %s (CA: %s)", st,
+                                                                         s_tls_custom_ca ? "custom" : "public bundle");
+                        s_tls_state = st;
+                    } else if (e->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT && e->esp_tls_stack_err &&
+                               (!strcmp(s_tls_state, "connecting") || !strcmp(s_tls_state, "ok"))) {
+                        s_tls_state = "tls_error";   /* no certificate reason: keep a known one (expired …) */
+                    }
+                }
                 static int64_t s_last_err_us = 0;
                 int64_t now = esp_timer_get_time();
                 if (s_last_err_us == 0 || now - s_last_err_us > 60000000LL) {
                     s_last_err_us = now;
-                    const esp_mqtt_error_codes_t *e = event->error_handle;
                     rbpower_diag_printf("mqtt: connect failed: type=%d tls_err=0x%x tls_stack=-0x%x cert_flags=0x%x sock_errno=%d refused=%d",
                                         (int)e->error_type, (unsigned)e->esp_tls_last_esp_err,
                                         (unsigned)(-e->esp_tls_stack_err), (unsigned)e->esp_tls_cert_verify_flags,
@@ -153,6 +193,7 @@ static void rbmqtt_tls_wait_task(void *arg)
     (void)arg;
     while (s_client && !rbtime_is_time_valid()) vTaskDelay(pdMS_TO_TICKS(1000));
     if (s_client) {
+        s_tls_state = "connecting";
         esp_err_t e = esp_mqtt_client_start(s_client);
         rbpower_diag_printf("mqtt: clock set — TLS connection started: %s", esp_err_to_name(e));
     }
@@ -205,9 +246,27 @@ esp_err_t rbmqtt_init(const char *broker_uri, const char *client_id, const char 
      * had no CA at all and every TLS connect failed. A broker with a self-signed / private-CA certificate
      * still fails verification — that needs a user-supplied CA (not in this release). */
     const bool tls = strncmp(broker_uri, "mqtts://", 8) == 0 || strncmp(broker_uri, "wss://", 6) == 0;
+    s_tls_state = tls ? "connecting" : "off";
+    s_tls_custom_ca = false;
     if (tls) {
-        cfg.broker.verification.crt_bundle_attach = rbmqtt_crt_bundle_attach;
-        ESP_LOGI(TAG, "TLS broker: verifying against the CA bundle");
+        /* The user's own CA (a home broker with a private CA / self-signed certificate) replaces the public bundle:
+         * uploaded with POST /api/system/mqtt-ca, read at MQTT start. Dates and the host name are checked either way. */
+        size_t sz = 0;
+        if (littlefs_raw_size(RBMQTT_CA_FILE, &sz) == ESP_OK && sz > 0 && sz <= RBMQTT_CA_MAX) {
+            free(s_ca_pem);
+            s_ca_pem = heap_caps_malloc(sz + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!s_ca_pem) s_ca_pem = malloc(sz + 1);
+            size_t got = 0;
+            if (s_ca_pem && littlefs_raw_read(RBMQTT_CA_FILE, s_ca_pem, sz, &got) == ESP_OK && got == sz) {
+                s_ca_pem[sz] = 0;
+                cfg.broker.verification.certificate = s_ca_pem;
+                cfg.broker.verification.certificate_len = sz + 1;   /* PEM: length includes the NUL */
+                s_tls_custom_ca = true;
+            } else { free(s_ca_pem); s_ca_pem = NULL; }
+        }
+        if (!s_tls_custom_ca) cfg.broker.verification.crt_bundle_attach = rbmqtt_crt_bundle_attach;
+        ESP_LOGI(TAG, "TLS broker: verifying against %s", s_tls_custom_ca ? "the uploaded CA (/mqtt_ca.pem)" : "the CA bundle");
+        rbpower_diag_printf("mqtt: TLS broker, CA: %s", s_tls_custom_ca ? "custom (uploaded)" : "public bundle");
     }
     s_client = esp_mqtt_client_init(&cfg);
     if (!s_client) {
@@ -222,6 +281,7 @@ esp_err_t rbmqtt_init(const char *broker_uri, const char *client_id, const char 
             /* The broker certificate's dates are checked (CONFIG_MBEDTLS_HAVE_TIME_DATE): before the clock is real
              * every certificate reads "not yet valid". Start the TLS connection once the clock is set (NTP or by
              * hand); plain mqtt:// is not delayed. */
+            s_tls_state = "waiting_clock";
             if (xTaskCreate(rbmqtt_tls_wait_task, "mqtt_tls_wait", 3072, NULL, tskIDLE_PRIORITY + 1, NULL) == pdPASS) {
                 rbpower_diag_printf("mqtt: TLS broker — waiting for the clock before connecting (certificate dates)");
             } else {

@@ -1,22 +1,51 @@
 # Changelog
 
-## v1.1.8 — unreleased
+## v1.1.8 — 2026-11-10
 
 ### Security
 - **`mqtts://`: the broker certificate's dates are checked** (valid from / valid to). An expired certificate, or one
   not valid yet, is refused; v1.1.7 checked the authority and the host name only. Because a clock that isn't set
   makes every certificate look not valid yet, the hub opens a TLS broker connection only once its clock is set
   (NTP, or by hand); the event log says "mqtt: TLS broker — waiting for the clock". Plain `mqtt://` is not delayed.
+- **Your own broker CA for `mqtts://`** (a home broker with a private CA or a self-signed certificate, e.g. Mosquitto
+  in Home Assistant with its own certificate). `POST /api/system/mqtt-ca` with the PEM (one or more certificates, ≤
+  8 KB) stores it; it replaces the public CA bundle at the next restart. `GET` shows each certificate (subject, issuer,
+  valid from/to); `DELETE` goes back to the public bundle. A file with a private key is refused. Dates and the host
+  name are checked as with public CAs.
+- **Why the broker connection is refused:** `GET /api/system/mqtt-config` → `tls: {state, ca, ca_uploaded}`.
+  - `state`: `ok`, `expired`, `not_yet_valid`, `name_mismatch`, `unknown_ca`, `waiting_clock`, `connecting`,
+    `tls_error`, or `off` for plain MQTT;
+  - `ca`: `custom` or `bundle`.
+
+  Each certificate refusal also writes an event line.
 
 ### Remote nodes
-- **Energy records from a node with current-only modules.** A node period with no voltage (voltage 0, energy 0,
-  current > 0) is estimated from the hub's nominal voltage, like the live values; the hour is flagged `ESTIMATED`.
-  Needs node firmware 1.5 (older nodes send no records without a voltage module).
+- **A current-only node input books no energy.** Node 1.5 sends a record for an input without a voltage module
+  (voltage 0, current only). The hub does not turn it into energy from the nominal voltage: that would not be real
+  energy. The hour stays without data; live values still show the current. `get espnow` counts these records in
+  `periods_curonly_skipped`.
 - **A node period longer than 15 minutes** (energy the node counted before it had the hub's clock, e.g. it started
   while the hub was out of reach) is kept: it goes into that period's hour, flagged `OUTAGE`.
 - **Live values from all 4 inputs of a node** (was 3).
 - **Node point edits survive a restart.** Node points are rebuilt from the node list at boot; their name, role,
   ratings, clamp orientation and `inside` were reset to defaults. They are now re-applied from the saved settings.
+
+### Node firmware 1.5 (ships with this release)
+Hub 1.1.8 works with node 1.4 and 1.5; these need 1.5:
+- **A node follows only the hub it is paired to.** With two RBgrid hubs on one Wi-Fi channel, node 1.4 accepted
+  both hubs' time beacons. Its clock then never settled ("Clock sync" lost on the node card) while energy and periods
+  kept arriving. Update nodes to 1.5 if a second hub runs on the same router.
+- A voltage module with no mains on its voltage input (< 50 V) is handled as current-only (see above: no energy
+  is booked for it).
+- All three inputs of a module are reported (was two). Live values come from all 4 inputs of a node.
+- The first record covers boot → the first full 15-minute boundary.
+- Periods are kept in flash until the hub has them; a power cut while a period is being written no longer loses the
+  next one.
+- Re-pairing or moving a node needs no flash erase: the node asks to pair again after 150 s without a reply. This
+  also works when the old hub is gone (switched off or replaced): after 150 s without its beacons the node takes the
+  new hub's beacon and asks to pair.
+- Node updates are over USB with all three files (bootloader, partition table, app): 1.5 adds a flash partition
+  (`rbnhold`) for the kept periods.
 
 ### Points measured inside other points
 - A point can be marked as measured **inside** another one (a charger inside a metered sub-panel):
@@ -26,9 +55,16 @@
   a point makes the points inside it top-level. The hub's own totals don't change (they are taken at the input);
   the app uses it so the "unmetered" figure doesn't count a nested load twice. `capabilities.pointNesting: true`.
 
+### Platform
+- **ESP32-S3 (module N16R8: 16 MB flash, octal PSRAM)** is supported next to the ESP32-WROVER: rbAmp bus on SDA 8 /
+  SCL 9, the S3 pin profile. The ESP32 bench relay fail-safe is not built for the S3. Released as a separate image.
+
 ### API
 - `GET /api/v1/schema` → `quality_bits` now names every bit the hub sets: `SRC_RESTART` (9), `SRC_FW` (10),
   `REVERSE_LOST` (11), `OUTAGE` (12), as well as 0–8. Additive.
+- Telemetry: the input's `src` / `src_class` / `present` were taken from the old built-in input id (0006), so an
+  input on an rbAmp module read `src: "adc"`, `present: false` while it was measuring. They now come from the real
+  input point.
 
 ## v1.1.7 — 2026-11-08
 

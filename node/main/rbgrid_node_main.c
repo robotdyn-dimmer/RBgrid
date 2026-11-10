@@ -8,10 +8,11 @@
  * - Finds the hub by scanning Wi-Fi channels for its SYNC_BEACON and follows it if the router moves the hub
  *   to another channel. No Wi-Fi association and no channel setting are needed.
  * - Disciplines its clock to the hub (two-step beacon, least-squares servo) and keeps a wall clock from the
- *   hub's TIME_RESP, so 15-minute periods close on the hub's quarter boundaries.
- * - Reads rbAmp I2C metering modules at 0x50..0x52 and sends realtime frames and one PERIOD frame per
- *   quarter (energy from the modules' own counters). Quarters closed while the hub is out of reach are held
- *   (up to 8) and sent when the link is back; the hub acknowledges each one.
+ *   hub's TIME_RESP, so 15-minute periods close on the hub's 15-minute boundaries.
+ * - Reads rbAmp I2C metering modules at 0x50..0x52 (rbAmp library 1.7.2: BASIC and STD, STD-U3I3 phase by phase)
+ *   and sends realtime frames and one PERIOD frame per 15-minute period. Voltage modules: energy from the module;
+ *   current-only modules: the period's average current (the hub estimates the energy). Finished periods are kept
+ *   in the `rbnhold` flash partition until the hub acknowledges them (about 5 days), across a node power cut.
  * - Pairing: inside the hub's pairing window the node and the hub exchange keys (X25519); the hub's key comes
  *   back wrapped (AES-CCM) and is kept in NVS. Data frames are then encrypted (ESP-NOW CCMP).
  * - Settings from the hub (CONFIG): per-input on/off and the clamp model.
@@ -35,6 +36,8 @@
 #include "espnow_proto.h"
 #include "espnow_crypto.h"   /* B3: PMK + PAIR_REQ auth tag */
 #include "nvs.h"             /* configurable PMK (open-source: user key from NVS, not hardcoded) */
+#include "esp_partition.h"   /* rbnhold: finished periods kept in flash until the hub ACKs them */
+#include "esp_rom_crc.h"
 #if !RBN_ROLE_MASTER
 #include "driver/i2c_master.h"
 #include "rbamp.h"
@@ -133,6 +136,7 @@ static uint8_t  s_kx_priv[32];
 static volatile bool s_kx_ready = false;
 static rbn_pair_ack2_t s_ack2;
 static volatile bool s_ack2_pending = false;
+static uint8_t s_ack2_src[6];   /* sender of the pending PAIR_ACK2 */
 /* F5 — node settings from the hub (CONFIG): channel on/off mask (bit = flat channel id) + clamp models, kept in NVS. */
 static uint16_t s_ch_off_mask = 0;               /* bit set = channel switched off (not reported) */
 static uint8_t  s_cfg_buf[sizeof(rbn_config_t) + 16 * sizeof(rbn_cfg_chan_t)];
@@ -153,6 +157,14 @@ static volatile bool s_out_hub_valid = false;
 static void output_on_set(const uint8_t *data, int len, const uint8_t *src);  /* fwd: called from on_recv */
 #endif
 static uint8_t  s_hub_mac[6];
+/* The hub this node is paired to (NVS espnow/hubmac, set from the PAIR_ACK2 sender). With it set, beacons and
+ * sync frames from any other hub are ignored, so a second RBgrid hub on the same Wi-Fi channel doesn't take over the
+ * node's clock or its data path. While re-pairing and our hub has been silent for 8 s, another hub's beacon may lock
+ * the channel (moving the node to another hub). */
+static uint8_t  s_paired_hub[6];
+static bool     s_paired_hub_set = false;
+static volatile int64_t s_paired_hub_seen_us = 0;
+static volatile bool s_repairing = false;
 static volatile bool s_hub_mac_valid = false;
 static volatile bool s_hub_enc_peer  = false;
 static volatile int64_t s_last_enc_reply_us = 0;   /* last encrypted reply (TIME_RESP/PERIOD_ACK) — liveness */
@@ -237,6 +249,11 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
     const rbn_hdr_t *h = (const rbn_hdr_t *)data;
     if (!rbn_hdr_ok(h)) return;
 
+    /* hub filter: sync frames only from the hub we're paired to (see s_paired_hub) */
+    if ((h->msg_type == RBN_MSG_SYNC_BEACON || h->msg_type == RBN_MSG_SYNC_FOLLOWUP) && s_paired_hub_set && info) {
+        if (memcmp(info->src_addr, s_paired_hub, 6) == 0) s_paired_hub_seen_us = t_rx;
+        else if (!(s_repairing && t_rx - s_paired_hub_seen_us > 8000000LL)) return;
+    }
     if (h->msg_type == RBN_MSG_SYNC_BEACON && len >= (int)sizeof(rbn_sync_beacon_t)) {
         const rbn_sync_beacon_t *b = (const rbn_sync_beacon_t *)data;
         portENTER_CRITICAL(&s_mux);
@@ -264,9 +281,12 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         s_hub_channel = b->hub_channel;
         s_locked_ch = b->hub_channel;
         portEXIT_CRITICAL(&s_mux);
-        if (!s_hub_mac_valid && info && info->src_addr) {   /* B3b: learn the hub MAC for the encrypted peer */
+        if (info && info->src_addr && (!s_hub_mac_valid || memcmp(s_hub_mac, info->src_addr, 6) != 0)) {
+            /* B3b: the hub MAC for the encrypted peer = the hub whose beacons we follow (the filter above keeps that
+             * our paired hub); a change re-keys the peer */
             memcpy(s_hub_mac, info->src_addr, 6);
             s_hub_mac_valid = true;
+            s_hub_enc_peer = false;
         }
     } else if (h->msg_type == RBN_MSG_SYNC_FOLLOWUP && len >= (int)sizeof(rbn_sync_followup_t)) {
         const rbn_sync_followup_t *f = (const rbn_sync_followup_t *)data;
@@ -306,7 +326,10 @@ static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int le
         s_last_enc_reply_us = t_rx;
     } else if (h->msg_type == RBN_MSG_PAIR_ACK2 && len >= (int)sizeof(rbn_pair_ack2_t)) {
         const rbn_pair_ack2_t *a = (const rbn_pair_ack2_t *)data;     /* F1: our key, wrapped for us */
-        if (!s_ack2_pending && memcmp(a->node_mac, s_own_mac, 6) == 0) { s_ack2 = *a; s_ack2_pending = true; }
+        if (!s_ack2_pending && memcmp(a->node_mac, s_own_mac, 6) == 0) {
+            s_ack2 = *a; s_ack2_pending = true;
+            if (info) memcpy(s_ack2_src, info->src_addr, 6);   /* the hub that paired us */
+        }
     } else if (h->msg_type == RBN_MSG_PAIR_ACK && len >= (int)sizeof(rbn_pair_ack_t)) {
         const rbn_pair_ack_t *a = (const rbn_pair_ack_t *)data;       /* B2: hub registered us */
         if (a->accepted) s_paired = true;
@@ -397,7 +420,7 @@ static void master_report_task(void *arg)
 #if !RBN_ROLE_MASTER
 /* ---- rbAmp mini-fleet on the node (energy module(s) + current-only, mirrors the hub's fleet) ---- */
 #ifndef RBN_NODE_CHANS
-#define RBN_NODE_CHANS 2     /* report ch0..N-1 per module (excludes I3's no-sensor ch2) */
+#define RBN_NODE_CHANS 3     /* all three channels of a module (U3I3 / UI3); unused inputs are switched off in the node settings */
 #endif
 #ifndef RBN_PERIOD_S
 #define RBN_PERIOD_S   30    /* on-node period-latch cadence (test). >=30s per the rbAmp cadence rule */
@@ -420,9 +443,49 @@ static int     s_fleet_present = 0;
 static bool    s_fleet_has_v = false;
 static SemaphoreHandle_t s_rbamp_lock = NULL;
 
+/* Current-only modules (no voltage on the module): the node averages each channel's RMS current over the period
+ * from the 1-s live reads and sends it with voltage 0 / energy 0; the hub estimates the energy from its nominal
+ * voltage and flags the hour ESTIMATED. */
+typedef struct { double sum; uint32_t n; float min, max; } rbn_iacc_t;
+static rbn_iacc_t s_iacc[3][3];
+static int64_t    s_iacc_start_us = 0;      /* start of the window being averaged (node boot for the first one) */
+static portMUX_TYPE s_iacc_mux = portMUX_INITIALIZER_UNLOCKED;
+static void iacc_add(int mod, uint8_t ch, float i_a)
+{
+    if (mod < 0 || mod >= 3 || ch >= 3 || !isfinite(i_a)) return;
+    portENTER_CRITICAL(&s_iacc_mux);
+    rbn_iacc_t *a = &s_iacc[mod][ch];
+    if (a->n == 0) { a->min = a->max = i_a; } else { if (i_a < a->min) a->min = i_a; if (i_a > a->max) a->max = i_a; }
+    a->sum += i_a; a->n++;
+    portEXIT_CRITICAL(&s_iacc_mux);
+}
+
 static inline uint8_t node_chan_id(int mod, uint8_t ch) { return (uint8_t)(mod * 4 + ch); }
 static inline bool node_chan_on(int mod, uint8_t ch) { return !(s_ch_off_mask & (1u << (mod * 4 + ch))); }
+/** @brief Lowest voltage taken as mains on a voltage input; below it the channel is handled as current-only. */
+#define RBN_V_MIN 50.0f
+
+/* Voltage seen by channel @p ch: the matching phase on a three-phase module (STD-U3I3: phase = channel; a dead
+ * phase reads low and that channel goes current-only), else the module's single voltage. Call with s_rbamp_lock held. */
+static float mod_voltage(int i, uint8_t ch)
+{
+    float v = 0.0f;
+    if (ch > 0 && rbamp_read_voltage(s_dev[i], ch, &v) == ESP_OK) return v;   /* this phase, even if dead (low) */
+    v = 0.0f;
+    rbamp_read_voltage(s_dev[i], 0, &v);
+    return v;
+}
 static inline uint8_t mod_chans(int i) { uint8_t n = s_dev_chans[i]; if (n > RBN_NODE_CHANS) n = RBN_NODE_CHANS; if (n > 3) n = 3; return n; }
+/** @brief Inputs a hub takes per node (its registry holds 4 channels per node; a longer pairing list is rejected). */
+#define RBN_HUB_MAX_CH 4
+/** @brief Whether input @p ch of module @p i is one of the node's first RBN_HUB_MAX_CH inputs (modules in address
+ *  order, channels in order). The rest are never paired, sent or configured, the same in every frame. */
+static bool chan_reported(int i, uint8_t ch)
+{
+    unsigned before = 0;
+    for (int k = 0; k < i; k++) if (s_dev[k]) before += mod_chans(k);
+    return ch < mod_chans(i) && before + ch < RBN_HUB_MAX_CH;
+}
 
 static void rbamp_init(void)
 {
@@ -433,7 +496,9 @@ static void rbamp_init(void)
     s_rbamp_lock = xSemaphoreCreateMutex();
     for (int i = 0; i < RBN_FLEET_N; i++) {
         rbamp_handle_t d = NULL;
-        if (rbamp_new(bus, RBN_FLEET_ADDR[i], &d) == ESP_OK && rbamp_begin(d) == ESP_OK) {
+        /* begin_resume: keep the window the module accumulated while the node was off (node reboot with the module
+         * still powered): that energy goes into the first period instead of being discarded. */
+        if (rbamp_new(bus, RBN_FLEET_ADDR[i], &d) == ESP_OK && rbamp_begin_resume(d) == ESP_OK) {
             s_dev[i] = d; s_dev_chans[i] = rbamp_channels(d); s_dev_vhw[i] = rbamp_has_voltage_hw(d);
             if (s_dev_vhw[i]) s_fleet_has_v = true;
             s_fleet_present++;
@@ -485,16 +550,20 @@ static void realtime_task(void *arg)
             if (!s_dev[i]) continue;
             uint8_t n = mod_chans(i);
             for (uint8_t ch = 0; ch < n && rc < 8; ch++) {
-                if (!node_chan_on(i, ch)) continue;   /* F5: switched off by the hub */
+                if (!node_chan_on(i, ch) || !chan_reported(i, ch)) continue;   /* F5: switched off by the hub */
                 float ii = 0, v = 0, p = 0, pf = 0, f = 0;
                 /* timeout (not portMAX_DELAY): never block forever on the rbAmp lock — if period_task
                  * holds it (e.g. during a slow snapshot after a hub reboot), skip this cycle and keep
                  * realtime flowing. This is the realtime-resume guarantee standfw flagged. */
                 if (xSemaphoreTake(s_rbamp_lock, pdMS_TO_TICKS(200)) != pdTRUE) continue;
                 rbamp_read_current(s_dev[i], ch, &ii);
-                if (s_dev_vhw[i]) { rbamp_read_voltage(s_dev[i], 0, &v); rbamp_read_power(s_dev[i], ch, &p);
+                if (s_dev_vhw[i]) { v = mod_voltage(i, ch); rbamp_read_power(s_dev[i], ch, &p);
                                     rbamp_read_power_factor(s_dev[i], ch, &pf); rbamp_read_frequency(s_dev[i], &f); }
                 xSemaphoreGive(s_rbamp_lock);
+                /* A voltage module with no mains on its voltage input (V below RBN_V_MIN) is handled as current-only:
+                 * live V/P sent as 0 (the hub estimates from its nominal voltage), the period from the averaged current. */
+                if (v < RBN_V_MIN) { v = 0; p = 0; pf = 0; }
+                iacc_add(i, ch, ii);   /* period average current (used when the module has no live voltage) */
                 m->recs[rc++] = (rbn_rt_rec_t){ .channel_id = node_chan_id(i, ch), .v_rms = v, .i_rms = ii,
                     .p_active = p, .pf_x1000 = (int16_t)(pf * 1000.0f), .freq_x100 = (uint16_t)(f * 100.0f), .flags = 0x01 };
             }
@@ -549,10 +618,106 @@ static uint8_t  s_held_head = 0, s_held_n = 0;
 static uint32_t s_held_dropped = 0;
 static SemaphoreHandle_t s_held_lock;
 
+/* ---- rbnhold: the held queue in flash ----------------------------------------------------------------------
+ * Each finished PERIOD frame is written to a 512-byte slot of the `rbnhold` partition (256 KB = 512 slots, about
+ * 5 days at one period per 15 min) before it is sent, and marked ACKed in place when the hub acknowledges it, so
+ * frames survive a node power cut and a hub outage of days. Slot: state word (FFFFFFFF empty, FFFFFF00 pending,
+ * 00000000 ACKed: bits only cleared, no erase) + magic + seq + len + CRC32 + frame. Writing into a new 4 KB sector
+ * erases it first; pending frames still in it (the ring is full) are the oldest and are dropped, loudly.
+ * Without the partition (an old partition table) the RAM queue of 8 frames above is used. */
+#define RBNH_SLOT        512u
+#define RBNH_SECTOR      4096u
+#define RBNH_PER_SECTOR  (RBNH_SECTOR / RBNH_SLOT)
+#define RBNH_MAGIC       0x484E4252u   /* 'RBNH' */
+#define RBNH_EMPTY       0xFFFFFFFFu
+#define RBNH_PENDING     0xFFFFFF00u
+#define RBNH_ACKED       0x00000000u
+typedef struct __attribute__((packed)) { uint32_t state, magic, seq; uint16_t len, rsv; uint32_t crc; } rbnh_hdr_t;
+static const esp_partition_t *s_hold_part = NULL;
+static uint16_t  s_hold_slots = 0;
+static uint16_t *s_hold_q = NULL;          /* pending slot indices, oldest first (ring) */
+static uint16_t  s_hold_q_head = 0, s_hold_q_n = 0;
+static uint16_t  s_hold_next = 0;          /* next slot to write */
+
+static void hold_q_push(uint16_t slot) { s_hold_q[(s_hold_q_head + s_hold_q_n) % s_hold_slots] = slot; s_hold_q_n++; }
+
+/* Boot: scan the partition, queue the pending frames in seq order, continue the period seq after the highest. */
+static void hold_init(void)
+{
+    if (!s_held_lock) s_held_lock = xSemaphoreCreateMutex();   /* held_flush needs it for frames left from before boot */
+    s_hold_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, 0x40, "rbnhold");
+    if (!s_hold_part) { ESP_LOGW(TAG, "no rbnhold partition — held periods in RAM only (8)"); return; }
+    s_hold_slots = (uint16_t)(s_hold_part->size / RBNH_SLOT);
+    s_hold_q = calloc(s_hold_slots, sizeof(uint16_t));
+    uint32_t *seqs = calloc(s_hold_slots, sizeof(uint32_t));
+    if (!s_hold_q || !seqs) { free(seqs); free(s_hold_q); s_hold_q = NULL; s_hold_part = NULL; return; }
+    uint32_t max_seq = 0; uint16_t max_slot = 0, pend = 0; bool any = false;
+    for (uint16_t k = 0; k < s_hold_slots; k++) {
+        rbnh_hdr_t h;
+        if (esp_partition_read(s_hold_part, (size_t)k * RBNH_SLOT, &h, sizeof(h)) != ESP_OK) continue;
+        if (h.magic != RBNH_MAGIC || h.len == 0 || h.len > RBNH_SLOT - sizeof(h)) continue;
+        if (!any || h.seq > max_seq) { max_seq = h.seq; max_slot = k; any = true; }
+        if (h.state == RBNH_PENDING) {
+            uint8_t fb[RBNH_SLOT];
+            if (esp_partition_read(s_hold_part, (size_t)k * RBNH_SLOT + sizeof(h), fb, h.len) != ESP_OK) continue;
+            if (esp_rom_crc32_le(0, fb, h.len) != h.crc) continue;
+            seqs[pend] = h.seq; s_hold_q[pend] = k; pend++;
+        }
+    }
+    /* order the pending ones by seq (insertion sort: a few hundred at most) */
+    for (uint16_t a = 1; a < pend; a++) {
+        uint32_t sv = seqs[a]; uint16_t kv = s_hold_q[a]; int b = a - 1;
+        while (b >= 0 && seqs[b] > sv) { seqs[b + 1] = seqs[b]; s_hold_q[b + 1] = s_hold_q[b]; b--; }
+        seqs[b + 1] = sv; s_hold_q[b + 1] = kv;
+    }
+    free(seqs);
+    s_hold_q_head = 0; s_hold_q_n = pend;
+    s_hold_next = any ? (uint16_t)((max_slot + 1) % s_hold_slots) : 0;
+    if (any && max_seq > s_period_seq) s_period_seq = max_seq;
+    ESP_LOGI(TAG, "rbnhold: %u slots, %u pending period frame(s), next seq %u", (unsigned)s_hold_slots, (unsigned)pend,
+             (unsigned)(s_period_seq + 1));
+}
+
+static bool hold_write(const uint8_t *frame, size_t len, uint32_t seq)
+{
+    if (len > RBNH_SLOT - sizeof(rbnh_hdr_t)) return false;
+    uint16_t slot = s_hold_next;
+    for (uint16_t tries = 0; ; tries++) {
+        if (tries >= s_hold_slots) return false;
+        if (slot % RBNH_PER_SECTOR == 0) break;            /* sector start: erased below */
+        /* Mid-sector: write only into a fully erased slot. A power cut during a write leaves a slot partly
+         * written with no valid header; writing over it (NOR only clears bits) would corrupt the new frame. */
+        uint8_t chk[RBNH_SLOT]; bool clean = esp_partition_read(s_hold_part, (size_t)slot * RBNH_SLOT, chk, sizeof(chk)) == ESP_OK;
+        for (size_t k = 0; clean && k < sizeof(chk); k++) clean = (chk[k] == 0xFF);
+        if (clean) break;
+        slot = (uint16_t)((slot + 1) % s_hold_slots);
+    }
+    if (slot % RBNH_PER_SECTOR == 0) {   /* entering a sector: drop its pending frames (the oldest), then erase */
+        uint16_t dropped = 0;
+        while (s_hold_q_n && s_hold_q[s_hold_q_head] / RBNH_PER_SECTOR == slot / RBNH_PER_SECTOR) {
+            s_hold_q_head = (uint16_t)((s_hold_q_head + 1) % s_hold_slots); s_hold_q_n--; dropped++;
+        }
+        if (dropped) { s_held_dropped += dropped; ESP_LOGE(TAG, "rbnhold full — %u oldest unACKed period frame(s) DROPPED", dropped); }
+        if (esp_partition_erase_range(s_hold_part, (size_t)slot * RBNH_SLOT, RBNH_SECTOR) != ESP_OK) return false;
+    }
+    /* frame first, then the header (already PENDING) in one write: a cut before or during the header leaves a slot
+     * whose magic/CRC don't check, which the boot scan skips */
+    rbnh_hdr_t h = { .state = RBNH_PENDING, .magic = RBNH_MAGIC, .seq = seq, .len = (uint16_t)len, .rsv = 0xFFFF,
+                     .crc = esp_rom_crc32_le(0, frame, len) };
+    size_t off = (size_t)slot * RBNH_SLOT;
+    if (esp_partition_write(s_hold_part, off + sizeof(h), frame, len) != ESP_OK) return false;
+    if (esp_partition_write(s_hold_part, off, &h, sizeof(h)) != ESP_OK) return false;
+    hold_q_push(slot);
+    s_hold_next = (uint16_t)((slot + 1) % s_hold_slots);
+    return true;
+}
+
 static void held_push(const uint8_t *frame, size_t len, uint32_t seq)
 {
     if (!s_held_lock) s_held_lock = xSemaphoreCreateMutex();
     xSemaphoreTake(s_held_lock, portMAX_DELAY);
+    if (s_hold_part && hold_write(frame, len, seq)) { xSemaphoreGive(s_held_lock); return; }
+    if (s_hold_part) ESP_LOGE(TAG, "rbnhold write failed — PERIOD seq=%u kept in RAM", (unsigned)seq);
     if (s_held_n == RBN_HELD_MAX) {   /* drop the oldest */
         ESP_LOGE(TAG, "held queue full — PERIOD seq=%u DROPPED (never ACKed)", (unsigned)s_held_seq[s_held_head]);
         s_held_head = (uint8_t)((s_held_head + 1) % RBN_HELD_MAX); s_held_n--; s_held_dropped++;
@@ -563,25 +728,55 @@ static void held_push(const uint8_t *frame, size_t len, uint32_t seq)
     xSemaphoreGive(s_held_lock);
 }
 
-/* Send held frames in order; each gets up to 3 tries × 2 s. Stops at the first one the hub doesn't ACK (it is
+/* Send one frame and wait for its ACK: up to 3 tries × 2 s. */
+static bool held_send_wait(const uint8_t *frame, size_t len, uint32_t seq)
+{
+    for (int t = 0; t < 3; t++) {
+        node_send_hub(frame, len);   /* B3b: unicast-encrypted */
+        for (int w = 0; w < 20; w++) { if (s_period_last_ack == seq) return true; vTaskDelay(pdMS_TO_TICKS(100)); }
+    }
+    return false;
+}
+
+/* Send held frames in order (flash first, then the RAM fallback). Stops at the first one the hub doesn't ACK (it is
  * retried on the next call). Called after a latch and every few seconds from period_task. */
+#define RBN_FLUSH_MAX 4   /* frames per call: a backlog of days drains over successive calls, boundaries stay on time */
 static void held_flush(void)
 {
     if (!s_held_lock || !s_hub_enc_peer) return;
     xSemaphoreTake(s_held_lock, portMAX_DELAY);
-    while (s_held_n) {
-        uint8_t slot = s_held_head; uint32_t seq = s_held_seq[slot];
-        bool acked = false;
-        for (int t = 0; t < 3 && !acked; t++) {
-            node_send_hub(s_held_buf[slot], s_held_len[slot]);   /* B3b: unicast-encrypted */
-            for (int w = 0; w < 20; w++) { if (s_period_last_ack == seq) { acked = true; break; } vTaskDelay(pdMS_TO_TICKS(100)); }
+    unsigned sent = 0;
+    while (s_hold_part && s_hold_q_n && sent < RBN_FLUSH_MAX) {
+        uint16_t slot = s_hold_q[s_hold_q_head];
+        size_t off = (size_t)slot * RBNH_SLOT;
+        rbnh_hdr_t h; uint8_t fb[RBNH_SLOT];
+        bool ok = esp_partition_read(s_hold_part, off, &h, sizeof(h)) == ESP_OK && h.magic == RBNH_MAGIC &&
+                  h.state == RBNH_PENDING && h.len <= RBNH_SLOT - sizeof(h) &&
+                  esp_partition_read(s_hold_part, off + sizeof(h), fb, h.len) == ESP_OK &&
+                  esp_rom_crc32_le(0, fb, h.len) == h.crc;
+        if (!ok) { s_hold_q_head = (uint16_t)((s_hold_q_head + 1) % s_hold_slots); s_hold_q_n--; continue; }   /* unreadable: skip */
+        if (!held_send_wait(fb, h.len, h.seq)) {
+            ESP_LOGW(TAG, "PERIOD seq=%u not ACKed yet — held (%u in flash)", (unsigned)h.seq, (unsigned)s_hold_q_n);
+            xSemaphoreGive(s_held_lock);
+            return;
         }
-        if (!acked) { ESP_LOGW(TAG, "PERIOD seq=%u not ACKed yet — held (%u in queue)", (unsigned)seq, (unsigned)s_held_n); break; }
+        uint32_t st = RBNH_ACKED;
+        esp_partition_write(s_hold_part, off, &st, sizeof(st));
+        ESP_LOGW(TAG, "PERIOD seq=%u ACKed", (unsigned)h.seq);
+        s_hold_q_head = (uint16_t)((s_hold_q_head + 1) % s_hold_slots); s_hold_q_n--; sent++;
+    }
+    while (s_held_n && sent < RBN_FLUSH_MAX) {
+        uint8_t slot = s_held_head; uint32_t seq = s_held_seq[slot];
+        if (!held_send_wait(s_held_buf[slot], s_held_len[slot], seq)) {
+            ESP_LOGW(TAG, "PERIOD seq=%u not ACKed yet — held (%u in queue)", (unsigned)seq, (unsigned)s_held_n); break;
+        }
         ESP_LOGW(TAG, "PERIOD seq=%u ACKed", (unsigned)seq);
-        s_held_head = (uint8_t)((s_held_head + 1) % RBN_HELD_MAX); s_held_n--;
+        s_held_head = (uint8_t)((s_held_head + 1) % RBN_HELD_MAX); s_held_n--; sent++;
     }
     xSemaphoreGive(s_held_lock);
 }
+
+static inline unsigned held_pending(void) { return (unsigned)s_held_n + (unsigned)s_hold_q_n; }
 
 /* Latch every energy module's finished period NOW, build a PERIOD frame, send it held-until-ACK. Shared by
  * the calendar-boundary tick (period_task) and the hub's LATCH_NOW command (C). wsec = wall-clock to stamp. */
@@ -590,8 +785,9 @@ static void node_latch_and_send(uint32_t wsec, uint8_t reason)
     uint8_t buf[sizeof(rbn_period_t) + 8 * sizeof(rbn_period_rec_t)];
     rbn_period_t *m = (rbn_period_t *)buf;
     uint8_t rc = 0;
+    bool no_v[RBN_FLEET_N][3] = { { false } };   /* input of a voltage module with no mains on its phase this period */
     for (int i = 0; i < RBN_FLEET_N && rc < 8; i++) {
-        if (!s_dev[i] || !s_dev_vhw[i]) continue;          /* energy modules only (on-device period) */
+        if (!s_dev[i] || !s_dev_vhw[i]) continue;          /* voltage modules here; current-only below */
         rbamp_period_snapshot_t snap = {0};
         esp_err_t err = ESP_FAIL; bool skip = false; float v = 0;
         for (int a = 0; a < 4; a++) {
@@ -599,7 +795,7 @@ static void node_latch_and_send(uint32_t wsec, uint8_t reason)
              * reading between attempts; never starve realtime_task). */
             if (xSemaphoreTake(s_rbamp_lock, pdMS_TO_TICKS(500)) != pdTRUE) break;
             err = rbamp_read_period_snapshot(s_dev[i], &snap, skip ? 0 : 50, skip);
-            if (err == ESP_OK && snap.valid) { rbamp_read_voltage(s_dev[i], 0, &v); xSemaphoreGive(s_rbamp_lock); break; }
+            if (err == ESP_OK && snap.valid) { v = mod_voltage(i, 0); xSemaphoreGive(s_rbamp_lock); break; }
             xSemaphoreGive(s_rbamp_lock);
             skip = true; vTaskDelay(pdMS_TO_TICKS(60 + 60 * a));
         }
@@ -607,13 +803,39 @@ static void node_latch_and_send(uint32_t wsec, uint8_t reason)
         float dt_h = (float)snap.master_dt_ms / 3600000.0f;
         uint8_t n = mod_chans(i);
         for (uint8_t ch = 0; ch < n && rc < 8; ch++) {
-            if (ch >= 3 || isnan(snap.avg_p[ch]) || !node_chan_on(i, ch)) continue;
+            if (ch >= 3 || !node_chan_on(i, ch) || !chan_reported(i, ch)) continue;
+            float vch = v;   /* three-phase module: each channel's own phase voltage */
+            if (ch > 0 && xSemaphoreTake(s_rbamp_lock, pdMS_TO_TICKS(200)) == pdTRUE) { vch = mod_voltage(i, ch); xSemaphoreGive(s_rbamp_lock); }
+            if (vch < RBN_V_MIN) { no_v[i][ch] = true; continue; }   /* no mains on this input's voltage: averaged current below */
+            if (isnan(snap.avg_p[ch])) continue;
             float avg_p = snap.avg_p[ch];
             float max_p = (ch == 0 && !isnan(snap.max_p)) ? snap.max_p : avg_p;
-            float i_a = (v > 0.0f) ? avg_p / v : 0.0f;
+            float i_a = (vch > 0.0f) ? avg_p / vch : 0.0f;
             m->recs[rc++] = (rbn_period_rec_t){ .channel_id = node_chan_id(i, ch), .period_type = RBN_PERIOD_TYPE,
                 .period_ms = snap.master_dt_ms, .avg_power_w = avg_p, .max_power_w = max_p,
-                .energy_wh = avg_p * dt_h, .voltage_v = v, .current_avg_a = i_a, .current_min_a = i_a, .current_max_a = i_a };
+                .energy_wh = avg_p * dt_h, .voltage_v = vch, .current_avg_a = i_a, .current_min_a = i_a, .current_max_a = i_a };
+        }
+    }
+    /* current-only modules: the period's average current; the hub estimates the energy (voltage 0, energy 0) */
+    {
+        int64_t now_us = esp_timer_get_time();
+        uint32_t win_ms = (uint32_t)((now_us - s_iacc_start_us) / 1000);
+        rbn_iacc_t take[3][3];
+        portENTER_CRITICAL(&s_iacc_mux);
+        memcpy(take, s_iacc, sizeof(take)); memset(s_iacc, 0, sizeof(s_iacc)); s_iacc_start_us = now_us;
+        portEXIT_CRITICAL(&s_iacc_mux);
+        for (int i = 0; i < RBN_FLEET_N && rc < 8; i++) {
+            if (!s_dev[i]) continue;
+            uint8_t n = mod_chans(i);
+            for (uint8_t ch = 0; ch < n && rc < 8; ch++) {
+                const rbn_iacc_t *a = &take[i][ch];
+                if (s_dev_vhw[i] && !no_v[i][ch]) continue;   /* recorded from the module's energy above */
+                if (!node_chan_on(i, ch) || !chan_reported(i, ch) || a->n == 0) continue;
+                float ia = (float)(a->sum / a->n);
+                m->recs[rc++] = (rbn_period_rec_t){ .channel_id = node_chan_id(i, ch), .period_type = RBN_PERIOD_TYPE,
+                    .period_ms = win_ms, .avg_power_w = 0, .max_power_w = 0, .energy_wh = 0, .voltage_v = 0,
+                    .current_avg_a = ia, .current_min_a = a->min, .current_max_a = a->max };
+            }
         }
     }
     if (rc == 0) return;
@@ -624,7 +846,7 @@ static void node_latch_and_send(uint32_t wsec, uint8_t reason)
     held_push(buf, len, pseq);
     const char *why = (reason == RBN_LATCH_REASON_ZONE) ? " [LATCH/zone]"
                     : (reason == RBN_LATCH_REASON_MANUAL) ? " [LATCH/manual]" : "";
-    ESP_LOGW(TAG, "PERIOD seq=%u recs=%u latched%s — %u frame(s) held", (unsigned)pseq, rc, why, (unsigned)s_held_n);
+    ESP_LOGW(TAG, "PERIOD seq=%u recs=%u latched%s — %u frame(s) held", (unsigned)pseq, rc, why, held_pending());
     held_flush();
 }
 
@@ -635,7 +857,7 @@ static void period_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(1000));   /* poll; latch only when a calendar boundary is crossed */
         /* C: hub-commanded LATCH_NOW — close the period immediately so it aligns with a tariff-zone boundary,
          * then rebase the calendar schedule to now (avoid a double-latch at the imminent grid boundary). */
-        if (s_latch_now_req && s_ch_locked && s_fleet_present && s_fleet_has_v && s_wall_valid) {
+        if (s_latch_now_req && s_ch_locked && s_fleet_present && s_wall_valid) {
             s_latch_now_req = false;
             uint32_t wsec = node_wall_sec();
             node_latch_and_send(wsec, s_latch_reason);
@@ -644,16 +866,22 @@ static void period_task(void *arg)
         }
         {   /* retry frames the hub hasn't ACKed yet (hub restart / radio gap), every ~5 s */
             static uint32_t div = 0;
-            if (s_held_n && s_ch_locked && ++div >= 5) { div = 0; held_flush(); }
+            if (held_pending() && s_ch_locked && ++div >= 5) { div = 0; held_flush(); }
         }
         /* No s_ch_locked here: a boundary passed while the hub is out of reach (radio off, out of range) is
-         * latched on time and held until the hub ACKs it, so each quarter keeps its own record. */
-        if (s_fleet_present == 0 || !s_fleet_has_v || !s_wall_valid) continue;
+         * latched on time and held until the hub ACKs it, so each 15-min period keeps its own record. */
+        if (s_fleet_present == 0 || !s_wall_valid) continue;
         /* A: latch on the wall-clock calendar boundary (aligned across nodes + the hub), not a free interval. */
         uint32_t wsec = node_wall_sec();
         uint32_t boundary = wsec / RBN_BOUNDARY_S;
         if (boundary <= last_boundary) continue;          /* same window — wait */
-        if (last_boundary == 0) { last_boundary = boundary; continue; }  /* first: partial window, set baseline */
+        if (last_boundary == 0) {
+            /* Clock just known, somewhere inside a 15-min window: nothing is latched now. The first record is latched at
+             * the next boundary and covers everything since the node's start (or since the module's last latch when the
+             * node restarted with the module powered), so no energy is lost and the record is stamped at a real boundary. */
+            last_boundary = boundary;
+            continue;
+        }
         last_boundary = boundary;
         node_latch_and_send(boundary * RBN_BOUNDARY_S, 0xFF /* calendar: node_ts = the boundary itself */);
     }
@@ -757,7 +985,7 @@ static void node_config_apply(void)
     for (uint8_t i = 0; i < c->chan_count; i++) {
         const rbn_cfg_chan_t *k = &c->chans[i];
         int mod = k->channel_id / 4; uint8_t ch = k->channel_id % 4;
-        if (mod >= RBN_FLEET_N || !s_dev[mod] || ch >= mod_chans(mod)) { result = 3; continue; }
+        if (mod >= RBN_FLEET_N || !s_dev[mod] || !chan_reported(mod, ch)) { result = 3; continue; }
         if (k->enabled) mask &= (uint16_t)~(1u << k->channel_id); else mask |= (uint16_t)(1u << k->channel_id);
         if (k->ct_code) {
             uint8_t cur = 0;
@@ -774,7 +1002,7 @@ static void node_config_apply(void)
     if (nvs_open("espnow", NVS_READWRITE, &nh) == ESP_OK) { nvs_set_u16(nh, "choff", mask); nvs_commit(nh); nvs_close(nh); }
     rbn_config_ack_t a; memset(&a, 0, sizeof(a));
     rbn_hdr_init(&a.h, RBN_MSG_CONFIG_ACK, s_pair_seq++, node_wall_sec());
-    a.cfg_seq = c->cfg_seq; a.result = result; a.period_s = RBN_BOUNDARY_S; a.fw_ver = 0x0104;
+    a.cfg_seq = c->cfg_seq; a.result = result; a.period_s = RBN_BOUNDARY_S; a.fw_ver = 0x0105;
     node_send_hub(&a, sizeof(a));
     s_cfg_pending = false;
     ESP_LOGW(TAG, "CONFIG %u applied: result=%u off-mask=0x%04X", (unsigned)c->cfg_seq, result, mask);
@@ -782,6 +1010,7 @@ static void node_config_apply(void)
 
 static void pair_ack2_apply(void)
 {
+    uint8_t src[6]; memcpy(src, s_ack2_src, 6);
     rbn_pair_ack2_t a = s_ack2;
     s_ack2_pending = false;
     if (!a.accepted || !s_kx_ready) { ESP_LOGW(TAG, "PAIR_ACK2: rejected by the hub (registry full?)"); return; }
@@ -795,7 +1024,13 @@ static void pair_ack2_apply(void)
     nvs_handle_t nh;
     /* a new pairing starts from all channels on; a hub that holds settings for us sends them again (CONFIG) */
     s_ch_off_mask = 0;
-    if (nvs_open("espnow", NVS_READWRITE, &nh) == ESP_OK) { nvs_set_blob(nh, "pmk", s_pmk, 16); nvs_set_u16(nh, "choff", 0); nvs_commit(nh); nvs_close(nh); }
+    if (nvs_open("espnow", NVS_READWRITE, &nh) == ESP_OK) {
+        nvs_set_blob(nh, "pmk", s_pmk, 16); nvs_set_u16(nh, "choff", 0); nvs_set_blob(nh, "hubmac", src, 6);
+        nvs_commit(nh); nvs_close(nh);
+    }
+    memcpy(s_paired_hub, src, 6); s_paired_hub_set = true; s_paired_hub_seen_us = esp_timer_get_time();
+    s_repairing = false;
+    memcpy(s_hub_mac, src, 6); s_hub_mac_valid = true;   /* data path to the hub that paired us, not the first beacon heard */
     esp_now_set_pmk(s_pmk);
     rbn_derive_lmk_from(s_pmk, s_own_mac, s_my_lmk);
     s_hub_enc_peer = false;              /* node_ensure_hub_peer re-keys the hub peer with the new LMK */
@@ -803,7 +1038,8 @@ static void pair_ack2_apply(void)
     memset(s_kx_priv, 0, sizeof(s_kx_priv));
     s_paired = true;
     s_last_enc_reply_us = esp_timer_get_time();
-    ESP_LOGW(TAG, "PAIRED (installation key received and stored)");
+    ESP_LOGW(TAG, "PAIRED with hub %02X:%02X:%02X:%02X:%02X:%02X (installation key received and stored)",
+             src[0], src[1], src[2], src[3], src[4], src[5]);
 }
 
 /* Pairing: while unpaired and locked to a hub, broadcast PAIR_REQ2 every 5 s with a fresh X25519 public key. The
@@ -822,7 +1058,18 @@ static void pair_task(void *arg)
             (esp_timer_get_time() - s_last_enc_reply_us) > 150LL * 1000000LL) {
             s_paired = false;
             s_hub_enc_peer = false;
+            s_repairing = true;   /* another hub's beacon may now lock the channel if ours stays silent (moving the node) */
             ESP_LOGW(TAG, "no encrypted hub reply >150s → pairing again");
+        }
+        /* Our paired hub gone while we scan (it was switched off or replaced, and the node restarted): with no beacon
+         * from it for >150 s, let another hub's beacon lock the channel and pair again. Without this, a node whose
+         * hub disappeared ignored every other hub and scanned forever (re-pairing started only when locked). */
+        if (!s_ch_locked && s_paired_hub_set && !s_repairing &&
+            (esp_timer_get_time() - s_paired_hub_seen_us) > 150LL * 1000000LL) {
+            s_paired = false;
+            s_hub_enc_peer = false;
+            s_repairing = true;
+            ESP_LOGW(TAG, "paired hub silent >150s while scanning → another hub may take the node (pairing again)");
         }
         if (s_paired || !s_ch_locked) continue;
         uint8_t buf[sizeof(rbn_pair_req2_t) + RBN_FLEET_N * 4 * sizeof(rbn_pair_chan_t)];
@@ -832,6 +1079,7 @@ static void pair_task(void *arg)
             if (!s_dev[i]) continue;
             uint8_t nc = mod_chans(i);
             for (uint8_t ch = 0; ch < nc; ch++) {
+                if (!chan_reported(i, ch)) continue;
                 uint8_t code = 0;
                 rbamp_read_ct_model_ch(s_dev[i], ch, &code);   /* 0 if module has none set → hub defaults */
                 p->chans[n].channel_id = node_chan_id(i, ch);
@@ -843,7 +1091,7 @@ static void pair_task(void *arg)
         if (rbn_x25519_keypair(s_kx_priv, p->node_pub) != 0) { ESP_LOGE(TAG, "X25519 keypair failed"); continue; }
         s_kx_ready = true;
         rbn_hdr_init(&p->h, RBN_MSG_PAIR_REQ2, s_pair_seq++, node_wall_sec());
-        p->fw_ver = 0x0104;
+        p->fw_ver = 0x0105;
         p->chan_count = n;
         esp_now_send(BCAST, buf, sizeof(rbn_pair_req2_t) + (size_t)n * sizeof(rbn_pair_chan_t));
         ESP_LOGI(TAG, "PAIR_REQ2 sent (%u ch) — waiting for the hub's pairing window", n);
@@ -941,7 +1189,7 @@ static void output_hello_task(void *arg)
     while (1) {
         rbn_hello_t *m = (rbn_hello_t *)buf;
         rbn_hdr_init(&m->h, RBN_MSG_HELLO, 0, 0);
-        m->fw_ver = 0x0104; m->hw_model = 0x0001;
+        m->fw_ver = 0x0105; m->hw_model = 0x0001;
         m->family = RBN_OUT_FAMILY;
         m->flags = RBN_HELLO_F_MAINS_POWERED | RBN_HELLO_F_HAS_OUTPUTS;
         m->channel_count = 0; m->out_count = 1;
@@ -1011,6 +1259,13 @@ static void load_pmk(void)
     if (nvs_open("espnow", NVS_READONLY, &nh) == ESP_OK) {
         size_t sz = 16;
         esp_err_t r = nvs_get_blob(nh, "pmk", s_pmk, &sz);
+        size_t hz = 6;
+        if (nvs_get_blob(nh, "hubmac", s_paired_hub, &hz) == ESP_OK && hz == 6) {
+            s_paired_hub_set = true;
+            memcpy(s_hub_mac, s_paired_hub, 6); s_hub_mac_valid = true;
+            ESP_LOGI(TAG, "paired hub %02X:%02X:%02X:%02X:%02X:%02X (other hubs' beacons ignored)", s_paired_hub[0],
+                     s_paired_hub[1], s_paired_hub[2], s_paired_hub[3], s_paired_hub[4], s_paired_hub[5]);
+        }
         nvs_close(nh);
         if (r == ESP_OK && sz == 16) { ESP_LOGI(TAG, "PMK: user-configured (NVS espnow/pmk)"); return; }
     }
@@ -1095,6 +1350,8 @@ void app_main(void)
     (void)rbamp_init; (void)realtime_task; (void)channel_follow_task; (void)report_task;
     (void)time_task; (void)period_task; (void)stats_task; (void)pair_task;   /* not used in output build */
 #else
+    s_iacc_start_us = esp_timer_get_time();   /* current-only averages start at boot */
+    hold_init();    /* finished periods still unACKed from before this boot (rbnhold partition) */
     rbamp_init();   /* real I3 source if present, else synthetic */
 #if RBN_FREERUN
     /* ACRouter / beacon-less OPEN receiver: radio stays pinned to the fixed TEST_CHANNEL set in
