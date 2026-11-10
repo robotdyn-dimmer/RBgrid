@@ -15,21 +15,12 @@ set(RBPOWER_SRCS
     "src/rbgrid.c"
     "src/rbgrid_config_api.c"
     "src/rbgrid_core.c"                      # core context, lifecycle hooks, factory reset
+    "src/rbgrid_tz.c"                        # own local time (POSIX TZ rule), independent of the process TZ
     "src/rbgrid_core_cmd.c"                  # transport-neutral command dispatcher + API tokens
     "src/rbgrid_core_reads.c"                # economics / summary / schema / base_w builders
     "src/rbgrid_units.c"                     # point create / change / delete
     "src/rbgrid_config_storage.c"
     "src/rbjson.c"
-    "src/rbtelemetry.c"
-    "src/rbmqtt.c"
-    "src/rbwifi.c"
-    "src/rbwebserver.c"
-    "src/rbwebserver_ota.c"
-    "src/rbwebserver_wifi.c"
-    "src/rbwebserver_api.c"
-    "src/rbwebserver_ui.c"                   # embedded web-UI hosting (storage littlefs)
-    "src/rbwebsocket.c"
-    "src/rbwebsocket_telemetry.c"
     "src/rbpower_inject_test.c"
     "src/rbpower_logic_test.c"
     "src/rbpower_lifetime_accumulators.c"   # lifetime energy accumulators
@@ -41,6 +32,9 @@ set(RBPOWER_SRCS
     "src/littlefs_raw.c"                     # raw littlefs IO for config/token/registry
     "src/rbfault.c"                          # fault injection (empty unless RBGRID_FAULT_INJECT test builds)
     "src/rbhome_tariff.c"                    # tariff/economics/billing engine (also #include'd by rbpower.c)
+    "src/rbdynprice.c"                       # dynamic (spot) prices: providers, stores, fetch, per-period price
+    "src/rbpeak.c"                           # import peaks per billing cycle (capacity tariffs; metering only)
+    "src/rbactivation.c"                     # cheap windows (price rules) + price_signal notification
     # --- flash statistics data layer (history/summary/DAY+ aggregation persistence) ---
     "src/rbstorage.c"
     "src/rbstorage_transfer_types.c"
@@ -60,40 +54,51 @@ set(RBPOWER_SRCS
     "src/rbgrid_period_stats_api.c"          # history / DAY+ on-demand aggregation API
 )
 
-# Component registration
+# Interfaces, by build key (components/rbpower/Kconfig "RBgrid interfaces"). The core above never calls them
+# directly: they register hooks (rbgrid_core.h); rbmqtt.h has inline stubs when MQTT is off.
+if(CONFIG_RBGRID_IF_WIFI)
+    list(APPEND RBPOWER_SRCS "src/rbwifi.c")
+endif()
+if(CONFIG_RBGRID_IF_HTTP)
+    list(APPEND RBPOWER_SRCS "src/rbwebserver.c" "src/rbwebserver_ota.c" "src/rbwebserver_wifi.c"
+                             "src/rbwebserver_api.c" "src/rbwebserver_ui.c" "src/rbwebsocket.c"
+                             "src/rbwebsocket_telemetry.c")
+endif()
+if(CONFIG_RBGRID_IF_MQTT)
+    list(APPEND RBPOWER_SRCS "src/rbmqtt.c")
+endif()
+if(CONFIG_RBGRID_IF_HTTP OR CONFIG_RBGRID_IF_MQTT)
+    list(APPEND RBPOWER_SRCS "src/rbtelemetry.c")   # 3 s JSON fan-out to WebSocket / MQTT
+endif()
+
+# Component registration. The web server's development certificate is embedded only when the web server is built,
+# so a host build without it (ESPHome) doesn't carry it.
+# (REQUIRES can't depend on sdkconfig: it is resolved before the config is loaded. The certificate embed can.)
+set(RBPOWER_REQ driver esp_common log nvs_flash freertos esp_timer json esp_wifi esp_netif esp_http_server
+                esp_http_client esp_https_server esp_event mqtt esp_partition app_update mbedtls spi_flash
+                wear_levelling joltwallet__littlefs)
+set(RBPOWER_EMBED)
+if(CONFIG_RBGRID_IF_HTTP)
+    list(APPEND RBPOWER_EMBED "certs/rbgrid_dev_cert.pem" "certs/rbgrid_dev_key.pem")
+endif()
 idf_component_register(
     SRCS ${RBPOWER_SRCS}
     INCLUDE_DIRS "include"
-    PRIV_INCLUDE_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../managed_components/joltwallet__littlefs/src"
-    REQUIRES
-        driver
-        esp_common
-        log
-        nvs_flash
-        freertos
-        esp_timer
-        json
-        esp_wifi
-        esp_netif
-        esp_http_server
-        esp_https_server
-        esp_event
-        mqtt
-        esp_partition
-        app_update
-        mbedtls
-        spi_flash
-        wear_levelling
-        joltwallet__littlefs
+    REQUIRES ${RBPOWER_REQ}
     PRIV_REQUIRES
         heap
         soc
         hal
         rbamp        # rbamp_sensor_models.h — CT model registry for the schema / ct_code check
-    EMBED_TXTFILES
-        "certs/rbgrid_dev_cert.pem"
-        "certs/rbgrid_dev_key.pem"
+    EMBED_TXTFILES ${RBPOWER_EMBED}
 )
+
+# littlefs internals (raw lfs API in littlefs_raw.c): taken from wherever the build placed the managed component,
+# so the same CMake works in this project and inside a host build (ESPHome) whose managed_components dir differs.
+if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+    idf_component_get_property(rb_lfs_dir joltwallet__littlefs COMPONENT_DIR)
+    target_include_directories(${COMPONENT_LIB} PRIVATE "${rb_lfs_dir}/src")
+endif()
 
 # LittleFS configuration define
 target_compile_definitions(${COMPONENT_LIB} PRIVATE

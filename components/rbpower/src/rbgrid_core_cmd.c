@@ -15,6 +15,11 @@
 #include "rbgrid_config_storage.h"
 #include "rbgrid_config_api.h"
 #include "rbhome_tariff.h"
+#include "rbpower.h"
+#include "rbgrid_tz.h"
+#include "rbdynprice.h"
+#include "rbpeak.h"
+#include "rbactivation.h"
 #include "rbjson.h"
 #include "littlefs_raw.h"
 #include "esp_app_desc.h"
@@ -56,6 +61,9 @@ void rbgrid_register_espnow_status_provider(char *(*fn)(void)) { s_espnow_status
  * from its registry: the node's points are registered from that registry at every boot, so a deleted point came
  * back after a restart (an unused node input could not be switched off). */
 static void (*s_unit_deleted_hook)(uint16_t unit_id) = NULL;
+/* I2C fleet actions (rbi2c_action in rbgrid_app): `get i2c` / `set i2c`. NULL until registered. */
+static char *(*s_i2c_action)(const cJSON *req, int *status) = NULL;
+void rbgrid_register_i2c_action_handler(char *(*fn)(const cJSON *req, int *status)) { s_i2c_action = fn; }
 void rbgrid_register_unit_deleted_hook(void (*fn)(uint16_t)) { s_unit_deleted_hook = fn; }
 void rbgrid_core_notify_unit_deleted(uint16_t unit_id) { if (s_unit_deleted_hook) s_unit_deleted_hook(unit_id); }
 /* ESP-NOW node actions (the hub in main/ registers it): MQTT `cmd set espnow {data:{action,…}}` = POST /api/v1/espnow. */
@@ -91,6 +99,60 @@ static char* cmd_get_section(const cJSON* root, const char* section)
     if (strcmp(section, "schema") == 0)  return rbgrid_build_schema_json();
     if (strcmp(section, "sensors") == 0) return rbgrid_json_create_sensors_list(rbgrid_core_json_ctx());
     if (strcmp(section, "espnow") == 0)  return s_espnow_status_provider ? s_espnow_status_provider() : NULL;
+    if (strcmp(section, "price") == 0) {   /* dynamic prices: state, HA store, resolved per 15-min period */
+        const cJSON *jf = cJSON_GetObjectItem(root, "from"), *ju = cJSON_GetObjectItem(root, "until");
+        cJSON *o = rbdynprice_price_json(cJSON_IsNumber(jf) ? (uint32_t)jf->valuedouble : 0,
+                                         cJSON_IsNumber(ju) ? (uint32_t)ju->valuedouble : 0);
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
+        cJSON_Delete(o);
+        return r;
+    }
+    if (strcmp(section, "rules") == 0 || strcmp(section, "signal") == 0) {   /* cheap windows / price notification */
+        cJSON *o = strcmp(section, "rules") == 0 ? rbact_rules_json() : rbact_signal_json();
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
+        cJSON_Delete(o);
+        return r;
+    }
+    if (strcmp(section, "peaks") == 0) {   /* import peaks per billing cycle (capacity tariffs; metering only) */
+        cJSON *o = rbpeak_json();
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
+        cJSON_Delete(o);
+        return r;
+    }
+    if (strcmp(section, "time") == 0) {   /* the hub's own time zone (tariff zones, local days, windows) */
+        rbtime_config_t tc; memset(&tc, 0, sizeof(tc));
+        rbtime_get_config(&tc);
+        time_t now = time(NULL); struct tm lt; char loc[24] = "";
+        if (rbgrid_localtime_r(&now, &lt)) strftime(loc, sizeof(loc), "%Y-%m-%dT%H:%M:%S", &lt);
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "type", "time");
+        cJSON_AddStringToObject(o, "timezone", tc.timezone);
+        cJSON_AddBoolToObject(o, "time_valid", rbtime_is_time_valid());
+        cJSON_AddNumberToObject(o, "now", (double)now);
+        cJSON_AddStringToObject(o, "local", loc);
+        char *r = cJSON_PrintUnformatted(o); cJSON_Delete(o);
+        return r;
+    }
+    if (strcmp(section, "price_log") == 0) {   /* applied price per closed 15-min period (audit) */
+        const cJSON *jf = cJSON_GetObjectItem(root, "from"), *ju = cJSON_GetObjectItem(root, "until");
+        cJSON *o = rbdynprice_price_log_json(cJSON_IsNumber(jf) ? (uint32_t)jf->valuedouble : 0,
+                                             cJSON_IsNumber(ju) ? (uint32_t)ju->valuedouble : 0);
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
+        cJSON_Delete(o);
+        return r;
+    }
+    if (strcmp(section, "dynprice") == 0) {   /* provider config + status + catalogue */
+        cJSON *o = rbdynprice_config_json();
+        char *r = o ? cJSON_PrintUnformatted(o) : NULL;
+        cJSON_Delete(o);
+        return r;
+    }
+    if (strcmp(section, "i2c") == 0) {
+        if (!s_i2c_action) return NULL;
+        cJSON *q = cJSON_CreateObject(); cJSON_AddStringToObject(q, "op", "state");
+        int st = 200; char *r = s_i2c_action(q, &st); cJSON_Delete(q);
+        return r;
+    }
     if (strcmp(section, "economics") == 0) {
         const cJSON* ju = cJSON_GetObjectItem(root, "unit");
         if (!cJSON_IsString(ju)) return NULL;
@@ -166,13 +228,128 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
 
     char* ack = NULL;
     char msg[96];
+    if (strcmp(section, "time") == 0) {   /* {"timezone":"CST-8"}: POSIX TZ with an offset; saved in /time.json */
+        const char *tz = cJSON_GetStringValue(cJSON_GetObjectItem(data, "timezone"));
+        if (!tz || !tz[0] || strlen(tz) > 31 || !rbtime_timezone_is_valid(tz)) {
+            free(data_str);
+            return cmd_ack_json("set", section, "error",
+                                "timezone: a POSIX TZ with an offset, e.g. \"CST-8\", \"CET-1CEST,M3.5.0,M10.5.0/3\"", id);
+        }
+        /* merge into the saved time config (other keys kept), or start one */
+        char *old = NULL; size_t sz = 0;
+        cJSON *root2 = NULL;
+        if (littlefs_raw_size("/time.json", &sz) == ESP_OK && sz > 0 && sz < 4096 && (old = malloc(sz + 1))) {
+            size_t got = 0;
+            if (littlefs_raw_read("/time.json", old, sz, &got) == ESP_OK) { old[got] = 0; root2 = cJSON_Parse(old); }
+            free(old);
+        }
+        if (!root2) root2 = cJSON_CreateObject();
+        cJSON *cfg = cJSON_GetObjectItem(root2, "config");
+        if (!cfg) cfg = cJSON_AddObjectToObject(root2, "config");
+        cJSON_DeleteItemFromObject(cfg, "timezone");
+        cJSON_AddStringToObject(cfg, "timezone", tz);
+        char *out = cJSON_PrintUnformatted(root2); cJSON_Delete(root2);
+        esp_err_t se = out ? rbgrid_storage_save_time(out) : ESP_ERR_NO_MEM;
+        free(out);
+        rbpower_err_t te = rbtime_set_timezone(tz);
+        ack = (se == ESP_OK && te == RBPOWER_OK) ? cmd_ack_json("set", section, "ok", "timezone saved and applied", id)
+                                                 : cmd_ack_json("set", section, "error", "timezone applied but not saved", id);
+        rbdynprice_kick();
+        free(data_str);
+        return ack;
+    }
+    if (strcmp(section, "rules") == 0) {   /* {"rules":[…]} and/or {"signal":{…}}; a rejection names the field */
+        char ef[24] = "", em[128] = "";
+        if (rbact_set(data, ef, sizeof(ef), em, sizeof(em)) == ESP_OK) {
+            ack = cmd_ack_json("set", section, "ok", "rules saved", id);
+        } else {
+            ack = cmd_ack_json("set", section, "error", em, id);
+            cJSON *o = ack ? cJSON_Parse(ack) : NULL;
+            cJSON *dd = o ? cJSON_GetObjectItem(o, "data") : NULL;
+            if (dd) { cJSON_AddStringToObject(dd, "field", ef); char *re = cJSON_PrintUnformatted(o); if (re) { free(ack); ack = re; } }
+            cJSON_Delete(o);
+        }
+        free(data_str);
+        return ack;
+    }
+    if (strcmp(section, "peaks") == 0) {   /* {"cycle_day":1..28} | {"reset":true} */
+        char em[64] = "";
+        ack = rbpeak_set(data, em, sizeof(em)) == ESP_OK ? cmd_ack_json("set", section, "ok", "peaks updated", id)
+                                                        : cmd_ack_json("set", section, "error", em, id);
+        free(data_str);
+        return ack;
+    }
+    if (strcmp(section, "dynprice") == 0) {   /* provider config; a rejection names the field */
+        char ef[24] = "", em[128] = "";
+        if (rbdynprice_set_config(data, ef, sizeof(ef), em, sizeof(em)) == ESP_OK) {
+            ack = cmd_ack_json("set", section, "ok", "dynamic price config saved", id);
+        } else {
+            ack = cmd_ack_json("set", section, "error", em, id);
+            cJSON *o = ack ? cJSON_Parse(ack) : NULL;
+            cJSON *d = o ? cJSON_GetObjectItem(o, "data") : NULL;
+            if (d) {
+                cJSON_AddStringToObject(d, "field", ef);
+                char *re = cJSON_PrintUnformatted(o);
+                if (re) { free(ack); ack = re; }
+            }
+            cJSON_Delete(o);
+        }
+        free(data_str);
+        return ack;
+    }
+    if (strcmp(section, "price") == 0) {
+        /* external energy price: {"buy","sell"?,"from","until"} | {"prices":[...]} | {"clear":true} */
+        if (cJSON_IsTrue(cJSON_GetObjectItem(data, "clear"))) {
+            rbpower_tariff_clear_external_price();
+            ack = cmd_ack_json("set", section, "ok", "external prices cleared", id);
+        } else {
+            const cJSON* arr = cJSON_GetObjectItem(data, "prices");
+            const cJSON* one = data;
+            int n = cJSON_IsArray(arr) ? cJSON_GetArraySize(arr) : 1, okc = 0;
+            const char* why = NULL;
+            for (int k = 0; k < n && !why; k++) {
+                const cJSON* e = cJSON_IsArray(arr) ? cJSON_GetArrayItem(arr, k) : one;
+                const cJSON *jb = cJSON_GetObjectItem(e, "buy"), *js = cJSON_GetObjectItem(e, "sell");
+                const cJSON *jf = cJSON_GetObjectItem(e, "from"), *ju = cJSON_GetObjectItem(e, "until");
+                if (!cJSON_IsNumber(jb) || !cJSON_IsNumber(jf) || !cJSON_IsNumber(ju)) { why = "each price needs buy, from, until (unix s)"; break; }
+                if (js && !cJSON_IsNumber(js) && !cJSON_IsNull(js)) { why = "sell must be a number"; break; }
+                if (rbpower_tariff_set_external_price((float)jb->valuedouble, cJSON_IsNumber(js) ? (float)js->valuedouble : NAN,
+                                                      (uint32_t)jf->valuedouble, (uint32_t)ju->valuedouble) != ESP_OK)
+                    { why = "bad price (buy/sell -100..100) or until <= from"; break; }
+                okc++;
+            }
+            if (why) { snprintf(msg, sizeof(msg), "%s (%d stored before it)", why, okc); ack = cmd_ack_json("set", section, "error", msg, id); }
+            else { snprintf(msg, sizeof(msg), "%d price(s) stored", okc); ack = cmd_ack_json("set", section, "ok", msg, id); }
+        }
+        free(data_str);
+        return ack;
+    }
+    if (strcmp(section, "i2c") == 0) {
+        if (!s_i2c_action) {
+            ack = cmd_ack_json("set", section, "error", "I2C actions not available in this build", id);
+        } else {
+            int st = 200;
+            char *rep = s_i2c_action(data, &st);
+            cJSON *r = rep ? cJSON_Parse(rep) : NULL;
+            const char *m = r ? cJSON_GetStringValue(cJSON_GetObjectItem(r, "message")) : NULL;
+            ack = cmd_ack_json("set", section, st == 200 ? "ok" : "error", st == 200 ? "i2c action done" : (m ? m : "i2c action failed"), id);
+            cJSON *a = ack ? cJSON_Parse(ack) : NULL, *ad = a ? cJSON_GetObjectItem(a, "data") : NULL;
+            if (ad && r) { cJSON_AddItemToObject(ad, "reply", r); r = NULL; char *re = cJSON_PrintUnformatted(a); if (re) { free(ack); ack = re; } }
+            cJSON_Delete(a); cJSON_Delete(r); free(rep);
+        }
+    } else
     if (strcmp(section, "espnow") == 0) {
         if (!s_espnow_action) {
             ack = cmd_ack_json("set", section, "error", "ESP-NOW not available in this build", id);
         } else {
             int st = 200;
             char *rep = s_espnow_action(data, &st);
-            ack = cmd_ack_json("set", section, st == 200 ? "ok" : "error", st == 200 ? "espnow action done" : "espnow action failed", id);
+            const char *why = "espnow action failed";   /* the action's own message, if it gave one */
+            cJSON *rj = (st != 200 && rep) ? cJSON_Parse(rep) : NULL;
+            const char *m = rj ? cJSON_GetStringValue(cJSON_GetObjectItem(rj, "message")) : NULL;
+            if (m) { snprintf(msg, sizeof(msg), "%s", m); why = msg; }
+            ack = cmd_ack_json("set", section, st == 200 ? "ok" : "error", st == 200 ? "espnow action done" : why, id);
+            cJSON_Delete(rj);
             /* carry the action's own reply (same JSON as the HTTP answer) */
             cJSON *a = ack ? cJSON_Parse(ack) : NULL, *r = rep ? cJSON_Parse(rep) : NULL;
             cJSON *ad = a ? cJSON_GetObjectItem(a, "data") : NULL;
@@ -181,6 +358,19 @@ static char* cmd_set_section(const cJSON* root, const char* section, const char*
         }
     } else
     if (strcmp(section, "tariff") == 0) {
+        /* `data` may be the whole `get tariff` document ({"type":"tariff_plan_list_config","data":{"list":[plan]}}),
+         * just {"list":[plan]}, or a bare plan object: wrap the short forms into the document the parser reads. */
+        if (!cJSON_GetObjectItem(data, "type")) {
+            cJSON* doc = cJSON_CreateObject();
+            cJSON* dd = cJSON_AddObjectToObject(doc, "data");
+            const cJSON* lst = cJSON_GetObjectItem(data, "list");
+            cJSON_AddStringToObject(doc, "type", "tariff_plan_list_config");
+            if (cJSON_IsArray(lst)) cJSON_AddItemToObject(dd, "list", cJSON_Duplicate(lst, 1));
+            else { cJSON* l = cJSON_AddArrayToObject(dd, "list"); cJSON_AddItemToArray(l, cJSON_Duplicate(data, 1)); }
+            char* w = cJSON_PrintUnformatted(doc);
+            cJSON_Delete(doc);
+            if (w) { free(data_str); data_str = w; }
+        }
         rbgrid_json_err_t e = rbgrid_json_parse_tariff_plan_config(data_str);
         if (e == RBGRID_JSON_OK) {
             ack = cmd_ack_json("set", section, "ok", "tariff applied", id);
@@ -246,6 +436,123 @@ static char* cmd_history(const cJSON* root)
     return js;   // flat {status,request,meta,data} — identical to HTTP /api/v1/history
 }
 
+/* Chart series for hosts: energy + money per stored period, joined on the device.
+ *   {"cmd":"series","unit":"0100","period":"hour|day|week|month|year","from":unix,"to":unix,"limit":168}
+ * Reply {"type":"series","unit","period","currency","cols":["ts","dur","wh_in","wh_out","cost","revenue","q"],"rows":[[...],...]}
+ * Rows are the stored periods (hour is the finest in flash; 15-min periods are live only), newest first, filtered to
+ * [from, to). */
+static char* cmd_series(const cJSON* root)
+{
+    const char* us = cJSON_GetStringValue(cJSON_GetObjectItem(root, "unit"));
+    if (!us) return cmd_ack_json("series", "-", "error", "missing 'unit' (hex string)", NULL);
+    rbpower_unit_id_t unit = (rbpower_unit_id_t)strtoul(us, NULL, 16);
+    const char* ps = cJSON_GetStringValue(cJSON_GetObjectItem(root, "period"));
+    if (!ps) ps = "hour";
+    int period = !strcmp(ps,"hour")?0 : !strcmp(ps,"day")?1 : !strcmp(ps,"week")?2 : !strcmp(ps,"month")?3 : !strcmp(ps,"year")?4 : -1;
+    if (period < 0) return cmd_ack_json("series", ps, "error", "period: hour | day | week | month | year", NULL);
+    const cJSON* jf = cJSON_GetObjectItem(root, "from");
+    const cJSON* jt = cJSON_GetObjectItem(root, "to");
+    const cJSON* jl = cJSON_GetObjectItem(root, "limit");
+    double from = cJSON_IsNumber(jf) ? jf->valuedouble : 0, to = cJSON_IsNumber(jt) ? jt->valuedouble : 4e9;
+    uint32_t limit = cJSON_IsNumber(jl) ? (uint32_t)jl->valueint : 168;
+    if (limit == 0 || limit > 720) limit = 168;
+    char* je = rbgrid_history_get_data(unit, (rbpower_period_t)period, (rbpower_data_type_t)1, 0, limit);   /* energy */
+    char* jc = rbgrid_history_get_data(unit, (rbpower_period_t)period, (rbpower_data_type_t)2, 0, limit);   /* economics */
+    cJSON* e = je ? cJSON_Parse(je) : NULL;
+    cJSON* c = jc ? cJSON_Parse(jc) : NULL;
+    free(je); free(jc);
+    if (!e) { cJSON_Delete(c); return cmd_ack_json("series", ps, "error", "history read failed (no records or flash unavailable)", NULL); }
+    cJSON* out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "type", "series");
+    cJSON_AddStringToObject(out, "unit", us);
+    cJSON_AddStringToObject(out, "period", ps);
+    cJSON_AddStringToObject(out, "currency", rbpower_tariff_currency());
+    cJSON* cols = cJSON_AddArrayToObject(out, "cols");
+    static const char* const names[] = { "ts", "dur", "wh_in", "wh_out", "cost", "revenue", "q" };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) cJSON_AddItemToArray(cols, cJSON_CreateString(names[i]));
+    cJSON* rows = cJSON_AddArrayToObject(out, "rows");
+    cJSON* ea = cJSON_GetObjectItem(e, "data");
+    cJSON* ca = c ? cJSON_GetObjectItem(c, "data") : NULL;
+    cJSON* r = NULL;
+    cJSON_ArrayForEach(r, ea) {
+        double ts = cJSON_GetNumberValue(cJSON_GetObjectItem(r, "ts"));
+        if (ts < from || ts >= to) continue;
+        double cost = 0, rev = 0;
+        cJSON* k = NULL;
+        cJSON_ArrayForEach(k, ca) {
+            if (cJSON_GetNumberValue(cJSON_GetObjectItem(k, "ts")) == ts) {
+                cost = cJSON_GetNumberValue(cJSON_GetObjectItem(k, "c"));
+                rev = cJSON_GetNumberValue(cJSON_GetObjectItem(k, "r"));
+                if (isnan(cost)) cost = 0;
+                if (isnan(rev)) rev = 0;
+                break;
+            }
+        }
+        double win = cJSON_GetNumberValue(cJSON_GetObjectItem(r, "ec")), wout = cJSON_GetNumberValue(cJSON_GetObjectItem(r, "es"));
+        cJSON* row = cJSON_CreateArray();
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(ts));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(cJSON_GetNumberValue(cJSON_GetObjectItem(r, "dur"))));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(isnan(win) ? 0 : round(win * 1000) / 1000));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(isnan(wout) ? 0 : round(wout * 1000) / 1000));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(round(cost * 1e6) / 1e6));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(round(rev * 1e6) / 1e6));
+        cJSON_AddItemToArray(row, cJSON_CreateNumber(cJSON_GetNumberValue(cJSON_GetObjectItem(r, "q"))));
+        cJSON_AddItemToArray(rows, row);
+    }
+    cJSON_Delete(e); cJSON_Delete(c);
+    char* sres = cJSON_PrintUnformatted(out);
+    cJSON_Delete(out);
+    return sres;
+}
+
+/* Point operations over the command channel (the HTTP /api/v1/units routes, for builds without the web server):
+ *   {"cmd":"unit","op":"create","data":{sensor:{iface,...},name,role?,...}}
+ *   {"cmd":"unit","op":"patch|rebind|rename","unit":"0006","data":{...}}
+ *   {"cmd":"unit","op":"delete","unit":"0006"}
+ * Reply: cmd_ack with result ok|error, the HTTP-style code in data.code and the route's own reply in data.reply. */
+static char* cmd_unit(const cJSON* root, const char* id)
+{
+    char admin[48];
+    if (rbgrid_token_load(RBGRID_TOKEN_FILE, admin)) {
+        const char* tok = cJSON_GetStringValue(cJSON_GetObjectItem(root, "token"));
+        if (!tok || strcmp(tok, admin) != 0) return cmd_ack_json("unit", "-", "error", "unauthorized: admin token required", id);
+    }
+    const char* op = cJSON_GetStringValue(cJSON_GetObjectItem(root, "op"));
+    const char* us = cJSON_GetStringValue(cJSON_GetObjectItem(root, "unit"));
+    const cJSON* data = cJSON_GetObjectItem(root, "data");
+    if (!op) return cmd_ack_json("unit", "-", "error", "missing 'op' (create | patch | rebind | rename | delete)", id);
+    rbpower_unit_id_t uid = us ? (rbpower_unit_id_t)strtoul(us, NULL, 16) : 0;
+    char* body = data ? cJSON_PrintUnformatted(data) : NULL;
+    int st = 400;
+    char* rep = NULL;
+    if (!strcmp(op, "create")) {
+        rep = body ? rbgrid_units_create(body, &st) : NULL;
+    } else if (!strcmp(op, "patch") || !strcmp(op, "rebind") || !strcmp(op, "rename")) {
+        rep = (uid && body) ? rbgrid_units_mutate(uid, !strcmp(op, "patch") ? "" : op, body, &st) : NULL;
+    } else if (!strcmp(op, "delete")) {
+        rep = uid ? rbgrid_units_delete(uid, &st) : NULL;
+    } else {
+        free(body);
+        return cmd_ack_json("unit", op, "error", "unknown op (create | patch | rebind | rename | delete)", id);
+    }
+    free(body);
+    if (!rep) return cmd_ack_json("unit", op, "error", us || !strcmp(op, "create") ? "missing 'data'" : "missing 'unit' (hex id)", id);
+    cJSON* r = cJSON_Parse(rep);
+    const char* m = r ? cJSON_GetStringValue(cJSON_GetObjectItem(r, "message")) : NULL;
+    bool ok = st >= 200 && st < 300;
+    char* ack = cmd_ack_json("unit", op, ok ? "ok" : "error", ok ? "done" : (m ? m : "failed"), id);
+    cJSON* a = ack ? cJSON_Parse(ack) : NULL;
+    cJSON* ad = a ? cJSON_GetObjectItem(a, "data") : NULL;
+    if (ad) {
+        cJSON_AddNumberToObject(ad, "code", st);
+        if (r) { cJSON_AddItemToObject(ad, "reply", r); r = NULL; }
+        char* re = cJSON_PrintUnformatted(a);
+        if (re) { free(ack); ack = re; }
+    }
+    cJSON_Delete(a); cJSON_Delete(r); free(rep);
+    return ack;
+}
+
 // Public: parse a command JSON and return a malloc'd response JSON (caller frees), or NULL.
 char* rbgrid_command_dispatch(const char* in_json, int in_len)
 {
@@ -284,8 +591,12 @@ char* rbgrid_command_dispatch(const char* in_json, int in_len)
         out = cmd_set_section(root, sec_s, id_s);
     } else if (strcmp(cmd_s, "history") == 0) {
         out = cmd_history(root);
+    } else if (strcmp(cmd_s, "unit") == 0) {
+        out = cmd_unit(root, id_s);
+    } else if (strcmp(cmd_s, "series") == 0) {
+        out = cmd_series(root);
     } else {
-        out = cmd_ack_json(cmd_s, sec_s, "error", "unknown cmd (use 'get' / 'set' / 'history')", id_s);
+        out = cmd_ack_json(cmd_s, sec_s, "error", "unknown cmd (use 'get' / 'set' / 'history' / 'series' / 'unit')", id_s);
     }
 
 envelope:

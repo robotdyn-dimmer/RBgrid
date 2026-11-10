@@ -25,6 +25,7 @@
  * Written buffers carry standard sector markers (CLOSED chain + one ACTIVE tail), so normal
  * boot scan-recovery reconstructs cursors with no NVS dependency.
  */
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbstats_migrate.h"
 #include "rbstats_v4_types.h"
 #include "rbextflash_operations.h"
@@ -357,7 +358,7 @@ static uint64_t mig_done_bits_load(void)
 {
     uint64_t bits = 0;
     nvs_handle_t h;
-    if (nvs_open("rbmig", NVS_READONLY, &h) == ESP_OK) {
+    if (rbgrid_nvs_open("rbmig", NVS_READONLY, &h) == ESP_OK) {
         nvs_get_u64(h, "done", &bits);
         nvs_close(h);
     }
@@ -368,7 +369,7 @@ static uint64_t mig_done_bits_load(void)
 static void mig_done_bits_store(uint64_t bits)
 {
     nvs_handle_t h;
-    if (nvs_open("rbmig", NVS_READWRITE, &h) == ESP_OK) {
+    if (rbgrid_nvs_open("rbmig", NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_u64(h, "done", bits);
         nvs_commit(h);
         nvs_close(h);
@@ -379,7 +380,7 @@ static void mig_done_bits_store(uint64_t bits)
 static void mig_done_bits_clear(void)
 {
     nvs_handle_t h;
-    if (nvs_open("rbmig", NVS_READWRITE, &h) == ESP_OK) {
+    if (rbgrid_nvs_open("rbmig", NVS_READWRITE, &h) == ESP_OK) {
         nvs_erase_all(h);
         nvs_commit(h);
         nvs_close(h);

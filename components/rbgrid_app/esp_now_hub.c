@@ -17,6 +17,7 @@
  *  - inject_task feeds REALTIME/PERIOD data into rbpower and runs the presence-timeout sweep.
  *  - The public functions are called from the console, the HTTP server and the HA discovery task.
  */
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbstats_v4_types.h"
 #include "esp_idf_version.h"
 #include "esp_now_hub.h"
@@ -246,14 +247,14 @@ static void enh_dedup_persist(const uint8_t *mac, uint32_t seq, uint32_t ts)
 {
     nvs_handle_t h; char key[12]; uint32_t v[2] = { seq, ts };
     enh_dedup_nvs_key(mac, key);
-    if (nvs_open("espnow_dd", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("espnow_dd", NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_blob(h, key, v, sizeof(v)); nvs_commit(h); nvs_close(h);
 }
 static void enh_dedup_restore(const uint8_t *mac)
 {
     nvs_handle_t h; char key[12]; uint32_t v[2]; size_t l = sizeof(v);
     enh_dedup_nvs_key(mac, key);
-    if (nvs_open("espnow_dd", NVS_READONLY, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("espnow_dd", NVS_READONLY, &h) != ESP_OK) return;
     if (nvs_get_blob(h, key, v, &l) == ESP_OK && l == sizeof(v)) {
         portENTER_CRITICAL(&s_units_mux);
         if (!enh_dedup_seen(mac, v[0], v[1])) enh_dedup_add(mac, v[0], v[1]);
@@ -315,8 +316,10 @@ esp_err_t esp_now_registry_save(const espnow_registry_t *reg)
     return littlefs_raw_write(ESPNOW_REG_FILE, (const void *)reg, sizeof(*reg));
 }
 
+static void enh_off_mark_dirty(void);
 esp_err_t esp_now_registry_add_node(const uint8_t mac[6], const espnow_reg_chan_t *channels, uint8_t n)
 {
+    enh_off_mark_dirty();
     if (!mac || !channels || n == 0) return ESP_ERR_INVALID_ARG;
     if (n > ESPNOW_REG_MAX_CH) n = ESPNOW_REG_MAX_CH;
     espnow_registry_t reg; esp_now_registry_load(&reg); reg.version = ESPNOW_REG_VERSION;
@@ -335,6 +338,7 @@ esp_err_t esp_now_registry_add_node(const uint8_t mac[6], const espnow_reg_chan_
 
 esp_err_t esp_now_registry_remove_node(const uint8_t mac[6])
 {
+    enh_off_mark_dirty();
     espnow_registry_t reg;
     if (!esp_now_registry_load(&reg)) return ESP_ERR_NOT_FOUND;
     int idx = -1;
@@ -415,7 +419,7 @@ static enh_nodecfg_slot_t *ncfg_get(const uint8_t mac[6], bool create)
         /* not cached yet: load if stored */
         nvs_handle_t h; char key[12]; enh_nodecfg_t c; size_t l = sizeof(c);
         ncfg_key(mac, key);
-        if (nvs_open("espnow_nc", NVS_READONLY, &h) != ESP_OK) return NULL;
+        if (rbgrid_nvs_open("espnow_nc", NVS_READONLY, &h) != ESP_OK) return NULL;
         esp_err_t e = nvs_get_blob(h, key, &c, &l);
         nvs_close(h);
         if (e != ESP_OK || l != sizeof(c)) return NULL;
@@ -430,11 +434,59 @@ static enh_nodecfg_slot_t *ncfg_get(const uint8_t mac[6], bool create)
                                memcpy(s_ncfg[i].mac, mac, 6); return &s_ncfg[i]; }
     return NULL;
 }
+/* Points switched off by the user (whole node disabled, or the input disabled in the node settings): the ESPHome
+ * front end frees their HA slots. Rebuilt lazily (NVS reads) after a change; read from the ESPHome loop task. */
+static volatile bool s_off_dirty = true;
+static uint16_t s_off_units[ESPNOW_REG_MAX_NODES * ESPNOW_REG_MAX_CH];
+static volatile int s_off_n = 0;
+static void enh_off_mark_dirty(void) { s_off_dirty = true; }
+static enh_nodecfg_slot_t *ncfg_get(const uint8_t mac[6], bool create);
+static volatile int s_reg_nodes = 0;   /* paired nodes (registry), cached with the switched-off list */
+static void enh_off_rebuild(void)
+{
+    if (!s_off_dirty) return;
+    s_off_dirty = false;
+    uint16_t tmp[ESPNOW_REG_MAX_NODES * ESPNOW_REG_MAX_CH]; int n = 0;
+    espnow_registry_t reg;
+    if (!esp_now_registry_load(&reg)) reg.node_count = 0;
+    for (int i = 0; i < reg.node_count; i++) {
+        bool node_off = (reg.nodes[i].flags & ESPNOW_REG_FLAG_DISABLED) != 0;
+        enh_nodecfg_slot_t *sl = node_off ? NULL : ncfg_get(reg.nodes[i].mac, false);
+        for (int c = 0; c < reg.nodes[i].ch_count; c++) {
+            bool off = node_off;
+            for (int k = 0; !off && sl && k < sl->c.n; k++)
+                if (sl->c.chans[k].channel_id == reg.nodes[i].channels[c].ch && !sl->c.chans[k].enabled) off = true;
+            if (off && n < (int)(sizeof(tmp) / sizeof(tmp[0])))
+                tmp[n++] = (uint16_t)rbgrid_create_espnow_unit_id(reg.nodes[i].mac, reg.nodes[i].channels[c].ch);
+        }
+    }
+    s_off_n = 0;
+    memcpy(s_off_units, tmp, sizeof(tmp[0]) * n);
+    s_off_n = n;
+    s_reg_nodes = reg.node_count;
+}
+void esp_now_hub_node_counts(int *total, int *online)
+{
+    enh_off_rebuild();
+    int on = 0;
+    portENTER_CRITICAL(&s_units_mux);
+    for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
+        if (s_nodes[i].used && s_nodes[i].online && !s_nodes[i].disabled) on++;
+    portEXIT_CRITICAL(&s_units_mux);
+    if (total) *total = s_reg_nodes;
+    if (online) *online = on;
+}
+bool esp_now_hub_unit_switched_off(uint16_t unit_id)
+{
+    enh_off_rebuild();
+    for (int i = 0; i < s_off_n; i++) if (s_off_units[i] == unit_id) return true;
+    return false;
+}
 static void ncfg_save(enh_nodecfg_slot_t *sl)
 {
     nvs_handle_t h; char key[12];
     ncfg_key(sl->mac, key);
-    if (nvs_open("espnow_nc", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("espnow_nc", NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_blob(h, key, &sl->c, sizeof(sl->c)); nvs_commit(h); nvs_close(h);
     sl->dirty = false;
 }
@@ -457,7 +509,7 @@ static const char *s_pmk_source = "none";
 static void hub_pmk_load(void)
 {
     nvs_handle_t h; size_t sz = sizeof(s_pmk);
-    if (nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) { esp_fill_random(s_pmk, sizeof(s_pmk)); s_pmk_source = "ram"; return; }
+    if (rbgrid_nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) { esp_fill_random(s_pmk, sizeof(s_pmk)); s_pmk_source = "ram"; return; }
     if (nvs_get_blob(h, "pmk", s_pmk, &sz) == ESP_OK && sz == sizeof(s_pmk)) {
         s_pmk_source = "stored";
     } else {
@@ -831,6 +883,8 @@ static void espnow_emit_presence(const uint8_t mac[6], bool online)
              mac[0],mac[1],mac[2],mac[3],mac[4],mac[5], online ? "ONLINE" : "OFFLINE");
     espnow_publish_status(mac, online);
     espnow_publish_event(online ? "node_online" : "node_offline", mac);
+    rbpower_diag_printf("espnow: node %02X:%02X:%02X:%02X:%02X:%02X %s", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                        online ? "online" : "offline");   /* event log + host events (ESPHome → HA) */
 }
 
 /** Publish a HA Discovery config for a node's "Online" connectivity binary_sensor (sub-device under
@@ -912,7 +966,11 @@ void esp_now_hub_publish_ha_nodes(void)
 /** Inject task (200 ms loop) — runs OFF the recv callback. Drains REALTIME (200ms inject) + PERIOD (period_result).
  * Units are CONFIG units (rbgrid_config_add_espnow_module) — we only compute the unit_id and feed; the
  * inject_* APIs no-op if the unit isn't configured (i.e. an unpaired/unknown node). No runtime create. */
+#if CONFIG_RBGRID_IF_HTTP
 extern bool rbwebserver_ota_in_progress(void);   /* rbwebserver_ota.c */
+#else
+static inline bool rbwebserver_ota_in_progress(void) { return false; }   /* no HTTP OTA upload in this build */
+#endif
 static void inject_task(void *arg)
 {
     uint32_t sweep_div = 0;
@@ -1221,13 +1279,13 @@ bool esp_now_hub_running(void) { return s_running; }
 int8_t esp_now_hub_enabled_setting(void)
 {
     nvs_handle_t h; uint8_t v = 0xFF;
-    if (nvs_open("espnow_cfg", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "enabled", &v); nvs_close(h); }
+    if (rbgrid_nvs_open("espnow_cfg", NVS_READONLY, &h) == ESP_OK) { nvs_get_u8(h, "enabled", &v); nvs_close(h); }
     return v == 0xFF ? -1 : (int8_t)(v ? 1 : 0);
 }
 static void esp_now_hub_set_enabled_setting(bool on)
 {
     nvs_handle_t h;
-    if (nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("espnow_cfg", NVS_READWRITE, &h) != ESP_OK) return;
     nvs_set_u8(h, "enabled", on ? 1 : 0); nvs_commit(h); nvs_close(h);
 }
 
@@ -1283,6 +1341,7 @@ char *esp_now_hub_action(const cJSON *req, int *status)
         snprintf(out, sizeof(out), "{\"ok\":true,\"disabled\":%s}", !strcmp(action, "disable") ? "true" : "false");
     } else if (!strcmp(action, "configure") && have_mac) {
         const cJSON *cfg = cJSON_GetObjectItem(req, "config");
+        if (!cfg && cJSON_GetObjectItem(req, "channels")) cfg = req;   /* channels[] / period_s also accepted at the top */
         const cJSON *jp = cfg ? cJSON_GetObjectItem(cfg, "period_s") : NULL;
         const cJSON *jch = cfg ? cJSON_GetObjectItem(cfg, "channels") : NULL;
         espnow_registry_t reg; int ni = -1;
@@ -1318,6 +1377,7 @@ char *esp_now_hub_action(const cJSON *req, int *status)
             else {
                 nc.period_s = 900; nc.cfg_seq++; nc.state = 1; nc.result = 0;
                 sl->c = nc; ncfg_save(sl);
+                enh_off_mark_dirty();
                 if (esp_now_hub_running()) ncfg_send(sl);
                 snprintf(out, sizeof(out), "{\"ok\":true,\"config_state\":\"pending\",\"cfg_seq\":%u}", (unsigned)nc.cfg_seq);
             }
@@ -1403,7 +1463,7 @@ uint32_t esp_now_hub_delnode_cascade(const uint8_t mac[6])
     espnow_publish_event("removed", mac);
     {   /* forget its settings: a node paired again starts from all channels on (the node resets too) */
         nvs_handle_t h; char key[12]; ncfg_key(mac, key);
-        if (nvs_open("espnow_nc", NVS_READWRITE, &h) == ESP_OK) { nvs_erase_key(h, key); nvs_commit(h); nvs_close(h); }
+        if (rbgrid_nvs_open("espnow_nc", NVS_READWRITE, &h) == ESP_OK) { nvs_erase_key(h, key); nvs_commit(h); nvs_close(h); }
         for (int i = 0; i < ESPNOW_REG_MAX_NODES; i++)
             if (s_ncfg[i].used && memcmp(s_ncfg[i].mac, mac, 6) == 0) memset(&s_ncfg[i], 0, sizeof(s_ncfg[i]));
     }
@@ -1417,6 +1477,7 @@ uint32_t esp_now_hub_delnode_cascade(const uint8_t mac[6])
 void esp_now_hub_set_node_disabled(const uint8_t mac[6], bool disabled)
 {
     esp_now_registry_set_disabled(mac, disabled);   /* persist across reboot */
+    enh_off_mark_dirty();
     portENTER_CRITICAL(&s_units_mux);
     enh_node_t *n = enh_node_slot(mac);
     if (n) n->disabled = disabled;
@@ -1450,7 +1511,9 @@ char *esp_now_hub_status_json(void)
                                 ? (double)((s_pair_window_until - esp_timer_get_time()) / 1000000) : 0); }
     cJSON_AddNumberToObject(root, "channel", s_channel);
     cJSON_AddBoolToObject(root, "pairing_open", esp_now_hub_pairing_open());
-    cJSON_AddNumberToObject(root, "paired_count", s_paired_count);
+    cJSON_AddNumberToObject(root, "paired_count", s_paired_count);   /* paired in THIS window (restart registers them) */
+    { int tot = 0, on = 0; esp_now_hub_node_counts(&tot, &on);
+      cJSON_AddNumberToObject(root, "nodes_total", tot); cJSON_AddNumberToObject(root, "nodes_online", on); }
     cJSON_AddNumberToObject(root, "beacons_sent", s_beacons_sent);
     cJSON_AddNumberToObject(root, "periods_recv", s_periods_recv);          /* PERIOD frames queued */
     cJSON_AddNumberToObject(root, "periods_injected", s_periods_injected);  /* records counted */

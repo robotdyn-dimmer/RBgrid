@@ -8,6 +8,7 @@
  *
  * Moved out of rbwebserver_api.c (HTTP handlers there are thin wrappers over these).
  */
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
 #include "rbgrid_core.h"
 #include "rbgrid_core_priv.h"
 #include "rbstats_migrate.h"
@@ -149,7 +150,7 @@ static void rbapi_base_emit(const rbpower_period_statistics_t *s, void *vctx)
     struct rbapi_base_ctx *c = (struct rbapi_base_ctx *)vctx;
     uint32_t ts = (uint32_t)(s->period_start_us / 1000000LL), dur = s->v4_dur_s ? s->v4_dur_s : 3600;
     if (dur < 3540 || c->n >= 40) return;
-    time_t mid = (time_t)(ts - dur / 2); struct tm lt; localtime_r(&mid, &lt);
+    time_t mid = (time_t)(ts - dur / 2); struct tm lt; rbgrid_localtime_r(&mid, &lt);
     if (lt.tm_hour < 1 || lt.tm_hour >= 5) return;
     c->v[c->n++] = (float)(s->energy_period.consumed_wh * 3600.0 / dur);
     uint8_t day = (uint8_t)lt.tm_yday;   /* distinct nights (yday is enough inside a 7-day window) */
@@ -416,6 +417,7 @@ char *rbgrid_build_schema_json(void)
     cJSON *cap = cJSON_AddObjectToObject(root, "capabilities");
     cJSON_AddBoolToObject(cap, "espnow", true);
     cJSON_AddBoolToObject(cap, "pointNesting", true);   /* units-config `inside`, PATCH units/{id} {inside} */
+    cJSON_AddBoolToObject(cap, "dynamicTariffs", true);   /* get/set dynprice, get/set price (DYNAMIC_TARIFFS_DESIGN) */
     cJSON_AddBoolToObject(cap, "economics", true);
     cJSON_AddBoolToObject(cap, "summary", true);
     cJSON_AddBoolToObject(cap, "exportCsv", true);
@@ -568,6 +570,22 @@ char *rbgrid_build_schema_json(void)
         { "/api/system/ui-commit",      "POST",     "n/a",       true,  false, "force (query); body=ui-manifest.json" },
         { "/api/system/ap",             "GET,POST", "n/a",       true,  false, "GET: AP ssid/password (admin token, armed hub only); POST {password}: the user sets the AP password (\"\" = setup password)" },
         { "/api/system/lang",           "GET,POST", "n/a",       true,  false, "code (query, ISO 639-1); body=language pack JSON ≤ 200 KB; one pack kept; served at /lang/<code>.json" },
+        /* routes served but listed here only from 1.2.0 (the API reference is generated from this table) */
+        { "/api/system/mqtt-ca",        "GET,POST,DELETE","n/a", true,  true,  "POST body = PEM (<= 8192 B, one or more certificates); DELETE = public CA bundle" },
+        { "/api/system/time-config",    "GET",      "composite", false, false, "read-only time settings view" },
+        { "/api/system/wifi-config",    "GET",      "composite", false, false, "read-only Wi-Fi settings view" },
+        { "/api/system/restore-system-config","POST","n/a",      true,  false, "body = system-config JSON" },
+        { "/api/v1/schema",             "GET",      "1",         false, false, "this description" },
+        { "/api/v1/system/events",      "GET",      "composite", false, false, "since,limit(<=1000),level(all|event|fail)" },
+        { "/api/v1/i2c",                "GET",      "composite", false, false, "buses, board pin profile, modules" },
+        { "/api/v1/i2c/scan",           "POST",     "n/a",       true,  false, "bus" },
+        { "/api/v1/i2c/modules",        "POST",     "n/a",       true,  false, "bus,addr" },
+        { "/api/v1/i2c/modules/{m}/address","POST", "n/a",       true,  false, "addr" },
+        { "/api/v1/dynprice",           "GET,POST", "composite", true,  false, "dynamic price config, providers, live state" },
+        { "/api/v1/price",              "GET,POST", "composite", true,  false, "price push (HA source) / resolved prices / log" },
+        { "/api/v1/rules",              "GET,POST", "composite", true,  false, "cheap windows (threshold|cheapest|deadline)" },
+        { "/api/v1/signal",             "GET",      "composite", false, false, "price_signal v1" },
+        { "/api/v1/peaks",              "GET,POST", "composite", true,  false, "cycle_day(1..28) | reset" },
     };
     cJSON *eps = cJSON_AddArrayToObject(root, "endpoints");
     for (unsigned i = 0; i < sizeof(EP) / sizeof(EP[0]); i++) {

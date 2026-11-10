@@ -885,6 +885,24 @@ static esp_err_t register_uri_handlers(wifi_mode_t wifi_mode)
     httpd_uri_t api_tele_cfg_opt  = { .uri = "/api/system/telemetry-config", .method = HTTP_OPTIONS, .handler = rbwebserver_api_telemetry_config_handler, .user_ctx = NULL };
     httpd_register_uri_handler(g_server_handle, &api_tele_cfg_post);
     httpd_register_uri_handler(g_server_handle, &api_tele_cfg_opt);
+    // Dynamic prices (DYNAMIC_TARIFFS_DESIGN §6)
+    {
+        static const httpd_method_t ms[3] = {HTTP_GET, HTTP_POST, HTTP_OPTIONS};
+        for (int i = 0; i < 3; i++) {
+            httpd_uri_t a = { .uri = "/api/v1/dynprice", .method = ms[i], .handler = rbwebserver_api_dynprice_handler, .user_ctx = NULL };
+            httpd_uri_t b = { .uri = "/api/v1/price",    .method = ms[i], .handler = rbwebserver_api_price_handler,    .user_ctx = NULL };
+            httpd_register_uri_handler(g_server_handle, &a);
+            httpd_register_uri_handler(g_server_handle, &b);
+            httpd_uri_t r = { .uri = "/api/v1/rules",    .method = ms[i], .handler = rbwebserver_api_rules_handler,    .user_ctx = NULL };
+            httpd_uri_t k = { .uri = "/api/v1/peaks",    .method = ms[i], .handler = rbwebserver_api_peaks_handler,    .user_ctx = NULL };
+            httpd_register_uri_handler(g_server_handle, &r);
+            httpd_register_uri_handler(g_server_handle, &k);
+            if (ms[i] != HTTP_POST) {
+                httpd_uri_t g = { .uri = "/api/v1/signal", .method = ms[i], .handler = rbwebserver_api_signal_handler, .user_ctx = NULL };
+                httpd_register_uri_handler(g_server_handle, &g);
+            }
+        }
+    }
 
     // WiFi Config API
     httpd_uri_t api_wifi_config_uri = {

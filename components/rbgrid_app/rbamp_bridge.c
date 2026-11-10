@@ -22,6 +22,7 @@
  *  - s_hostacc is shared between the poll task and the collector and is guarded by s_hostacc_mux.
  */
 
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbamp_bridge.h"
 #include "rbstats_v4_types.h"
 #include "rbfault.h"   /* test builds: simulated long outage */
@@ -622,7 +623,7 @@ static void anchor_save(uint8_t m, const rbamp_std_energy_t *e) { anchor_write(m
 static void anchor_write(uint8_t m, const rbamp_std_energy_t *e, bool force)
 {
     nvs_handle_t h;
-    if (nvs_open("rbampan", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbampan", NVS_READWRITE, &h) != ESP_OK) return;
     rbamp_anchor3_t a; memset(&a, 0, sizeof(a));
     a.magic = RBAMP_ANCHOR_MAGIC3;
     a.ts    = rbtime_is_time_valid() ? (uint32_t)rbtime_get_unix_timestamp() : 0;
@@ -654,7 +655,7 @@ static void anchor_write(uint8_t m, const rbamp_std_energy_t *e, bool force)
 static bool anchor_load(uint8_t m, rbamp_anchor_t *out)
 {
     nvs_handle_t h;
-    if (nvs_open("rbampan", NVS_READONLY, &h) != ESP_OK) return false;
+    if (rbgrid_nvs_open("rbampan", NVS_READONLY, &h) != ESP_OK) return false;
     char key[8]; snprintf(key, sizeof(key), "m%u", (unsigned)m);
     union { rbamp_anchor3_t a3; rbamp_anchor2_t a2; rbamp_anchor1_t a1; uint8_t raw[sizeof(rbamp_anchor3_t) + 64]; } b;
     size_t len = sizeof(b);
@@ -826,7 +827,7 @@ static void hourq_restore(uint8_t m)
     s_hourq_done[m] = true;
     uint32_t now = (uint32_t)rbtime_get_unix_timestamp();
     nvs_handle_t h;
-    if (nvs_open("rbampan", NVS_READONLY, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbampan", NVS_READONLY, &h) != ESP_OK) return;
     char key[8]; snprintf(key, sizeof(key), "h%u", (unsigned)m);
     rbamp_hourq_t q = {0}; size_t len = sizeof(q);
     bool ok = nvs_get_blob(h, key, &q, &len) == ESP_OK && len == sizeof(q);
@@ -842,7 +843,7 @@ static void flag_module_hour_bits(uint8_t m, uint16_t bits)
     if (rbtime_is_time_valid()) {
         uint32_t now = (uint32_t)rbtime_get_unix_timestamp(), hr = now - now % 3600u;
         nvs_handle_t h;
-        if (nvs_open("rbampan", NVS_READWRITE, &h) == ESP_OK) {
+        if (rbgrid_nvs_open("rbampan", NVS_READWRITE, &h) == ESP_OK) {
             char key[8]; snprintf(key, sizeof(key), "h%u", (unsigned)m);
             rbamp_hourq_t q = {0}; size_t len = sizeof(q);
             if (nvs_get_blob(h, key, &q, &len) != ESP_OK || len != sizeof(q) || q.hour != hr) { q.hour = hr; q.bits = 0; }
@@ -1307,6 +1308,8 @@ static void inject_module(uint8_t mod, const rbamp_module_cfg_t *mc, const rbamp
             float i = ich * cg;
             /* voltage module: device power + device PF; current-only: host P = V(phase) × I. */
             if (!has_v) u = unit_grid_voltage(en->unit_id);
+            else if (s_nv[mod] > 1 && ch < 3 && !isnan(s_u_ph[mod][ch]) && s_u_ph[mod][ch] > 1.0f)
+                u = s_u_ph[mod][ch];   /* U3I3 channel as its own point: its phase's voltage (was L1's for every channel) */
             float p  = has_v ? (isnan(pch) ? 0.0f : pch * cg) : (u * i);
             float pf = has_v ? (isnan(pfch) ? 0.0f : pfch) : 1.0f;
             /* BASIC meters consumption only: a negative live P (CT reversed) never reaches the energy, so it must not
@@ -1578,7 +1581,7 @@ static void srcid_check(uint8_t m, const char *where)
     if (bc == 0xFFFFFFFFu) return;
     bc &= 0xFFFF;
     nvs_handle_t h;
-    if (nvs_open("rbampan", NVS_READWRITE, &h) != ESP_OK) return;
+    if (rbgrid_nvs_open("rbampan", NVS_READWRITE, &h) != ESP_OK) return;
     char key[8]; snprintf(key, sizeof(key), "b%u", (unsigned)m);
     rbamp_srcid_t old = {0}, now = { RBAMP_SRCID_MAGIC, (uint16_t)bc, md.fw };
     size_t len = sizeof(old);
@@ -2472,8 +2475,12 @@ esp_err_t rbamp_bridge_start(const rbamp_bridge_config_t *cfg)
     const BaseType_t rbamp_poll_core = 1;  /* core 1 free → dedicate to metering */
     s_running = true;
     rbpower_set_pre_restart_hook(bridge_pre_restart_flush);
+#ifndef CONFIG_RBGRID_POLL_TASK_PRIORITY
+#define CONFIG_RBGRID_POLL_TASK_PRIORITY 1
+#endif
+    /* priority: 1 above idle standalone; a host with its own loop on core 1 (ESPHome) sets it higher */
     if (xTaskCreatePinnedToCore(rbamp_bridge_poll_task, "rbamp_poll", 8192, NULL,
-                                tskIDLE_PRIORITY + 1, &s_task, rbamp_poll_core) != pdPASS) {
+                                tskIDLE_PRIORITY + CONFIG_RBGRID_POLL_TASK_PRIORITY, &s_task, rbamp_poll_core) != pdPASS) {
         ESP_LOGE(TAG, "failed to create poll task");
         s_running = false; err = ESP_ERR_NO_MEM; goto fail_dev;
     }
@@ -2950,6 +2957,16 @@ int rbamp_bridge_digest(uint8_t m, int n, char *out, size_t cap)
     if (e == ESP_OK) len = rb_scat(out, cap, len, " | read_all P %.2f W I %.3f A U %.1f V %lld us", s.power[0], s.current[0], s.voltage, (long long)us);
     else len = rb_scat(out, cap, len, " | read_all %s", esp_err_to_name(e));
     return len;
+}
+
+int rbamp_bridge_module_counts(int *online)
+{
+    int on = 0, n = s_cfg.module_count;
+    for (int m = 0; m < n && m < RBAMP_MAX_MODULES; ++m)
+        if (s_dev[m] != NULL && s_poll_fail_n[m] < 3 &&
+            !(s_poll_pause_until_us[m] && esp_timer_get_time() < s_poll_pause_until_us[m])) on++;   /* probed, polled, answers */
+    if (online) *online = on;
+    return n;
 }
 
 bool rbamp_bridge_module_status(uint8_t m, uint8_t *addr, bool *has_vhw, uint8_t *energy_mode)
@@ -3698,7 +3715,8 @@ cJSON *rbamp_bridge_i2c_state(void)
             bound++;
             if (s_cfg.modules[m].entries[e].source != RBAMP_ENTRY_VOLTAGE) metering++;
         }
-        cJSON_AddNumberToObject(o, "points", bound);
+        cJSON_AddNumberToObject(o, "points", bound);          /* bound entries, the module's mains-voltage point included */
+        cJSON_AddNumberToObject(o, "metering_points", metering); /* current/power points only (what a "Points" column means) */
         /* placeholder: an absent module no metering point depends on (at most the mains-voltage point, which any
          * voltage-capable module feeds). Typical case: the product-default module 0 @0x50 on a hub whose modules
          * answer at other addresses. Clients don't block an add flow on it. */

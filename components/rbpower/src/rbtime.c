@@ -14,6 +14,8 @@
  * @author RobotBroker
  */
 
+#include "rbgrid_core.h"   /* Kconfig freshness guard (RBGRID_IF_SNTP) */
+#include "rbgrid_tz.h"
 #include "rbpower.h"
 #include "rbpower_enums.h"
 #include "rbpower_constants.h"
@@ -154,6 +156,7 @@ static bool rbtime_tz_is_valid(const char *tz)
     if (tz == NULL || tz[0] == '\0') {
         return false;
     }
+    if (!rbgrid_tz_parse_ok(tz)) return false;   /* RBgrid evaluates the zone itself (rbgrid_tz) */
     bool claims_utc = (strcmp(tz, "UTC") == 0 || strcmp(tz, "UTC0") == 0 ||
                        strcmp(tz, "UTC+0") == 0 || strcmp(tz, "UTC-0") == 0 ||
                        strcmp(tz, "GMT") == 0 || strcmp(tz, "GMT0") == 0);
@@ -378,6 +381,14 @@ static rbpower_err_t rbtime_init_sntp(const rbtime_config_t *config)
              RBGRID_STATS_TIME_SCALE);
     return RBPOWER_OK;
 #endif
+#if !CONFIG_RBGRID_IF_SNTP
+    /* A host keeps the system clock (ESPHome `time: sntp`): no SNTP client of our own; the sync task reads the
+     * clock (rbtime_force_sntp_sync). */
+    (void)config;
+    g_time_ctx.sntp_initialized = true;
+    ESP_LOGI("RBTIME", "SNTP owned by the host — using the system clock");
+    return RBPOWER_OK;
+#endif
     ESP_LOGD("RBTIME", "Initializing SNTP client...");
 
     // Check if network is available
@@ -423,8 +434,21 @@ static rbpower_err_t rbtime_init_sntp(const rbtime_config_t *config)
 /**
  * @brief Force SNTP synchronization
  */
+uint32_t rbtime_not_before(void);
 static rbpower_err_t rbtime_force_sntp_sync(uint32_t timeout_ms)
 {
+#if !CONFIG_RBGRID_IF_SNTP
+    /* Host-kept clock: "synced" once it is real; the after-sync steps run as on an SNTP sync. */
+    (void)timeout_ms;
+    if ((uint32_t)time(NULL) < rbtime_not_before()) return RBPOWER_ERR_TIMEOUT;   /* host not synced yet */
+    rbtime_set_status(RBTIME_STATUS_SYNCED);
+    g_time_ctx.stats.successful_syncs++;
+    g_time_ctx.stats.last_sync_timestamp_us = esp_timer_get_time();
+    g_time_ctx.stats.active_source = RBTIME_SOURCE_SNTP;
+    s_clock_setter = RBTIME_SOURCE_SNTP;
+    rbtime_sntp_notification_cb(NULL);   /* clock-step check, pending records, statistics timers */
+    return RBPOWER_OK;
+#endif
     ESP_LOGD("RBTIME", "Forcing SNTP synchronization...");
 
     // Check WiFi status
@@ -688,14 +712,17 @@ rbpower_err_t rbtime_init(const rbtime_config_t *config)
     if (rbtime_tz_is_valid(config->timezone)) {
         setenv("TZ", config->timezone, 1);
         tzset();
+        if (!rbgrid_tz_set(config->timezone)) rbgrid_tz_set("UTC0");   /* RBgrid's own zone (host-proof) */
         ESP_LOGI("RBTIME", "Timezone applied from config: %s", config->timezone);
     } else if (strlen(config->timezone) == 0) {
         setenv("TZ", "UTC0", 1);
         tzset();
+        rbgrid_tz_set("UTC0");
         ESP_LOGI("RBTIME", "Timezone not configured — running on UTC0");
     } else {
         setenv("TZ", "UTC0", 1);
         tzset();
+        rbgrid_tz_set("UTC0");
         ESP_LOGW("RBTIME", "⚠ Config timezone '%s' is NOT a valid POSIX TZ — running on UTC0 "
                            "(fix via time-sync POST, e.g. 'CET-1CEST,M3.5.0,M10.5.0/3')",
                  config->timezone);
@@ -799,8 +826,10 @@ rbpower_err_t rbtime_deinit(void)
         g_time_ctx.resync_timer = NULL;
     }
 
-    // Stop SNTP
+    // Stop SNTP (only our own: a host's SNTP is not ours to stop)
+#if CONFIG_RBGRID_IF_SNTP
     esp_sntp_stop();
+#endif
 
     // Clear context
     g_time_ctx.initialized = false;
@@ -869,7 +898,9 @@ rbpower_err_t rbtime_kick_sync(void)
     rbpower_err_t err = RBPOWER_OK;
     g_time_ctx.waiting_for_network = false;
     if (!g_time_ctx.sntp_initialized) err = rbtime_init_sntp(&g_time_ctx.config);
+#if CONFIG_RBGRID_IF_SNTP
     else esp_sntp_restart();
+#endif
     rbtime_unlock();
     return err;
 }
@@ -987,6 +1018,7 @@ rbpower_err_t rbtime_set_timezone(const char* timezone)
     // Apply timezone to system
     setenv("TZ", timezone, 1);
     tzset();
+    if (!rbgrid_tz_set(timezone)) rbgrid_tz_set("UTC0");   /* RBgrid's own zone (host-proof) */
 
     rbtime_unlock();
 

@@ -3241,6 +3241,7 @@ void rbpower_mark_planned_restart(void)
 #include "esp_debug_helpers.h"
 #include "xtensa_context.h"
 #include "esp_cpu_utils.h"
+#if CONFIG_RBGRID_PANIC_FORENSICS   /* a host (ESPHome) has its own panic wrapper */
 /** @brief Original ESP-IDF panic handler (linker --wrap). @param[in] info Panic information. */
 extern void __real_esp_panic_handler(panic_info_t *info);
 /**
@@ -3278,6 +3279,7 @@ void IRAM_ATTR __wrap_esp_panic_handler(panic_info_t *info)
     }
     __real_esp_panic_handler(info);
 }
+#endif /* CONFIG_RBGRID_PANIC_FORENSICS */
 
 void rbpower_boot_note_wdt(const char* t0, const char* t1)
 {

@@ -13,6 +13,13 @@
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
+#include "esp_ota_ops.h"
+#include "esp_image_format.h"
+#include "esp_rom_md5.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include "sdkconfig.h"
+#include <string.h>
 
 static const char *TAG = "RBGRID_CORE";
 
@@ -86,6 +93,34 @@ void rbgrid_core_image_confirmed(void)
     rbstats_migrate_notify_image_valid();
 }
 
+/* ---- NVS (RBgrid's own data) ---- */
+#ifndef CONFIG_RBGRID_NVS_PARTITION
+#define CONFIG_RBGRID_NVS_PARTITION "nvs"
+#endif
+const char *rbgrid_nvs_partition(void) { return CONFIG_RBGRID_NVS_PARTITION; }
+static bool rbgrid_nvs_is_default(void) { return strcmp(CONFIG_RBGRID_NVS_PARTITION, NVS_DEFAULT_PART_NAME) == 0; }
+
+esp_err_t rbgrid_nvs_init(void)
+{
+    if (rbgrid_nvs_is_default()) return ESP_OK;   /* the default partition is initialised by the application / host */
+    esp_err_t e = nvs_flash_init_partition(CONFIG_RBGRID_NVS_PARTITION);
+    if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS partition '%s': %s — erased", CONFIG_RBGRID_NVS_PARTITION, esp_err_to_name(e));
+        nvs_flash_erase_partition(CONFIG_RBGRID_NVS_PARTITION);
+        e = nvs_flash_init_partition(CONFIG_RBGRID_NVS_PARTITION);
+    }
+    if (e != ESP_OK) ESP_LOGE(TAG, "NVS partition '%s' init: %s", CONFIG_RBGRID_NVS_PARTITION, esp_err_to_name(e));
+    return e;
+}
+
+esp_err_t rbgrid_nvs_open(const char *ns, nvs_open_mode_t mode, nvs_handle_t *handle)
+{
+    esp_err_t e = nvs_open_from_partition(CONFIG_RBGRID_NVS_PARTITION, ns, mode, handle);
+    if (e == ESP_ERR_NVS_NOT_INITIALIZED && !rbgrid_nvs_is_default() && rbgrid_nvs_init() == ESP_OK)
+        e = nvs_open_from_partition(CONFIG_RBGRID_NVS_PARTITION, ns, mode, handle);
+    return e;
+}
+
 /* ---- Factory reset ----
  * rbgrid_core_factory_reset_arm() sets a marker in RTC no-init memory (it survives esp_restart, not a power
  * cut); the caller restarts the hub. The erase runs at the very start of the next boot
@@ -117,6 +152,10 @@ bool rbgrid_core_factory_reset_at_boot(void)
     const esp_partition_t *cfg = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "config");
     esp_err_t ec = cfg ? esp_partition_erase_range(cfg, 0, cfg->size) : ESP_ERR_NOT_FOUND;
     esp_err_t en = nvs_flash_erase();
+    if (!rbgrid_nvs_is_default()) {   /* RBgrid's own NVS partition (host builds) */
+        esp_err_t er = nvs_flash_erase_partition(CONFIG_RBGRID_NVS_PARTITION);
+        if (en == ESP_OK) en = er;
+    }
     esp_err_t es = ESP_OK;
     if (erase_history) {
         /* internal stats partition (internal-first media); an old partition table without it keeps its history */
@@ -126,4 +165,37 @@ bool rbgrid_core_factory_reset_at_boot(void)
     ESP_LOGW(TAG, "FACTORY RESET done: config %s, nvs %s, history %s", esp_err_to_name(ec), esp_err_to_name(en),
              erase_history ? esp_err_to_name(es) : "kept");
     return true;
+}
+
+/* ---- Running image ---- */
+/* Documented in rbgrid_core.h. Computed once (~1 s of flash reads), then cached. */
+const char *rbgrid_core_running_image_md5(void)
+{
+    static char s_md5[33];
+    static volatile bool s_done;
+    if (s_done) return s_md5;
+    char hex[33] = "";
+    const esp_partition_t* run = esp_ota_get_running_partition();
+    esp_image_metadata_t md;
+    esp_partition_pos_t pos = { .offset = run ? run->address : 0, .size = run ? run->size : 0 };
+    uint8_t* buf = run ? malloc(4096) : NULL;
+    if (buf && esp_image_get_metadata(&pos, &md) == ESP_OK && md.image_len && md.image_len <= run->size) {
+        md5_context_t ctx;
+        esp_rom_md5_init(&ctx);
+        bool ok = true;
+        for (uint32_t off = 0; off < md.image_len && ok; off += 4096) {
+            uint32_t n = md.image_len - off < 4096 ? md.image_len - off : 4096;
+            ok = esp_partition_read(run, off, buf, n) == ESP_OK;
+            if (ok) esp_rom_md5_update(&ctx, buf, n);
+        }
+        if (ok) {
+            uint8_t d[16];
+            esp_rom_md5_final(d, &ctx);
+            for (int i = 0; i < 16; i++) sprintf(&hex[i * 2], "%02x", d[i]);
+        }
+    }
+    free(buf);
+    memcpy(s_md5, hex, sizeof(s_md5));
+    s_done = true;
+    return s_md5;
 }

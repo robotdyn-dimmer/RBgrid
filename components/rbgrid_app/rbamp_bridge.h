@@ -311,6 +311,12 @@ int rbamp_bridge_module_ota_status(char *out, size_t cap);
  */
 bool rbamp_bridge_module_status(uint8_t m, uint8_t *addr, bool *has_vhw, uint8_t *energy_mode);
 /**
+ * @brief Configured modules and how many of them answer (probed, fewer than 3 failed polls in a row).
+ * @param[out] online  Modules online; may be NULL.
+ * @return Configured modules.
+ */
+int rbamp_bridge_module_counts(int *online);
+/**
  * @brief Reboot-gap outcome of module @p m as one text line (for the `etstat` verb).
  * @param[in]  m    Fleet index.
  * @param[out] buf  Text output.

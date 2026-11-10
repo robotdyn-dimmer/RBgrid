@@ -450,7 +450,7 @@ typedef struct
 /**
  * @brief Complete tariff plan
  */
-typedef struct
+typedef struct rbpower_tariff_plan_s
 {
     // === BASIC INFORMATION ===
     char plan_name[RBPOWER_TARIFF_NAME_LENGTH];          ///< Plan name
@@ -2432,5 +2432,23 @@ void rbpower_tariff_invalidate_zone_cache(void);
 extern "C"
 #endif
 void rbpower_tariff_cost_at_default_zone(rbpower_unit_id_t unit_id, float energy_wh, rbgrid_snapshot_base_t* result_base);
+
+/**
+ * @brief Store a pushed external price (Home Assistant `set price`) for [from, until). Kept in rbdynprice.c.
+ * @param buy    Price, currency/kWh (class per the dynprice config: spot by default). May be negative, |x| ≤ 100.
+ * @param sell   Sell price, currency/kWh; NAN = none.
+ * @param from   Start (unix s).
+ * @param until  End (unix s), > from.
+ */
+esp_err_t rbpower_tariff_set_external_price(float buy, float sell, uint32_t from, uint32_t until);
+/** @brief Drop every pushed price. */
+void rbpower_tariff_clear_external_price(void);
+/**
+ * @brief Whether a dynamic price covers ts. In: *buy / *sell = the plan zone's rates (may be NULL). Out: the
+ *        provider's raw price and the final sell price.
+ */
+bool rbpower_tariff_external_price_at(uint32_t ts, float *buy, float *sell);
+/** @brief The plan zone's energy and sell rates at an instant (UTC s). */
+void rbpower_tariff_zone_rates_at(uint32_t ts, float *buy, float *sell);
 
 #endif // RBHOME_TARIFF_H

@@ -3404,6 +3404,20 @@ static void reboot_hard_fallback(void* arg)
     { rbpower_mark_planned_restart(); esp_restart(); }
 }
 
+void rbgrid_core_prepare_restart(void)
+{
+    static bool s_done = false;
+    if (s_done) return;
+    s_done = true;
+    (void)rbpower_stats_flush_open_hours();        /* the open hour as a PARTIAL record */
+    {
+        extern rbpower_err_t rbpower_lifetime_sync_to_rtc(void);
+        (void)rbpower_lifetime_sync_to_rtc();       /* fresh lifetime snapshot in NVS */
+    }
+    rbpower_mark_planned_restart();                 /* runs the pre-restart hook once */
+    ESP_LOGI(TAG, "planned restart prepared (open hours flushed, lifetime persisted)");
+}
+
 esp_err_t rbgrid_system_reboot(uint32_t delay_ms) {
     ESP_LOGI(TAG, "System reboot requested, delay: %lu ms", (unsigned long)delay_ms);
     /* Hard fallback: a planned reboot must ALWAYS happen. The orderly path below

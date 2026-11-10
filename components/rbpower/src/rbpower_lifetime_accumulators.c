@@ -14,6 +14,8 @@
  * (survives power cycles) -> start from zero.
  */
 
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbpower_lifetime_accumulators.h"
 #include "rbpower_lifetime_api.h"
 #include "rbhome_types.h"
@@ -282,7 +284,7 @@ rbpower_err_t rbpower_lifetime_init(void) {
         // RTC empty/corrupt (power cycle, OTA with a layout change) -> last NVS snapshot.
         bool nvs_restored = false;
         nvs_handle_t h;
-        if (nvs_open("rbltm", NVS_READONLY, &h) == ESP_OK) {
+        if (rbgrid_nvs_open("rbltm", NVS_READONLY, &h) == ESP_OK) {
             size_t len = sizeof(g_rtc_backup);
             if (nvs_get_blob(h, "snap", &g_rtc_backup, &len) == ESP_OK &&
                 len == sizeof(g_rtc_backup) && validate_rtc_data()) {
@@ -656,8 +658,8 @@ bool rbpower_lifetime_check_day_rollover(void)
     if (!rbpower_stats_clock_trusted((time_t)s_restored_snapshot_ts)) return false;   /* seed, or a snapshot taken under the fallback clock */
     struct tm a, b;
     time_t snap = (time_t)s_restored_snapshot_ts;
-    localtime_r(&snap, &a);
-    localtime_r(&now, &b);
+    rbgrid_localtime_r(&snap, &a);
+    rbgrid_localtime_r(&now, &b);
     if (a.tm_year == b.tm_year && a.tm_yday == b.tm_yday) return false;
     ESP_LOGW(TAG, "day rollover in downtime: snapshot %04d-%02d-%02d, now %04d-%02d-%02d -> daily counters reset",
              a.tm_year + 1900, a.tm_mon + 1, a.tm_mday, b.tm_year + 1900, b.tm_mon + 1, b.tm_mday);
@@ -1000,7 +1002,7 @@ rbpower_err_t rbpower_lifetime_persist_to_nvs(void) {
         return RBPOWER_ERR_NOT_INIT;
     }
     nvs_handle_t h;
-    esp_err_t e = nvs_open("rbltm", NVS_READWRITE, &h);
+    esp_err_t e = rbgrid_nvs_open("rbltm", NVS_READWRITE, &h);
     if (e != ESP_OK) {
         ESP_LOGW(TAG, "NVS open failed for lifetime snapshot: %s", esp_err_to_name(e));
         return RBPOWER_ERR_INVALID_STATE;

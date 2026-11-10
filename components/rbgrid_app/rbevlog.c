@@ -39,7 +39,10 @@
 #include "cJSON.h"
 #include "rbpower.h"
 #include "rbhome_types.h"
+#include "rbgrid_core.h"
+#if CONFIG_RBGRID_IF_HTTP
 #include "rbwebserver.h"
+#endif
 #if CONFIG_RBGRID_BENCH_FULL || CONFIG_RBGRID_DEBUG_BRIDGE
 #include "rbbench.h"
 /** @brief 1 when POST /api/v1/debug/cmd (remote console verbs) is compiled in (debug builds). */
@@ -49,9 +52,11 @@
 #define RBEVLOG_REMOTE_CMD 0
 #endif
 
+#if CONFIG_RBGRID_IF_HTTP
 /*  @brief Add the web server's CORS headers to a response (rbwebserver CORS policy).
  *  @param[in] req  HTTP request. */
 extern void add_cors_headers(httpd_req_t *req);   /* rbwebserver CORS policy */
+#endif
 
 static const char *TAG = "rbevlog";
 
@@ -67,7 +72,7 @@ static const char *TAG = "rbevlog";
 
 /** @brief Line level: periodic reconciliation trace (RAM only), event, or FAIL invariant. */
 enum { LVL_PERIODIC = 0, LVL_EVENT = 1, LVL_FAIL = 2 };
-static const char *const LVL_NAME[] = { "periodic", "event", "fail" };
+static const char *const LVL_NAME[] __attribute__((unused)) = { "periodic", "event", "fail" };
 
 /** @brief One ring line. */
 typedef struct {
@@ -115,6 +120,9 @@ static uint8_t classify(const char *m)
 
 static void log_sink(const char *line) { rbevlog_add(line); }
 
+static void (*s_listener)(const char *msg, bool fail, uint32_t seq) = NULL;
+void rbevlog_set_listener(void (*fn)(const char *msg, bool fail, uint32_t seq)) { s_listener = fn; }
+
 void rbevlog_init(void)
 {
     if (s_ring) return;
@@ -138,15 +146,57 @@ void rbevlog_add(const char *msg)
     if (xSemaphoreTake(s_mtx, pdMS_TO_TICKS(50)) != pdTRUE) { s_dropped++; return; }
     uint32_t k = s_count++;
     ev_slot_t *sl = &s_ring[k % s_nslots];
-    sl->seq = s_base + k + 1; sl->ts = ts; sl->up_s = up_s(); sl->lvl = lvl;
+    const uint32_t seq = s_base + k + 1;
+    sl->seq = seq; sl->ts = ts; sl->up_s = up_s(); sl->lvl = lvl;
     strlcpy(sl->msg, msg, sizeof(sl->msg));
     for (char *c = sl->msg; *c; c++) if (*c == '\r' || *c == '\n') *c = ' ';
     if (lvl == LVL_FAIL) s_fail_boot++;
     xSemaphoreGive(s_mtx);
     if (lvl == LVL_FAIL && s_writer) xTaskNotifyGive(s_writer);
+    if (s_listener && lvl != LVL_PERIODIC) s_listener(msg, lvl == LVL_FAIL, seq);   /* host copy (ESPHome → HA events) */
 }
 
 /* ---- files ---- */
+/* Lines of this boot's ring after `since` (seq), as JSON for hosts without the HTTP endpoint (ESPHome → HA). */
+char *rbevlog_json(uint32_t since, uint32_t limit, int minlvl)
+{
+    if (limit < 1) limit = 1;
+    if (limit > 100) limit = 100;
+    cJSON *o = cJSON_CreateObject(), *a = cJSON_CreateArray();
+    if (!o || !a) { cJSON_Delete(o); cJSON_Delete(a); return NULL; }
+    cJSON_AddStringToObject(o, "type", "events");
+    cJSON_AddNumberToObject(o, "boot", s_boot);
+    uint32_t last = since; bool more = false;
+    if (s_ring) {
+        xSemaphoreTake(s_mtx, portMAX_DELAY);
+        uint32_t first_seq = s_base + oldest_k() + 1;
+        cJSON_AddNumberToObject(o, "first", first_seq);           /* older lines are only in the files (HTTP) */
+        uint32_t k = (since >= s_base) ? since - s_base : 0;
+        if (k < oldest_k()) k = oldest_k();
+        for (; k < s_count; k++) {
+            const ev_slot_t *sl = &s_ring[k % s_nslots];
+            if (sl->lvl < minlvl) continue;
+            if ((uint32_t)cJSON_GetArraySize(a) >= limit) { more = true; break; }
+            cJSON *e = cJSON_CreateObject();
+            cJSON_AddNumberToObject(e, "seq", sl->seq);
+            cJSON_AddNumberToObject(e, "ts", sl->ts);
+            cJSON_AddNumberToObject(e, "up", sl->up_s);
+            cJSON_AddStringToObject(e, "lvl", sl->lvl == LVL_FAIL ? "fail" : sl->lvl == LVL_EVENT ? "event" : "periodic");
+            cJSON_AddStringToObject(e, "msg", sl->msg);
+            cJSON_AddItemToArray(a, e);
+            last = sl->seq;
+        }
+        if (!more) last = s_base + s_count > last ? s_base + s_count : last;   /* cursor past skipped levels */
+        xSemaphoreGive(s_mtx);
+    }
+    cJSON_AddNumberToObject(o, "next", last);
+    cJSON_AddBoolToObject(o, "more", more);
+    cJSON_AddItemToObject(o, "lines", a);
+    char *r = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    return r;
+}
+
 static void ev_path(char *p, size_t n, int i) { snprintf(p, n, EV_DIR "/ev%d.log", i); }
 
 /** Rotate the files when ev0.log reached EV_FILE_MAX: drop the oldest, shift ev<i> to ev<i+1>. */
@@ -210,7 +260,7 @@ static void writer_task(void *arg)
     (void)arg;
     {   /* which firmware image booted: md5 of the running image (first 8 hex = image id), once per boot */
         const esp_partition_t *run = esp_ota_get_running_partition();
-        const char *md5 = rbwebserver_running_image_md5();
+        const char *md5 = rbgrid_core_running_image_md5();
         char l[96];
         snprintf(l, sizeof(l), "fw: image %.8s (md5 %s) on '%s'", md5[0] ? md5 : "?", md5, run ? run->label : "?");
         rbevlog_add(l);
@@ -284,6 +334,7 @@ void rbevlog_attach_storage(void)
     flush_once(true);
 }
 
+#if CONFIG_RBGRID_IF_HTTP
 /* ---- HTTP: GET /api/v1/system/events ---- */
 /** @brief Chunked JSON output state of one GET /api/v1/system/events response. */
 typedef struct {
@@ -439,8 +490,8 @@ static esp_err_t events_get(httpd_req_t *req)
         if (!got) break;
     }
     char tail[448];
-    const uint32_t ic = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;   /* heap: internal RAM is what task stacks need */
     uint32_t now = rbtime_is_time_valid() ? (uint32_t)rbtime_get_unix_timestamp() : 0;
+    const uint32_t ic = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;   /* heap: internal RAM is what task stacks need */
     snprintf(tail, sizeof(tail),
              "],\"boot\":%lu,\"seq_last\":%lu,\"ram_first\":%lu,\"next\":%lu,\"more\":%s,"
              "\"persist\":%s,\"dropped\":%lu,\"fail_boot\":%lu,\"up\":%lu,\"now\":%lu,"
@@ -567,3 +618,6 @@ void rbevlog_register_http(void)
         ESP_LOGE(TAG, "URI registration FAILED (events=%s cmd=%s) — check max_uri_handlers",
                  esp_err_to_name(eg), esp_err_to_name(ec));
 }
+#else
+void rbevlog_register_http(void) {}   /* no HTTP server in this build */
+#endif

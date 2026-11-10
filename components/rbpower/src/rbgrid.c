@@ -6,6 +6,7 @@
  * @brief rbgrid - implementation of the unit_id helpers and the reserved-UID registry (see rbgrid.h).
  */
 
+#include "rbgrid_core.h"   /* rbgrid_nvs_open: RBgrid data in its NVS partition */
 #include "rbgrid.h"
 
 #include <string.h>
@@ -500,7 +501,7 @@ char* rbgrid_format_unit_uid(rbgrid_unit_uid_t unit_UID, char* buffer, size_t bu
  */
 rbgrid_err_t rbgrid_init_nvs_storage(void)
 {
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &g_nvs_handle);
+    esp_err_t err = rbgrid_nvs_open(NVS_NAMESPACE, NVS_READWRITE, &g_nvs_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "NVS open error: %s", esp_err_to_name(err));
         trigger_uid_error_callback(0, RBGRID_ERR_UNIT_UID_NVS_FAILED, "Failed to open NVS");

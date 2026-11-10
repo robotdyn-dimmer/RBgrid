@@ -10,12 +10,15 @@
  * MQTT Discovery configs) and parses the matching POST bodies back into rbpower structures.
  * JSON keys and values emitted here are part of the public API contract (see the API reference).
  */
+#include "rbgrid_tz.h"   /* RBgrid local time: own zone, not the process TZ */
+#include "rbgrid_core.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <math.h>
 #include "rbjson.h"
+#include "rbdynprice.h"
 #include "rbextflash_operations.h"   /* rbpower_flash_unit_has_history — units-config `history` */
 #include "esp_log.h"
 #include "esp_system.h"
@@ -26,6 +29,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include "esp_timer.h"
+#include "esp_rom_crc.h"   /* rbgrid_core_config_version */
 #include "rbhome_types.h"
 #include "littlefs_raw.h"   /* HA discovery tombstones (/ha_tomb) */
 #include "rbpower_constants.h"
@@ -265,6 +269,241 @@ static bool rbjson_extra_supply(const rbpower_home_unit_t* u)
         return g_home_network.specialized.has_alternative_supply &&
                u->definition.unit_id != g_home_network.system.alternative_supply_unit_id;
     return false;
+}
+
+/* System totals at the grid boundary (supply points only; load points are breakdowns and never summed). Shared by
+ * the telemetry builder and rbgrid_core_system_totals() for hosts. Call with rbpower_home_lock held. */
+void rbgrid_core_system_totals(rbgrid_system_totals_t *t, bool with_energy)
+{
+    memset(t, 0, sizeof(*t));
+    float net_power = 0.0f, net_reactive = 0.0f;
+    uint8_t net_direction = g_home_network.system.net_direction;
+    if (g_home_network.specialized.has_main_supply) {
+        rbpower_main_supply_t* msp = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
+        if (msp) {
+            net_power += msp->statistics_3sec.electrical.rms_samples_count > 0 ?
+                msp->statistics_3sec.electrical.power_active_sum / msp->statistics_3sec.electrical.rms_samples_count :
+                msp->realtime_200ms.power_active_w;
+            net_reactive += msp->statistics_3sec.electrical.rms_samples_count > 0 ?
+                msp->statistics_3sec.electrical.power_reactive_sum / msp->statistics_3sec.electrical.rms_samples_count :
+                msp->realtime_200ms.power_reactive_var;
+            net_direction = msp->realtime_200ms.direction;   // main supply drives system direction
+        }
+    }
+    if (g_home_network.specialized.has_main_supply || g_home_network.specialized.has_alternative_supply) {
+        /* further supply-role units beyond the specialized main/alt (a three-phase input split into one point per
+         * phase): part of the grid boundary too */
+        for (int i = 0; i < g_home_network.units_count; i++) {
+            rbpower_home_unit_t* u2 = &g_home_network.units[i];
+            if (!rbjson_extra_supply(u2)) continue;
+            net_power    += u2->realtime_average_200ms.average_200ms.power_active_avg_w;
+            net_reactive += u2->realtime_average_200ms.average_200ms.power_reactive_avg_var;
+        }
+    }
+    if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
+        rbpower_alternative_supply_t* asp = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
+        net_power += asp->statistics_3sec.electrical_samples_count > 0 ?
+            asp->statistics_3sec.power_active_sum / asp->statistics_3sec.electrical_samples_count :
+            asp->realtime_200ms.power_active_w;
+        /* alt reactive too — without it system p_rea is inconsistent with p_act when an alt
+         * supply carries vars. */
+        net_reactive += asp->statistics_3sec.electrical_samples_count > 0 ?
+            asp->statistics_3sec.power_reactive_sum / asp->statistics_3sec.electrical_samples_count :
+            asp->realtime_200ms.power_reactive_var;
+    }
+
+    /* Role-based fallback: on an install without the legacy specialized setup
+     * there are NO specialized main/alt structs — a supply is an ordinary (rbAmp) unit
+     * carrying the MAIN_SUPPLY/ALTERNATIVE_SUPPLY role. Live system power then aggregates by
+     * ROLE across units. Only when neither specialized supply exists (no double-count). */
+    if (!g_home_network.specialized.has_main_supply && !g_home_network.specialized.has_alternative_supply) {
+        for (int i = 0; i < g_home_network.units_count; i++) {
+            rbpower_home_unit_t* u2 = &g_home_network.units[i];
+            if (!u2->has_valid_definition) continue;
+            if (u2->definition.role != RBPOWER_ROLE_MAIN_SUPPLY &&
+                u2->definition.role != RBPOWER_ROLE_ALTERNATIVE_SUPPLY) continue;
+            net_power    += u2->realtime_average_200ms.average_200ms.power_active_avg_w;
+            net_reactive += u2->realtime_average_200ms.average_200ms.power_reactive_avg_var;
+            if (u2->definition.role == RBPOWER_ROLE_MAIN_SUPPLY)
+                net_direction = u2->realtime_average_200ms.zc_analysis.current_direction;
+        }
+    }
+
+    t->p_w = net_power; t->q_var = net_reactive; t->direction = net_direction;
+    {
+        uint8_t units_valid = 0, units_present = 0;
+        for (int i = 0; i < g_home_network.units_count; i++) {
+            if (!g_home_network.units[i].has_valid_definition) continue;
+            units_valid++;
+            if (g_home_network.units[i].hardware_present) units_present++;
+        }
+        t->units_valid = units_valid; t->units_present = units_present;
+    }
+    if (!with_energy) return;
+    {
+        double e_in = 0, e_out = 0, e_day_in = 0, e_day_out = 0;
+        double cost_total = 0, cost_day = 0, rev_total = 0, rev_day = 0;
+        if (g_home_network.specialized.has_main_supply) {
+            rbpower_main_supply_t* ms = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
+            if (ms) {
+                /* the exact totalizer path, as the points snapshot (rbgrid_core_points_snapshot) uses */
+                e_in     += lifetime_wh(g_home_network.system.main_supply_unit_id, true,  ms->lifetime_accumulators.total_energy_consumed_wh);
+                e_out    += lifetime_wh(g_home_network.system.main_supply_unit_id, false, ms->lifetime_accumulators.total_energy_supplied_wh);
+                e_day_in += ms->lifetime_accumulators.daily_energy_consumed_wh;
+                e_day_out+= ms->lifetime_accumulators.daily_energy_supplied_wh;
+                cost_total += ms->lifetime_accumulators.total_cost_consumed;
+                cost_day   += ms->lifetime_accumulators.daily_cost_consumed;
+                rev_total  += ms->lifetime_accumulators.total_cost_supplied;
+                rev_day    += ms->lifetime_accumulators.daily_cost_supplied;
+            }
+        }
+        if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
+            rbpower_alternative_supply_t* as = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
+            e_in     += lifetime_wh(g_home_network.system.alternative_supply_unit_id, true,  as->lifetime_accumulators.total_energy_consumed_wh);
+            e_out    += lifetime_wh(g_home_network.system.alternative_supply_unit_id, false, as->lifetime_accumulators.total_energy_supplied_wh);
+            e_day_in += as->lifetime_accumulators.daily_energy_consumed_wh;
+            e_day_out+= as->lifetime_accumulators.daily_energy_supplied_wh;
+            cost_total += as->lifetime_accumulators.total_cost_consumed;
+            cost_day   += as->lifetime_accumulators.daily_cost_consumed;
+            rev_total  += as->lifetime_accumulators.total_cost_supplied;
+            rev_day    += as->lifetime_accumulators.daily_cost_supplied;
+        }
+        for (int i = 0; i < g_home_network.units_count; i++) {   /* + further supply points (per phase) */
+            rbpower_home_unit_t* u2 = &g_home_network.units[i];
+            if (!rbjson_extra_supply(u2)) continue;
+            const rbpower_lifetime_accumulators_basic_t* la = &u2->statistics.lifetime_accumulators;
+            e_in      += lifetime_wh(u2->definition.unit_id, true,  la->total_energy_consumed_wh);
+            e_out     += lifetime_wh(u2->definition.unit_id, false, la->total_energy_supplied_wh);
+            e_day_in  += la->daily_energy_consumed_wh;
+            e_day_out += la->daily_energy_supplied_wh;
+            cost_total += la->total_cost_consumed;
+            cost_day   += la->daily_cost_consumed;
+            rev_total  += la->total_cost_supplied;
+            rev_day    += la->daily_cost_supplied;
+        }
+        t->e_in_wh = e_in; t->e_out_wh = e_out; t->e_day_in_wh = e_day_in; t->e_day_out_wh = e_day_out;
+        t->cost_total = cost_total; t->cost_day = cost_day; t->rev_total = rev_total; t->rev_day = rev_day;
+    }
+}
+
+/* Live tariff for hosts (no JSON): the same figures as telemetry `system.tariff{}`. */
+void rbgrid_core_tariff_now(rbgrid_tariff_now_t *t)
+{
+    memset(t, 0, sizeof(*t));
+    int zid = -1; float buy = 0, sell = 0;
+    rbpower_tariff_get_diag(NULL, NULL, NULL, NULL, &zid, &buy, &sell, NULL);
+    if (zid >= 0 && zid < RBPOWER_TARIFF_ZONE_COUNT)
+        snprintf(t->zone, sizeof(t->zone), "%s", rbpower_tariff_zone_type_text[zid]);
+    t->buy_rate = buy;
+    t->sell_rate = sell;
+    double buy_all = buy;
+    const rbpower_tariff_plan_t *tp = rbpower_tariff_get_current_plan();
+    if (tp && buy > 0) {
+        double fees = (double)tp->grid_usage_fee_per_kwh + (double)tp->energy_tax_per_kwh + (double)tp->renewable_levy_per_kwh;
+        buy_all = ((double)buy + fees) * (1.0 + (double)tp->vat_percent / 100.0);
+    }
+    t->buy_rate_all_in = buy_all;
+    snprintf(t->currency, sizeof(t->currency), "%s", rbpower_tariff_currency());
+    t->placeholder = tp && rbpower_tariff_plan_is_placeholder(tp->plan_name, tp->provider_name);
+    t->time_valid = rbtime_is_time_valid();
+    /* dynamic price in force now: it replaces the plan figures */
+    rbdp_price_t pr;
+    if (t->time_valid && rbdynprice_resolve((uint32_t)time(NULL), buy, sell, &pr)) {
+        t->external = true;
+        t->buy_rate = pr.raw;
+        t->buy_rate_all_in = pr.buy;
+        t->sell_rate = pr.sell;
+    }
+    bool bk = false;
+    const char *src = rbdynprice_source_now(&bk);
+    snprintf(t->price_state, sizeof(t->price_state), "%s", rbdynprice_state());
+    snprintf(t->price_source, sizeof(t->price_source), "%s%s", src, bk ? " (backup)" : "");
+    t->price_valid_until = rbdynprice_valid_until();
+}
+
+/* Version of the active configuration: CRC32 of the points + tariff plan JSON, as 8 hex digits. Builds both
+ * documents (a few KB), so a host calls it rarely (on change or every ~30 s). Takes the home lock itself. */
+void rbgrid_core_config_version(char out[9])
+{
+    uint32_t crc = 0;
+    rbpower_home_lock();
+    char *u = rbgrid_core_json_ctx() ? rbgrid_json_create_units_config(rbgrid_core_json_ctx()) : NULL;
+    rbpower_home_unlock();
+    char *t = rbgrid_core_json_ctx() ? rbgrid_json_create_rbpower_tariff_plan_config(rbgrid_core_json_ctx()) : NULL;
+    /* the documents carry a timestamp / live counters: hash only the stable "data" part of each */
+    const char *docs[2] = { u, t };
+    for (int i = 0; i < 2; i++) {
+        if (!docs[i]) continue;
+        cJSON *j = cJSON_Parse(docs[i]);
+        cJSON *d = j ? cJSON_GetObjectItem(j, "data") : NULL;
+        if (d && i == 0) {   /* points: drop live state fields */
+            cJSON *arr = cJSON_GetObjectItem(d, "units"), *e = NULL;
+            cJSON_ArrayForEach(e, arr) {
+                static const char *const live[] = { "has_realtime_data", "last_update_us", "total_updates", "history",
+                                                    "created_timestamp_us" };
+                for (size_t k = 0; k < sizeof(live) / sizeof(live[0]); k++) cJSON_DeleteItemFromObject(e, live[k]);
+            }
+        }
+        char *s = d ? cJSON_PrintUnformatted(d) : NULL;
+        if (s) { crc = esp_rom_crc32_le(crc, (const uint8_t *)s, strlen(s)); free(s); }
+        cJSON_Delete(j);
+    }
+    free(u); free(t);
+    snprintf(out, 9, "%08lx", (unsigned long)crc);
+}
+
+/* Per-point snapshot for hosts. The specialized main / alternative supply keep their live and lifetime values in
+ * their own structs (as the telemetry `main` / `alt` blocks read them); every other point uses its unit record.
+ * Call with rbpower_home_lock held. */
+int rbgrid_core_points_snapshot(rbgrid_point_snap_t *out, int max)
+{
+    int n = 0;
+    for (int i = 0; i < g_home_network.units_count && n < max; i++) {
+        rbpower_home_unit_t *u = &g_home_network.units[i];
+        if (!u->has_valid_definition || !u->definition.is_active) continue;
+        if (u->definition.type == RBPOWER_METRIC_VOLTAGE_BUS) continue;
+        rbgrid_point_snap_t *o = &out[n++];
+        memset(o, 0, sizeof(*o));
+        const rbpower_unit_id_t uid = u->definition.unit_id;
+        o->unit_id = uid;
+        o->inside = u->definition.inside_unit_id;
+        o->role = (uint8_t)u->definition.role;
+        o->present = u->hardware_present;
+        o->estimated = rbpower_get_unit_energy_mode(uid) == RBPOWER_ENERGY_MODE_HOST;
+        strlcpy(o->point, u->definition.point, sizeof(o->point));
+        strlcpy(o->name, u->definition.name, sizeof(o->name));
+        o->p_w = u->realtime_average_200ms.average_200ms.power_active_avg_w;
+        o->i_a = u->realtime_average_200ms.average_200ms.current_rms_avg;
+        o->v_v = u->realtime_average_200ms.average_200ms.voltage_rms_avg;
+        const rbpower_lifetime_accumulators_basic_t *la = &u->statistics.lifetime_accumulators;
+        float fin = la->total_energy_consumed_wh, fout = la->total_energy_supplied_wh;
+        o->cost_total = la->total_cost_consumed;
+        o->rev_total = la->total_cost_supplied;
+        if (g_home_network.specialized.has_main_supply && uid == g_home_network.system.main_supply_unit_id &&
+            g_home_network.specialized.main_supply) {
+            rbpower_main_supply_t *ms = (rbpower_main_supply_t *)g_home_network.specialized.main_supply;
+            o->p_w = ms->statistics_3sec.electrical.rms_samples_count > 0 ?
+                ms->statistics_3sec.electrical.power_active_sum / ms->statistics_3sec.electrical.rms_samples_count :
+                ms->realtime_200ms.power_active_w;
+            fin = ms->lifetime_accumulators.total_energy_consumed_wh;
+            fout = ms->lifetime_accumulators.total_energy_supplied_wh;
+            o->cost_total = ms->lifetime_accumulators.total_cost_consumed;
+            o->rev_total = ms->lifetime_accumulators.total_cost_supplied;
+        } else if (g_home_network.specialized.has_alternative_supply && uid == g_home_network.system.alternative_supply_unit_id &&
+                   g_home_network.specialized.alternative_supply) {
+            rbpower_alternative_supply_t *as = (rbpower_alternative_supply_t *)g_home_network.specialized.alternative_supply;
+            o->p_w = as->statistics_3sec.electrical_samples_count > 0 ?
+                as->statistics_3sec.power_active_sum / as->statistics_3sec.electrical_samples_count :
+                as->realtime_200ms.power_active_w;
+            fin = as->lifetime_accumulators.total_energy_consumed_wh;
+            fout = as->lifetime_accumulators.total_energy_supplied_wh;
+            o->cost_total = as->lifetime_accumulators.total_cost_consumed;
+            o->rev_total = as->lifetime_accumulators.total_cost_supplied;
+        }
+        o->e_in_wh  = lifetime_wh(uid, true, fin);
+        o->e_out_wh = lifetime_wh(uid, false, fout);
+    }
+    return n;
 }
 
 /** @brief Add the CT nominal of a channel in A, from the module's sensor class + the channel's model code
@@ -3219,59 +3458,9 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
      * is only ever set to 0 at init and never updated for injected supplies (net_pwr would read 0
      * while units.main.p_act is non-zero). Supply-role units (main + alt) = the system
      * boundary; load sub-meters are breakdowns, excluded (no double-count). */
-    float net_power = 0.0f, net_reactive = 0.0f;
-    uint8_t net_direction = g_home_network.system.net_direction;
-    if (g_home_network.specialized.has_main_supply) {
-        rbpower_main_supply_t* msp = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
-        if (msp) {
-            net_power += msp->statistics_3sec.electrical.rms_samples_count > 0 ?
-                msp->statistics_3sec.electrical.power_active_sum / msp->statistics_3sec.electrical.rms_samples_count :
-                msp->realtime_200ms.power_active_w;
-            net_reactive += msp->statistics_3sec.electrical.rms_samples_count > 0 ?
-                msp->statistics_3sec.electrical.power_reactive_sum / msp->statistics_3sec.electrical.rms_samples_count :
-                msp->realtime_200ms.power_reactive_var;
-            net_direction = msp->realtime_200ms.direction;   // main supply drives system direction
-        }
-    }
-    if (g_home_network.specialized.has_main_supply || g_home_network.specialized.has_alternative_supply) {
-        /* further supply-role units beyond the specialized main/alt (a three-phase input split into one point per
-         * phase): part of the grid boundary too */
-        for (int i = 0; i < g_home_network.units_count; i++) {
-            rbpower_home_unit_t* u2 = &g_home_network.units[i];
-            if (!rbjson_extra_supply(u2)) continue;
-            net_power    += u2->realtime_average_200ms.average_200ms.power_active_avg_w;
-            net_reactive += u2->realtime_average_200ms.average_200ms.power_reactive_avg_var;
-        }
-    }
-    if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
-        rbpower_alternative_supply_t* asp = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
-        net_power += asp->statistics_3sec.electrical_samples_count > 0 ?
-            asp->statistics_3sec.power_active_sum / asp->statistics_3sec.electrical_samples_count :
-            asp->realtime_200ms.power_active_w;
-        /* alt reactive too — without it system p_rea is inconsistent with p_act when an alt
-         * supply carries vars. */
-        net_reactive += asp->statistics_3sec.electrical_samples_count > 0 ?
-            asp->statistics_3sec.power_reactive_sum / asp->statistics_3sec.electrical_samples_count :
-            asp->realtime_200ms.power_reactive_var;
-    }
-
-    /* Role-based fallback: on an install without the legacy specialized setup
-     * there are NO specialized main/alt structs — a supply is an ordinary (rbAmp) unit
-     * carrying the MAIN_SUPPLY/ALTERNATIVE_SUPPLY role. Live system power then aggregates by
-     * ROLE across units. Only when neither specialized supply exists (no double-count). */
-    if (!g_home_network.specialized.has_main_supply && !g_home_network.specialized.has_alternative_supply) {
-        for (int i = 0; i < g_home_network.units_count; i++) {
-            rbpower_home_unit_t* u2 = &g_home_network.units[i];
-            if (!u2->has_valid_definition) continue;
-            if (u2->definition.role != RBPOWER_ROLE_MAIN_SUPPLY &&
-                u2->definition.role != RBPOWER_ROLE_ALTERNATIVE_SUPPLY) continue;
-            net_power    += u2->realtime_average_200ms.average_200ms.power_active_avg_w;
-            net_reactive += u2->realtime_average_200ms.average_200ms.power_reactive_avg_var;
-            if (u2->definition.role == RBPOWER_ROLE_MAIN_SUPPLY)
-                net_direction = u2->realtime_average_200ms.zc_analysis.current_direction;
-        }
-    }
-
+    rbgrid_system_totals_t st_tot; rbgrid_core_system_totals(&st_tot, false);
+    float net_power = st_tot.p_w, net_reactive = st_tot.q_var;
+    uint8_t net_direction = st_tot.direction;
     cJSON_AddNumberToObject(root, "net_dir", net_direction);
     cJSON_AddNumberToObject(root, "net_pwr", round(net_power * 100) / 100);
 
@@ -3285,56 +3474,15 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
     {
         cJSON* sys = cJSON_CreateObject();
         if (sys) {
-            uint8_t units_valid = 0, units_present = 0;
-            for (int i = 0; i < g_home_network.units_count; i++) {
-                if (!g_home_network.units[i].has_valid_definition) continue;
-                units_valid++;
-                if (g_home_network.units[i].hardware_present) units_present++;
-            }
+            uint8_t units_valid = st_tot.units_valid, units_present = st_tot.units_present;
             cJSON_AddNumberToObject(sys, "p_act",     round(net_power * 100) / 100);
             cJSON_AddNumberToObject(sys, "p_rea",     round(net_reactive * 100) / 100);
             // LEAN: skip the lifetime/economics aggregation (the heavy part — lifetime-accumulator reads
             // across supplies + 8 monetary fields) every push. Clients read these from /api/v1/summary.
             if (!lean) {
-                double e_in = 0, e_out = 0, e_day_in = 0, e_day_out = 0;
-                double cost_total = 0, cost_day = 0, rev_total = 0, rev_day = 0;
-                if (g_home_network.specialized.has_main_supply) {
-                    rbpower_main_supply_t* ms = (rbpower_main_supply_t*)g_home_network.specialized.main_supply;
-                    if (ms) {
-                        e_in     += ms->lifetime_accumulators.total_energy_consumed_wh;
-                        e_out    += ms->lifetime_accumulators.total_energy_supplied_wh;
-                        e_day_in += ms->lifetime_accumulators.daily_energy_consumed_wh;
-                        e_day_out+= ms->lifetime_accumulators.daily_energy_supplied_wh;
-                        cost_total += ms->lifetime_accumulators.total_cost_consumed;
-                        cost_day   += ms->lifetime_accumulators.daily_cost_consumed;
-                        rev_total  += ms->lifetime_accumulators.total_cost_supplied;
-                        rev_day    += ms->lifetime_accumulators.daily_cost_supplied;
-                    }
-                }
-                if (g_home_network.specialized.has_alternative_supply && g_home_network.specialized.alternative_supply) {
-                    rbpower_alternative_supply_t* as = (rbpower_alternative_supply_t*)g_home_network.specialized.alternative_supply;
-                    e_in     += as->lifetime_accumulators.total_energy_consumed_wh;
-                    e_out    += as->lifetime_accumulators.total_energy_supplied_wh;
-                    e_day_in += as->lifetime_accumulators.daily_energy_consumed_wh;
-                    e_day_out+= as->lifetime_accumulators.daily_energy_supplied_wh;
-                    cost_total += as->lifetime_accumulators.total_cost_consumed;
-                    cost_day   += as->lifetime_accumulators.daily_cost_consumed;
-                    rev_total  += as->lifetime_accumulators.total_cost_supplied;
-                    rev_day    += as->lifetime_accumulators.daily_cost_supplied;
-                }
-                for (int i = 0; i < g_home_network.units_count; i++) {   /* + further supply points (per phase) */
-                    rbpower_home_unit_t* u2 = &g_home_network.units[i];
-                    if (!rbjson_extra_supply(u2)) continue;
-                    const rbpower_lifetime_accumulators_basic_t* la = &u2->statistics.lifetime_accumulators;
-                    e_in      += lifetime_wh(u2->definition.unit_id, true,  la->total_energy_consumed_wh);
-                    e_out     += lifetime_wh(u2->definition.unit_id, false, la->total_energy_supplied_wh);
-                    e_day_in  += la->daily_energy_consumed_wh;
-                    e_day_out += la->daily_energy_supplied_wh;
-                    cost_total += la->total_cost_consumed;
-                    cost_day   += la->daily_cost_consumed;
-                    rev_total  += la->total_cost_supplied;
-                    rev_day    += la->daily_cost_supplied;
-                }
+                rbgrid_system_totals_t et; rbgrid_core_system_totals(&et, true);
+                double e_in = et.e_in_wh, e_out = et.e_out_wh, e_day_in = et.e_day_in_wh, e_day_out = et.e_day_out_wh;
+                double cost_total = et.cost_total, cost_day = et.cost_day, rev_total = et.rev_total, rev_day = et.rev_day;
                 cJSON_AddNumberToObject(sys, "e_in",      round(e_in * 100) / 100);
                 cJSON_AddNumberToObject(sys, "e_out",     round(e_out * 100) / 100);
                 cJSON_AddNumberToObject(sys, "e_day_in",  round(e_day_in * 100) / 100);
@@ -3359,10 +3507,10 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
                      * last_reset for the monetary day entities; also lets a client label "today" */
                     time_t nowt = time(NULL);
                     if (nowt > 1600000000) {
-                        struct tm lt; localtime_r(&nowt, &lt);
+                        struct tm lt; rbgrid_localtime_r(&nowt, &lt);
                         lt.tm_hour = 0; lt.tm_min = 0; lt.tm_sec = 0; lt.tm_isdst = -1;
-                        time_t mid = mktime(&lt);
-                        struct tm lm; localtime_r(&mid, &lm);
+                        time_t mid = rbgrid_mktime(&lt);
+                        struct tm lm; rbgrid_localtime_r(&mid, &lm);
                         char iso[32]; strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%S%z", &lm);
                         size_t n = strlen(iso);   /* +0900 -> +09:00 (HA/ISO parsers) */
                         if (n >= 5 && n + 1 < sizeof(iso)) { iso[n + 1] = 0; iso[n] = iso[n - 1]; iso[n - 1] = iso[n - 2]; iso[n - 2] = ':'; }
@@ -3388,34 +3536,26 @@ char* rbgrid_json_create_telemetry_frame(uint8_t frame) {
                 /* Live tariff frame — active zone, buy/sell rates and the instant currency/hour at the
                  * system net power ("cost per hour right now"). Rates 0 = no active plan. cost_rate_h sign follows net_power (negative = earning on export). */
                 {
-                    int zid = -1; float buy = 0, sell = 0;
-                    rbpower_tariff_get_diag(NULL, NULL, NULL, NULL, &zid, &buy, &sell, NULL);
+                    rbgrid_tariff_now_t tn;           /* the plan zone, or the dynamic price when one covers now */
+                    rbgrid_core_tariff_now(&tn);
                     cJSON* tar = cJSON_CreateObject();
                     if (tar) {
-                        if (zid >= 0 && zid < RBPOWER_TARIFF_ZONE_COUNT)
-                            cJSON_AddStringToObject(tar, "zone", rbpower_tariff_zone_type_text[zid]);
-                        cJSON_AddRoundedDouble(tar, "buy_rate", buy, 6);
-                        cJSON_AddRoundedDouble(tar, "sell_rate", sell, 6);
-                        /* Same basis as cost_day / record c (a rate at the bare zone price next to an all-in
-                         * "Today" total does not add up): consumption is booked
-                         * as (zone rate + per-kWh fees) × (1 + VAT); feed-in revenue is the plain sell rate. */
-                        double buy_all = buy;
-                        {
-                            const rbpower_tariff_plan_t* tp = rbpower_tariff_get_current_plan();
-                            if (tp && buy > 0) {
-                                double fees = (double)tp->grid_usage_fee_per_kwh + (double)tp->energy_tax_per_kwh + (double)tp->renewable_levy_per_kwh;
-                                buy_all = ((double)buy + fees) * (1.0 + (double)tp->vat_percent / 100.0);
-                            }
-                        }
-                        cJSON_AddRoundedDouble(tar, "buy_rate_all_in", buy_all, 6);
-                        double rate_h = (net_power / 1000.0) * (net_power >= 0 ? buy_all : sell);
+                        if (tn.zone[0]) cJSON_AddStringToObject(tar, "zone", tn.zone);
+                        cJSON_AddRoundedDouble(tar, "buy_rate", tn.buy_rate, 6);
+                        cJSON_AddRoundedDouble(tar, "sell_rate", tn.sell_rate, 6);
+                        /* Same basis as cost_day / record c: consumption at the all-in rate ((zone rate + per-kWh
+                         * fees) × (1 + VAT), or the dynamic all-in price); feed-in revenue at the plain sell rate. */
+                        cJSON_AddRoundedDouble(tar, "buy_rate_all_in", tn.buy_rate_all_in, 6);
+                        double rate_h = (net_power / 1000.0) * (net_power >= 0 ? tn.buy_rate_all_in : tn.sell_rate);
                         cJSON_AddRoundedDouble(tar, "cost_rate_h", rate_h, 6);
-                        cJSON_AddStringToObject(tar, "currency", rbpower_tariff_currency());
-                        {   /* money is computed off the built-in demo plan until the user saves one */
-                            const rbpower_tariff_plan_t* tpp = rbpower_tariff_get_current_plan();
-                            if (tpp && rbpower_tariff_plan_is_placeholder(tpp->plan_name, tpp->provider_name))
-                                cJSON_AddBoolToObject(tar, "placeholder", true);
-                        }
+                        cJSON_AddStringToObject(tar, "currency", tn.currency);
+                        if (tn.placeholder) cJSON_AddBoolToObject(tar, "placeholder", true);   /* demo plan until the user saves one */
+                        /* dynamic prices: live state for the app (no polling of get dynprice) */
+                        cJSON_AddBoolToObject(tar, "dynamic", tn.external);
+                        cJSON_AddStringToObject(tar, "price_state", tn.price_state);
+                        cJSON_AddStringToObject(tar, "price_source", tn.price_source);
+                        cJSON_AddNumberToObject(tar, "price_valid_until", tn.price_valid_until);
+                        cJSON_AddNumberToObject(tar, "price_gen", rbdynprice_generation());
                         cJSON_AddItemToObject(sys, "tariff", tar);
                     }
                 }

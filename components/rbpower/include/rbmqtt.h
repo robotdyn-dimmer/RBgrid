@@ -15,11 +15,13 @@
 
 #include <stdbool.h>
 #include "esp_err.h"
+#include "sdkconfig.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#if CONFIG_RBGRID_IF_MQTT
 /**
  * @brief Initialize + start the MQTT client (idempotent). Connects asynchronously;
  *        esp-mqtt auto-reconnects. Publishes are gated on the connected state.
@@ -142,15 +144,30 @@ void rbmqtt_register_connect_cb(rbmqtt_connect_cb_t cb);
 
 /** @brief Stop + destroy the client (Wi-Fi down / shutdown). */
 void rbmqtt_stop(void);
+/** @brief TLS state code: off | waiting_clock | connecting | ok | expired | not_yet_valid | unknown_ca | name_mismatch | tls_error. */
+const char *rbmqtt_tls_state(void);
+/** @brief true when the uploaded CA (RBMQTT_CA_FILE) is in use instead of the public bundle. */
+bool rbmqtt_tls_custom_ca(void);
+#else  /* !CONFIG_RBGRID_IF_MQTT: MQTT compiled out — inline no-ops, so callers build unchanged */
+typedef char* (*rbmqtt_cmd_handler_t)(const char *data, int data_len);
+typedef void (*rbmqtt_connect_cb_t)(void);
+static inline esp_err_t rbmqtt_init(const char *u, const char *c, const char *l) { (void)u; (void)c; (void)l; return ESP_ERR_NOT_SUPPORTED; }
+static inline bool rbmqtt_is_connected(void) { return false; }
+static inline const char *rbmqtt_broker_uri(void) { return ""; }
+static inline esp_err_t rbmqtt_publish(const char *t, const char *p, int q, bool r) { (void)t; (void)p; (void)q; (void)r; return ESP_ERR_NOT_SUPPORTED; }
+static inline esp_err_t rbmqtt_publish_offline(void) { return ESP_ERR_NOT_SUPPORTED; }
+static inline esp_err_t rbmqtt_publish_nb(const char *t, const char *p, int q, bool r) { (void)t; (void)p; (void)q; (void)r; return ESP_ERR_NOT_SUPPORTED; }
+static inline esp_err_t rbmqtt_enable_commands(const char *c, const char *r, rbmqtt_cmd_handler_t h) { (void)c; (void)r; (void)h; return ESP_ERR_NOT_SUPPORTED; }
+static inline void rbmqtt_register_connect_cb(rbmqtt_connect_cb_t cb) { (void)cb; }
+static inline void rbmqtt_stop(void) {}
+static inline const char *rbmqtt_tls_state(void) { return "off"; }
+static inline bool rbmqtt_tls_custom_ca(void) { return false; }
+#endif /* CONFIG_RBGRID_IF_MQTT */
 
 /** The user's broker CA (PEM, one or more certificates); when present it replaces the public CA bundle for mqtts://. */
 #define RBMQTT_CA_FILE "/mqtt_ca.pem"
 /** Largest accepted CA file (bytes). */
 #define RBMQTT_CA_MAX  8192
-/** @brief TLS state code: off | waiting_clock | connecting | ok | expired | not_yet_valid | unknown_ca | name_mismatch | tls_error. */
-const char *rbmqtt_tls_state(void);
-/** @brief true when the uploaded CA (RBMQTT_CA_FILE) is in use instead of the public bundle. */
-bool rbmqtt_tls_custom_ca(void);
 
 #ifdef __cplusplus
 }

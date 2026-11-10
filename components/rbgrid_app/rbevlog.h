@@ -34,6 +34,16 @@ void rbevlog_attach_storage(void);
  *         counted) if the lock is not obtained within 50 ms.
  *  @param[in] msg  NUL-terminated text; truncated to 199 bytes, CR/LF replaced by spaces. NULL is ignored. */
 void rbevlog_add(const char *msg);
+/** @brief Register a listener called with every event and FAIL line (not the periodic trace), in the caller's task:
+ *         copy the text and return at once. One listener; NULL removes it.
+ *  @param[in] fn  Listener (msg, fail). */
+void rbevlog_set_listener(void (*fn)(const char *msg, bool fail, uint32_t seq));   /* seq = the line's log sequence */
+/** @brief This boot's ring lines after @p since as JSON {"type":"events","boot","first","next","more","lines":[{seq,ts,up,
+ *         lvl,msg}]}; pass `next` as the next `since`. malloc'd; caller frees.
+ *  @param since   Last seq already seen (0 = from the oldest line in RAM).
+ *  @param limit   Lines at most (1..100).
+ *  @param minlvl  0 all, 1 event + fail, 2 fail only. */
+char *rbevlog_json(uint32_t since, uint32_t limit, int minlvl);
 /** @brief Register GET /api/v1/system/events (+ POST /api/v1/debug/cmd on debug builds) on the running web
  *         server. Logs an error if the server has no free URI handler slots. */
 void rbevlog_register_http(void);
