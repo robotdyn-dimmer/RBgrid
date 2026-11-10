@@ -28,7 +28,7 @@ the bench tools.
 
 ## Requirements
 
-- **Hub:** **16 MB flash and PSRAM** (required: the core keeps its large tables in PSRAM). Tested:
+- **Hub:** **16 MB flash and PSRAM** (required: the core keeps its large tables in PSRAM). Ready-made images:
   - ESP32-WROVER (quad PSRAM);
   - ESP32-S3 N16R8 (octal PSRAM).
 - **Measurement:** rbAmp I²C modules (see [rbamp.com](https://www.rbamp.com/)), up to 8 on one bus.
@@ -39,34 +39,47 @@ the bench tools.
 
 ## Install
 
-1. **Copy one of the example configurations** from `esphome/` in this repository next to your ESPHome configs:
-   - `rbgrid-hub-c14.yaml`: ESP32-WROVER;
-   - `rbgrid-hub-s3.yaml`: ESP32-S3 N16R8;
-   - `rbgrid-hub-3p.yaml`: ESP32-S3 with a three-phase STD-U3I3 module.
-2. **`secrets.yaml`:** `wifi_ssid`, `wifi_password`, and, optionally, an API encryption key and an OTA password.
-3. **Point `external_components` at this repository** and keep `partitions_rbgrid_esphome.csv` beside the YAML:
+### Ready-made firmware (recommended)
 
-   ```yaml
-   external_components:
-     - source:
-         type: git
-         url: https://github.com/rb-amp/rbgrid-esphome
-         ref: v1.2.0
-         path: esphome/components
-       components: [rbgrid]
-   ```
+1. **Flash from the browser.** Open the install page in Chrome or Edge, connect the hub over USB and press
+   **Install**: ESPHome or a compiler is not needed. The page picks the image for your chip:
+   - `rbgrid-esphome-esp32-v1.2.0.factory.bin` for an ESP32-WROVER;
+   - `rbgrid-esphome-esp32s3-v1.2.0.factory.bin` for an ESP32-S3 N16R8.
 
-   The component builds the metering core from `components/` of the same checkout. For a local copy use
-   `type: local` with `path: <checkout>/esphome/components`.
-4. **First flash over USB:** `esphome run rbgrid-hub-s3.yaml`. After that, updates go over the air.
-5. **In Home Assistant:**
-   - the hub appears as an ESPHome device; add it with its encryption key if you set one;
-   - then install **RBgrid** via HACS: custom repository `https://github.com/rb-amp/rbgrid-ha` (category
-     Integration);
-   - then Settings → Devices & services → Add integration → RBgrid. A hub on this component is also found
-     automatically. Issues: https://github.com/rb-amp/rbgrid-ha/issues.
-   - The integration sets the time zone and the currency and opens the RBgrid panel. Its own README covers the wizard,
-     the Energy dashboard and prices from HA.
+   Both images are in the release, with `manifest.json` and `SHA256SUMS`. With esptool, flash a factory image at
+   `0x0`.
+2. **Wi-Fi.** The image carries no network. Set it in one of two ways:
+   - right after flashing, the install page asks for your network and password (Improv over USB);
+   - or join the hub's own access point (`rbgrid-hub-xxxxxx`, password `RBGRID123`) and pick your network on the page
+     that opens.
+3. **Home Assistant** finds the hub (ESPHome integration). Add it, then install **RBgrid** via HACS: custom repository
+   `https://github.com/rb-amp/rbgrid-ha` (category Integration), then Settings → Devices & services → Add integration →
+   RBgrid. A hub on this component is also found automatically. Issues: https://github.com/rb-amp/rbgrid-ha/issues.
+   The integration sets the time zone and the currency and opens the RBgrid panel. Its own README covers the wizard,
+   the Energy dashboard and prices from HA.
+4. **Updates** come over the air: from the ESPHome dashboard once the hub is adopted, or by uploading the release's
+   `.ota.bin`.
+
+Several hubs in one home are fine: each gets its own name (`rbgrid-hub-` + the last six digits of its MAC).
+
+### Your own build
+
+To change the configuration, **adopt** the hub in the ESPHome dashboard (it offers "Adopt" for a hub it finds), or
+start from `rbgrid-hub-esp32.yaml` / `rbgrid-hub-esp32s3.yaml` in `esphome/`. They take the component from this
+repository:
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/rb-amp/rbgrid-esphome
+      ref: v1.2.0
+      path: esphome/components
+    components: [rbgrid]
+```
+
+The component builds the metering core from `components/` of the same checkout, and brings its own partition table
+(16 MB flash required). Compile and flash with `esphome run <config>.yaml` (USB the first time, then over the air).
 
 ## Configuration (YAML)
 
@@ -80,7 +93,6 @@ esphome:
     version: 1.2.0
 esp32:
   flash_size: 16MB
-  partitions: partitions_rbgrid_esphome.csv
   framework:
     type: esp-idf
     advanced:
@@ -105,6 +117,9 @@ ota:
 time:
   - platform: sntp            # the system clock; RBgrid's tariff days use its own time zone (rbgrid_cmd "time")
 ```
+
+The ready-made configs add what a hub flashed from the browser needs: `name_add_mac_suffix: true`, `wifi: ap:` with
+`captive_portal:`, `improv_serial:` (Wi-Fi from the install page) and `dashboard_import:` (adopt in ESPHome).
 
 **The `rbgrid:` block:**
 
@@ -135,7 +150,7 @@ The component also sets the ESP-IDF options the core needs:
 The Home Assistant integration finds them by name, for its Overview and the Energy dashboard. Change entity ids in HA
 if you like, not the names in the YAML.
 
-**Partitions** (`partitions_rbgrid_esphome.csv`, 16 MB):
+**Partitions** (the component's `partitions_rbgrid.csv`, 16 MB; set automatically unless your YAML gives `esp32: partitions:`):
 - two 3 MB app slots;
 - 4 MB `stats` (history);
 - `rbnvs`, `logs` (the event log, kept across restarts) and `config`.
@@ -185,6 +200,5 @@ They sit at the same addresses as on the standalone hub.
 - A point slot freed and taken by a new point continues that slot's lifetime entities. HA statistics can show a step
   there; prefer the per-point series the integration imports.
 - The ESPHome build has no web app. To use the RBgrid web app, run the standalone firmware instead.
-- The "factory" image (one file, ESPHome Dashboard → Manual download → Factory format) is not produced yet: the app
-  sits at 0x20000 in this partition table, and ESPHome's merge step assumes 0x10000. Use `esphome run` (USB) for the
-  first flash, then OTA.
+- ESPHome's own "factory" download (Dashboard → Manual download → Factory format) fails for this partition table
+  (it assumes the app at 0x10000; here it is at 0x20000). Use the release's factory image, `esphome run`, or OTA.

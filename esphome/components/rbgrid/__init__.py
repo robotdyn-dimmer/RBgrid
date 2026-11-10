@@ -10,9 +10,11 @@ first free slot, a deleted one frees it, and the map survives restarts. Adding a
 needs a YAML change or a rebuild.
 """
 import os
+from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
 from esphome.components import binary_sensor, esp32, sensor, text_sensor
 from esphome.const import (
     CONF_ID,
@@ -249,7 +251,21 @@ CONFIG_SCHEMA = cv.All(
 )
 
 
+def _final_validate(config):
+    """The core needs a 16 MB flash: its partition table (history, event log, config) is laid out for it."""
+    fs = str(fv.full_config.get().get("esp32", {}).get("flash_size", "4MB")).upper()
+    if fs != "16MB":
+        raise cv.Invalid(f"rbgrid needs a 16 MB flash; set esp32: flash_size: 16MB (now {fs})")
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
+
+
 async def to_code(config):
+    # RBgrid's partition table, unless the YAML gives its own (`esp32: partitions:` wins): a config adopted from the
+    # package then needs no partitions file next to it.
+    esp32.add_extra_build_file("partitions.csv", Path(os.path.dirname(os.path.abspath(__file__))) / "partitions_rbgrid.csv")
     root = config[CONF_RBGRID_PATH]
     comps = os.path.join(root, "components")
     for name in ("rbpower", "rbgrid_app", "esp_driver_i2c", "rbbench", "bench_kit"):

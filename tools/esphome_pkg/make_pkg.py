@@ -13,16 +13,19 @@ and key, wifi_secrets.h, key files, bench components, the standalone app, build 
 
 Usage: make_pkg.py <out_dir>        (out_dir must not exist)
 """
-import json, os, re, shutil, sys
+import json, os, re, shutil, sys, warnings
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 OUT = os.path.abspath(sys.argv[1])
-YAMLS = ("rbgrid-hub-c14", "rbgrid-hub-s3", "rbgrid-hub-3p")
+YAMLS = ("rbgrid-hub-c14", "rbgrid-hub-s3", "rbgrid-hub-3p")    # dev configs: their builds define the used files
+PUBLIC_YAMLS = ("rbgrid-hub-esp32", "rbgrid-hub-esp32s3")          # shipped configs (no secrets, git source)
 
 # Switches that are off in every ESPHome build (the component sets the CONFIG_ ones; the others are never defined).
 OFF = {"CONFIG_RBGRID_IF_HTTP", "CONFIG_RBGRID_IF_MQTT", "CONFIG_RBGRID_IF_WIFI", "CONFIG_RBGRID_IF_MDNS",
        "CONFIG_RBGRID_IF_SNTP", "CONFIG_RBGRID_DEBUG_BRIDGE", "CONFIG_RBGRID_BENCH_FULL", "CONFIG_RBGRID_BENCH_KIT",
-       "RBGRID_FAULT_INJECT", "CONFIG_RBGRID_PANIC_FORENSICS", "RBGRID_BENCH_KIT"}
+       "RBGRID_FAULT_INJECT", "CONFIG_RBGRID_PANIC_FORENSICS", "RBGRID_BENCH_KIT",
+       "RBGRID_BENCH_RELAY_FAILSAFE"}   # defined only inside a standalone-only block
 NEVER = ("wifi_secrets.h", "espnow_keys.h", "ap_provision.h")
 MIT = """MIT License
 
@@ -108,27 +111,38 @@ TOK = re.compile(r"\s*(defined\s*\(\s*\w+\s*\)|defined\s+\w+|\w+|&&|\|\||!|\(|\)
 
 
 def evaluate(expr, defs):
-    """defs: name -> int (known value) or None (known undefined). Returns 0/1, or None if any other symbol is used."""
-    out = []
-    for t in TOK.findall(expr.split("//")[0].split("/*")[0]):
-        m = re.match(r"defined\s*\(?\s*(\w+)", t)
-        if m:
-            n = m.group(1)
-            if n not in defs:
-                return None
-            out.append("1" if defs[n] is not None else "0")
-        elif re.fullmatch(r"\d+[uUlL]*", t):
-            out.append(t.rstrip("uUlL"))
-        elif re.fullmatch(r"\w+", t):
-            if t not in defs:
-                return None
-            out.append(str(defs[t] or 0))
-        else:
-            out.append({"&&": " and ", "||": " or ", "!": " not "}.get(t, t))
-    try:
-        return 1 if eval("".join(out), {"__builtins__": {}}) else 0
-    except Exception:
+    """defs: name -> int (known value) or None (known undefined). Other identifiers are unknown: the expression is
+    tried with every combination of them (0/1, defined or not); a result that doesn't depend on them is returned,
+    otherwise None (the #if is kept as it is)."""
+    toks = TOK.findall(expr.split("//")[0].split("/*")[0])
+    unknown = sorted({re.match(r"defined\s*\(?\s*(\w+)", t).group(1) if t.startswith("defined") else t
+                      for t in toks if (t.startswith("defined") or re.fullmatch(r"[A-Za-z_]\w*", t))}
+                     - set(defs) - {"defined"})
+    if len(unknown) > 6:
         return None
+    results = set()
+    for mask in range(1 << len(unknown)):
+        env = dict(defs)
+        for k, n in enumerate(unknown):
+            env[n] = 1 if mask >> k & 1 else None
+        out = []
+        for t in toks:
+            m = re.match(r"defined\s*\(?\s*(\w+)", t)
+            if m:
+                out.append("1" if env.get(m.group(1)) is not None else "0")
+            elif re.fullmatch(r"\d+[uUlL]*", t):
+                out.append(t.rstrip("uUlL"))
+            elif re.fullmatch(r"\w+", t):
+                out.append(str(env.get(t) or 0))
+            else:
+                out.append({"&&": " and ", "||": " or ", "!": " not "}.get(t, t))
+        try:
+            results.add(1 if eval("".join(out), {"__builtins__": {}}) else 0)
+        except Exception:
+            return None
+        if len(results) > 1:
+            return None
+    return results.pop()
 
 
 def strip(text):
@@ -156,9 +170,14 @@ def strip(text):
                 v = evaluate(rest, defs)
             else:
                 n = rest.split()[0]
-                v = None if n not in defs else int((defs[n] is not None) == (d == "ifdef"))
-            if v is None:
-                stack.append({"keep": True, "active": True})
+                if n in defs:
+                    v = int((defs[n] is not None) == (d == "ifdef"))
+                elif d == "ifndef" and not n.startswith("CONFIG_"):
+                    v = "assume"   # default-define idiom / include guard: kept in the text, its body counted as taken
+                else:
+                    v = None
+            if v is None or v == "assume":
+                stack.append({"keep": True, "active": True, "record": v == "assume"})
                 if par: out.append(line)
             else:
                 stack.append({"keep": False, "active": bool(v), "taken": bool(v)})
@@ -186,6 +205,9 @@ def strip(text):
             if par:
                 out.append(line)
                 parts = rest.split(None, 1)
+                if parts and any(f["keep"] and not f.get("record") for f in stack):   # defined under an undecided #if: unknown from here on
+                    defs.pop(parts[0], None)
+                    parts = []
                 if parts:
                     n = parts[0]
                     if d == "undef":
@@ -262,10 +284,8 @@ def main():
     e = ROOT + "/esphome"
     shutil.copytree(f"{e}/components/rbgrid", f"{OUT}/esphome/components/rbgrid", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(f"{e}/schemas", f"{OUT}/esphome/schemas")
-    for n in ("README.md", "RBGRID_CMD.md", "partitions_rbgrid_esphome.csv") + tuple(y + ".yaml" for y in YAMLS):
+    for n in ("README.md", "RBGRID_CMD.md") + tuple(y + ".yaml" for y in PUBLIC_YAMLS):
         shutil.copy(f"{e}/{n}", f"{OUT}/esphome/{n}")
-    open(f"{OUT}/esphome/secrets.example.yaml", "w").write(
-        "# copy to secrets.yaml and fill in\nwifi_ssid: \"your-network\"\nwifi_password: \"your-password\"\n")
     # licence of the rbgrid-esphome repository: MIT (operator 2026-11-10)
     open(f"{OUT}/LICENSE", "w", encoding="utf-8").write(MIT)
     open(f"{OUT}/NOTICE", "w", encoding="utf-8").write(NOTICE)

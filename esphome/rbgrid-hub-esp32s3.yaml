@@ -1,0 +1,183 @@
+# RBgrid for ESPHome: ready-made firmware config for an ESP32-S3 N16R8 hub (16 MB flash, octal PSRAM; rbAmp bus SDA 8 / SCL 9).
+# Flash the published image from the install page, or adopt this config in ESPHome to change it.
+substitutions:
+  name: rbgrid-hub
+  friendly_name: RBgrid Hub
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: true   # several hubs in one home get distinct names
+  project:
+    name: rbgrid.hub_esp32s3
+    version: 1.2.0
+  # one HA device per point slot (rbgrid: slot_devices: true)
+  devices:
+    - id: rbgrid_point_1
+      name: "${friendly_name} Point 1"
+    - id: rbgrid_point_2
+      name: "${friendly_name} Point 2"
+    - id: rbgrid_point_3
+      name: "${friendly_name} Point 3"
+    - id: rbgrid_point_4
+      name: "${friendly_name} Point 4"
+    - id: rbgrid_point_5
+      name: "${friendly_name} Point 5"
+    - id: rbgrid_point_6
+      name: "${friendly_name} Point 6"
+    - id: rbgrid_point_7
+      name: "${friendly_name} Point 7"
+    - id: rbgrid_point_8
+      name: "${friendly_name} Point 8"
+    - id: rbgrid_point_9
+      name: "${friendly_name} Point 9"
+    - id: rbgrid_point_10
+      name: "${friendly_name} Point 10"
+    - id: rbgrid_point_11
+      name: "${friendly_name} Point 11"
+    - id: rbgrid_point_12
+      name: "${friendly_name} Point 12"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    advanced:
+      loop_task_stack_size: 16384   # rbgrid_cmd runs in the loop task; the 8 KB default overflows on config saves
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: UART0
+
+dashboard_import:
+  package_import_url: github://rb-amp/rbgrid-esphome/esphome/rbgrid-hub-esp32s3.yaml@v1.2.0
+  import_full_config: false
+
+improv_serial:
+
+captive_portal:
+
+api:
+  reboot_timeout: 0s
+  actions:
+    # RBgrid configuration from Home Assistant, no YAML change: the RBgrid command format
+    # ({"cmd":"get|set|history","section":...}). The reply comes back as the action's response.
+    # Reply: {"ok", "schema", "type", "config_version", "data": <device reply object>}; a device error comes back as
+    # the action's error (success: false + the device message), so HA raises instead of returning ok.
+    - action: rbgrid_cmd
+      variables:
+        command: string
+      then:
+        - lambda: 'id(rb).run_command(command);'
+        - api.respond:
+            success: !lambda 'return id(rb).last_ok();'
+            error_message: !lambda 'return id(rb).last_error();'
+            data: !lambda 'id(rb).fill_reply(root);'
+
+
+ota:
+  - platform: esphome
+
+# hub health for HA and long runs: uptime, Wi-Fi signal, free heap, reset reason
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+  - platform: wifi_signal
+    name: "Wi-Fi signal"
+    update_interval: 60s
+  - platform: debug
+    free:
+      name: "Free heap"
+    block:
+      name: "Largest free block"
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset reason"
+
+wifi:
+  # No network in the image: set it after flashing, over USB from the install page (Improv) or through the hub's own
+  # access point and its setup page (captive portal). Adopting the hub in ESPHome lets you add networks in YAML.
+  ap:
+    password: "RBGRID123"   # the setup access point; change it in your adopted config
+  power_save_mode: none     # ESP-NOW beacons and nodes need the radio awake
+  reboot_timeout: 0s        # never restart the meter because Wi-Fi is down
+
+# The system clock comes from ESPHome; RBgrid's tariff zones and days use RBgrid's own time zone (set through
+# rbgrid_cmd, section "time"), not this one.
+time:
+  - platform: sntp
+    id: sntp_time
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/rb-amp/rbgrid-esphome
+      ref: v1.2.0
+      path: esphome/components
+    components: [rbgrid]
+
+rbgrid:
+  id: rb
+  point_slots: 12           # fixed grid; points take free slots at runtime, no YAML change
+  slot_current: true        # + "Point N current" per slot
+  slot_devices: true        # each slot's entities under the sub-device rbgrid_point_N (declared above)
+  slot_cost: true           # + per-point cost (monetary, total) for the Energy dashboard
+  currency: EUR             # label of the money entities = the tariff plan's currency (HA does not convert)
+  power:
+    name: "Grid power"
+  energy_in:
+    name: "Energy in"
+  energy_out:
+    name: "Energy out"
+  energy_day_in:
+    name: "Energy in today"
+  energy_day_out:
+    name: "Energy out today"
+  cost_total:
+    name: "Cost"
+  revenue_total:
+    name: "Export value"
+  cost_day:
+    name: "Cost today"
+  revenue_day:
+    name: "Export value today"
+  buy_price:
+    name: "Buy price"
+  sell_price:
+    name: "Sell price"
+  tariff_zone:
+    name: "Tariff zone"
+  provider_price:
+    name: "Provider price"
+  price_state:
+    name: "Price state"
+  price_source:
+    name: "Price source"
+  price_valid_until:
+    name: "Price valid until"
+  config_version:
+    name: "Config version"
+  time_valid:
+    name: "Clock set"
+  tariff_placeholder:
+    name: "Demo tariff"
+  external_price:
+    name: "External price"
+  modules_total:
+    name: "Modules"
+  modules_online:
+    name: "Modules online"
+  nodes_total:
+    name: "Nodes"
+  nodes_online:
+    name: "Nodes online"

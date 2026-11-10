@@ -1830,6 +1830,7 @@ typedef struct rbgrid_config_context_s rbgrid_config_context_t;   ///< see rbgri
 // (feature flags RBAMP_BRIDGE_ENABLE / RBGRID_RBAMP_FLEET / RBGRID_BENCH_FULL / RBGRID_RBBENCH /
 //  RBGRID_WIFI are defined at the top of the file — needed by the early includes.)
 
+#if RBGRID_RBAMP_FLEET && !defined(CONFIG_RBGRID_DEBUG_BRIDGE) && CONFIG_RBGRID_IF_WIFI && !CONFIG_IDF_TARGET_ESP32S3
 // 🔴 SAFETY: the test-rig load bank (PCF8574 @0x20/0x25 on I2C1 19/23) drives relays. At power-on
 // the PCF8574 outputs float HIGH → relays default ON → live load on the AC line before any
 // software control. rbbench does a fail-safe OFF in its init, but the wifi/telemetry combined
@@ -1837,7 +1838,7 @@ typedef struct rbgrid_config_context_s rbgrid_config_context_t;   ///< see rbgri
 // anything else can matter. PCF8574 latches the written value, so it stays OFF after we close the
 // bus. Gated to the no-rbbench build; the debug-bridge build's rbbench already fail-safes the bank.
 /* not on ESP32-S3: no GPIO23 and GPIO19 is its USB D-; the load bank is wired to the ESP32 bench hub only */
-#if RBGRID_RBAMP_FLEET && !defined(CONFIG_RBGRID_DEBUG_BRIDGE) && !CONFIG_IDF_TARGET_ESP32S3
+/* standalone builds only: a hub hosted by ESPHome is never the test-rig hub */
 #define RBGRID_BENCH_RELAY_FAILSAFE 1   ///< 1 = drive the test-rig load-bank relays OFF at boot
 /** Drive both PCF8574 load-bank expanders to 0x00 (relays OFF) at boot (see the SAFETY note above). */
 static void bench_relays_failsafe_off(void) {
