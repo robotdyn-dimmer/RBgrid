@@ -49,14 +49,16 @@ static TaskHandle_t s_version_task = nullptr;
 struct EvItem {
   char msg[160];
   bool fail;
+  uint32_t seq;   // event-log sequence (same as `get events` lines): HA's replay cursor
 };
 static QueueHandle_t s_ev_q = nullptr;
-static void on_event_line(const char *msg, bool fail) {
+static void on_event_line(const char *msg, bool fail, uint32_t seq) {
   if (s_ev_q == nullptr) return;
   EvItem it;
   strncpy(it.msg, msg, sizeof(it.msg) - 1);
   it.msg[sizeof(it.msg) - 1] = '\0';
   it.fail = fail;
+  it.seq = seq;
   if (xQueueSend(s_ev_q, &it, 0) == pdTRUE) App.wake_loop_threadsafe();
 }
 
@@ -181,7 +183,7 @@ void RBgridComponent::loop() {
   if (frame_ready.exchange(false)) this->publish_frame_();
   if (s_ev_q != nullptr) {
     EvItem it;
-    for (int i = 0; i < 4 && xQueueReceive(s_ev_q, &it, 0) == pdTRUE; i++) this->fire_event_(it.msg, it.fail);
+    for (int i = 0; i < 4 && xQueueReceive(s_ev_q, &it, 0) == pdTRUE; i++) this->fire_event_(it.msg, it.fail, it.seq);
   }
   if (version_ready.load()) {
     std::string v(version_buf);
@@ -464,14 +466,14 @@ void RBgridComponent::fill_reply(JsonObject root) {
 
 // One HA event "esphome.rbgrid_event" {kind, level, message}. Sent only while HA is connected (the device keeps the
 // line in its own event log either way).
-void RBgridComponent::fire_event_(const char *msg, bool fail) {
+void RBgridComponent::fire_event_(const char *msg, bool fail, uint32_t seq) {
 #ifdef USE_API
   if (api::global_api_server == nullptr || !api::global_api_server->is_connected()) return;
   api::HomeassistantActionRequest req;
   req.service = StringRef("esphome.rbgrid_event");
   req.is_event = true;
   const char *kind = event_kind(msg, fail);
-  req.data.init(3);
+  req.data.init(4);
   auto &k = req.data.emplace_back();
   k.key = StringRef("kind");
   k.value = StringRef(kind);
@@ -482,6 +484,11 @@ void RBgridComponent::fire_event_(const char *msg, bool fail) {
   auto &m = req.data.emplace_back();
   m.key = StringRef("message");
   m.value = StringRef(msg);
+  char seqs[12];
+  snprintf(seqs, sizeof(seqs), "%lu", (unsigned long) seq);
+  auto &q = req.data.emplace_back();
+  q.key = StringRef("seq");
+  q.value = StringRef(seqs);
   api::global_api_server->send_homeassistant_action(req);
 #endif
 }

@@ -95,7 +95,7 @@ class RBgridComponent : public Component {
     bool published_empty{false};
   };
   void publish_frame_();
-  void fire_event_(const char *msg, bool fail);
+  void fire_event_(const char *msg, bool fail, uint32_t seq);
   bool events_{false};
   void load_map_();
   void save_map_();

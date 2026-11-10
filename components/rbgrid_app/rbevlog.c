@@ -120,8 +120,8 @@ static uint8_t classify(const char *m)
 
 static void log_sink(const char *line) { rbevlog_add(line); }
 
-static void (*s_listener)(const char *msg, bool fail) = NULL;
-void rbevlog_set_listener(void (*fn)(const char *msg, bool fail)) { s_listener = fn; }
+static void (*s_listener)(const char *msg, bool fail, uint32_t seq) = NULL;
+void rbevlog_set_listener(void (*fn)(const char *msg, bool fail, uint32_t seq)) { s_listener = fn; }
 
 void rbevlog_init(void)
 {
@@ -146,13 +146,14 @@ void rbevlog_add(const char *msg)
     if (xSemaphoreTake(s_mtx, pdMS_TO_TICKS(50)) != pdTRUE) { s_dropped++; return; }
     uint32_t k = s_count++;
     ev_slot_t *sl = &s_ring[k % s_nslots];
-    sl->seq = s_base + k + 1; sl->ts = ts; sl->up_s = up_s(); sl->lvl = lvl;
+    const uint32_t seq = s_base + k + 1;
+    sl->seq = seq; sl->ts = ts; sl->up_s = up_s(); sl->lvl = lvl;
     strlcpy(sl->msg, msg, sizeof(sl->msg));
     for (char *c = sl->msg; *c; c++) if (*c == '\r' || *c == '\n') *c = ' ';
     if (lvl == LVL_FAIL) s_fail_boot++;
     xSemaphoreGive(s_mtx);
     if (lvl == LVL_FAIL && s_writer) xTaskNotifyGive(s_writer);
-    if (s_listener && lvl != LVL_PERIODIC) s_listener(msg, lvl == LVL_FAIL);   /* host copy (ESPHome → HA events) */
+    if (s_listener && lvl != LVL_PERIODIC) s_listener(msg, lvl == LVL_FAIL, seq);   /* host copy (ESPHome → HA events) */
 }
 
 /* ---- files ---- */

@@ -37,7 +37,7 @@ void rbevlog_add(const char *msg);
 /** @brief Register a listener called with every event and FAIL line (not the periodic trace), in the caller's task:
  *         copy the text and return at once. One listener; NULL removes it.
  *  @param[in] fn  Listener (msg, fail). */
-void rbevlog_set_listener(void (*fn)(const char *msg, bool fail));
+void rbevlog_set_listener(void (*fn)(const char *msg, bool fail, uint32_t seq));   /* seq = the line's log sequence */
 /** @brief This boot's ring lines after @p since as JSON {"type":"events","boot","first","next","more","lines":[{seq,ts,up,
  *         lvl,msg}]}; pass `next` as the next `since`. malloc'd; caller frees.
  *  @param since   Last seq already seen (0 = from the oldest line in RAM).
