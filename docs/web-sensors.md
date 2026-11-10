@@ -139,7 +139,7 @@ The dialog works out where you are from the hub's state, so you can close it to 
 - With up to three modules, leave the modules' pull-ups as they are: no cutting, no extra resistors.
 - With four or more modules, cut the pull-ups on all but one module (or fit one external pair).
 
-See the rbAmp [wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection) for longer cables.
+See the rbAmp [wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) for longer cables.
 
 ### If something goes wrong
 

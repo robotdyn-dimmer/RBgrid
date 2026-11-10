@@ -90,7 +90,7 @@ At the bottom: "Home Assistant entities for the new point appear after the hub r
 Two things that do go wrong:
 
 - **`invert_sign` left over from an older firmware.** Before v1.1.5 a Generation point needed it to read production at all. After updating, clear it (`POST /api/v1/units/<id> {"invert_sign": false}`) or the point reads consumption again: `invert_sign` still flips the result on top of the role.
-- **The wrong kind of channel.** A BASIC module's channels count **consumption only** — they don't see export — which is why **Generation** and **Storage** aren't offered on them. Production needs a channel that measures direction. Which modules do: [rbamp.com](https://www.rbamp.com/?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
+- **The wrong kind of channel.** A BASIC module's channels count **consumption only** — they don't see export — which is why **Generation** and **Storage** aren't offered on them. Production needs a channel that measures direction. Which modules measure direction: [the rbAmp module guide](https://www.rbamp.com/products/configuration?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
 
 ### Phase
 
