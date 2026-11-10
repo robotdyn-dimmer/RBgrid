@@ -977,6 +977,13 @@ static esp_err_t register_uri_handlers(wifi_mode_t wifi_mode)
     httpd_uri_t api_mqtt_cfg_get  = { .uri = "/api/system/mqtt-config", .method = HTTP_GET,     .handler = rbwebserver_api_mqtt_config_handler, .user_ctx = NULL };
     httpd_uri_t api_mqtt_cfg_post = { .uri = "/api/system/mqtt-config", .method = HTTP_POST,    .handler = rbwebserver_api_mqtt_config_handler, .user_ctx = NULL };
     httpd_uri_t api_mqtt_cfg_opt  = { .uri = "/api/system/mqtt-config", .method = HTTP_OPTIONS, .handler = rbwebserver_api_mqtt_config_handler, .user_ctx = NULL };
+    {   /* the user's broker CA for mqtts:// */
+        static const httpd_method_t ms[4] = {HTTP_GET, HTTP_POST, HTTP_DELETE, HTTP_OPTIONS};
+        for (int i = 0; i < 4; i++) {
+            httpd_uri_t ca = { .uri = "/api/system/mqtt-ca", .method = ms[i], .handler = rbwebserver_api_mqtt_ca_handler, .user_ctx = NULL };
+            httpd_register_uri_handler(g_server_handle, &ca);
+        }
+    }
     httpd_register_uri_handler(g_server_handle, &api_mqtt_cfg_get);
     httpd_register_uri_handler(g_server_handle, &api_mqtt_cfg_post);
     httpd_register_uri_handler(g_server_handle, &api_mqtt_cfg_opt);

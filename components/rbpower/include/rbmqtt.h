@@ -143,6 +143,15 @@ void rbmqtt_register_connect_cb(rbmqtt_connect_cb_t cb);
 /** @brief Stop + destroy the client (Wi-Fi down / shutdown). */
 void rbmqtt_stop(void);
 
+/** The user's broker CA (PEM, one or more certificates); when present it replaces the public CA bundle for mqtts://. */
+#define RBMQTT_CA_FILE "/mqtt_ca.pem"
+/** Largest accepted CA file (bytes). */
+#define RBMQTT_CA_MAX  8192
+/** @brief TLS state code: off | waiting_clock | connecting | ok | expired | not_yet_valid | unknown_ca | name_mismatch | tls_error. */
+const char *rbmqtt_tls_state(void);
+/** @brief true when the uploaded CA (RBMQTT_CA_FILE) is in use instead of the public bundle. */
+bool rbmqtt_tls_custom_ca(void);
+
 #ifdef __cplusplus
 }
 #endif

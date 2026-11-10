@@ -7,6 +7,17 @@
   not valid yet, is refused; v1.1.7 checked the authority and the host name only. Because a clock that isn't set
   makes every certificate look not valid yet, the hub opens a TLS broker connection only once its clock is set
   (NTP, or by hand); the event log says "mqtt: TLS broker — waiting for the clock". Plain `mqtt://` is not delayed.
+- **Your own broker CA for `mqtts://`** (a home broker with a private CA or a self-signed certificate, e.g. Mosquitto
+  in Home Assistant with its own certificate). `POST /api/system/mqtt-ca` with the PEM (one or more certificates, ≤
+  8 KB) stores it; it replaces the public CA bundle at the next restart. `GET` shows each certificate (subject, issuer,
+  valid from/to); `DELETE` goes back to the public bundle. A file with a private key is refused. Dates and the host
+  name are checked as with public CAs.
+- **Why the broker connection is refused:** `GET /api/system/mqtt-config` → `tls: {state, ca, ca_uploaded}`.
+  - `state`: `ok`, `expired`, `not_yet_valid`, `name_mismatch`, `unknown_ca`, `waiting_clock`, `connecting`,
+    `tls_error`, or `off` for plain MQTT;
+  - `ca`: `custom` or `bundle`.
+
+  Each certificate refusal also writes an event line.
 
 ### Remote nodes
 - **A current-only node input books no energy.** Node 1.5 sends a record for an input without a voltage module

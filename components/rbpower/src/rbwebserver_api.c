@@ -15,6 +15,7 @@
  * All HTTP handlers run on the httpd task; reads of g_home_network take rbpower_home_lock().
  */
 
+#include "mbedtls/x509_crt.h"
 #include "rbwebserver_internal.h"
 #include "rbstats_migrate.h"   /* history 503 during deferred format migration */
 #include "rbhome_types.h"            /* g_home_network + rbpower_home_lock/unlock */
@@ -2362,6 +2363,12 @@ esp_err_t rbwebserver_api_mqtt_config_handler(httpd_req_t *req)
         cJSON_AddStringToObject(root, "effective_uri", me);   /* what the client actually runs with (connected:true with an empty broker_uri meant the default broker) */
         cJSON_AddBoolToObject(root, "connected", rbmqtt_is_connected());
         cJSON_AddStringToObject(root, "note", "auth/TLS via URI scheme (mqtts://user:pass@host:port). Apply-on-restart.");
+        {   /* TLS: state of the broker connection + which CA verifies it (custom = POST /api/system/mqtt-ca) */
+            cJSON *tl = cJSON_AddObjectToObject(root, "tls");
+            cJSON_AddStringToObject(tl, "state", rbmqtt_tls_state());
+            cJSON_AddStringToObject(tl, "ca", rbmqtt_tls_custom_ca() ? "custom" : "bundle");
+            cJSON_AddBoolToObject(tl, "ca_uploaded", littlefs_raw_exists(RBMQTT_CA_FILE));
+        }
         char *s = cJSON_PrintUnformatted(root);
         cJSON_Delete(root);
         if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json"); return ESP_FAIL; }
@@ -2655,3 +2662,117 @@ esp_err_t rbwebserver_api_schema_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+
+/* small JSON reply helpers (shared by the mqtt-ca handler) */
+static esp_err_t dp_send_json(httpd_req_t *req, cJSON *o, const char *status)
+{
+    char *s = o ? cJSON_PrintUnformatted(o) : NULL;
+    cJSON_Delete(o);
+    if (!s) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json"); return ESP_FAIL; }
+    if (status) httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, s, strlen(s));
+    free(s);
+    return ESP_OK;
+}
+static esp_err_t dp_options(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Access-Control-Max-Age", "86400");
+    httpd_resp_set_status(req, "204 No Content");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+static esp_err_t dp_error(httpd_req_t *req, const char *field, const char *msg)
+{
+    cJSON *e = cJSON_CreateObject();
+    cJSON_AddStringToObject(e, "error", msg);
+    cJSON_AddStringToObject(e, "field", field ? field : "");
+    return dp_send_json(req, e, "400 Bad Request");
+}
+
+/* ==== The user's broker CA for mqtts:// (a home broker with a private CA or a self-signed certificate) ====
+ * GET    /api/system/mqtt-ca → {present, count, certs:[{subject, issuer, valid_from, valid_to, ca}], tls:{state, ca}}
+ * POST   /api/system/mqtt-ca  body = PEM (one or more certificates, ≤ 8 KB) → parsed, saved; applies at the next restart
+ * DELETE /api/system/mqtt-ca  → removed (back to the public CA bundle at the next restart) */
+static void ca_time_str(const mbedtls_x509_time *t, char *out, size_t n)
+{
+    snprintf(out, n, "%04d-%02d-%02dT%02d:%02d:%02dZ", t->year, t->mon, t->day, t->hour, t->min, t->sec);
+}
+
+static cJSON *ca_info_json(const char *pem, size_t len)
+{
+    cJSON *o = cJSON_CreateObject();
+    mbedtls_x509_crt chain;
+    mbedtls_x509_crt_init(&chain);
+    int r = pem ? mbedtls_x509_crt_parse(&chain, (const unsigned char *)pem, len + 1) : -1;
+    cJSON_AddBoolToObject(o, "present", pem != NULL);
+    cJSON *a = cJSON_AddArrayToObject(o, "certs");
+    int n = 0;
+    if (pem && r >= 0) {
+        for (const mbedtls_x509_crt *c = &chain; c && c->raw.len; c = c->next, n++) {
+            cJSON *e = cJSON_CreateObject();
+            char buf[200];
+            mbedtls_x509_dn_gets(buf, sizeof(buf), &c->subject); cJSON_AddStringToObject(e, "subject", buf);
+            mbedtls_x509_dn_gets(buf, sizeof(buf), &c->issuer);  cJSON_AddStringToObject(e, "issuer", buf);
+            ca_time_str(&c->valid_from, buf, sizeof(buf)); cJSON_AddStringToObject(e, "valid_from", buf);
+            ca_time_str(&c->valid_to, buf, sizeof(buf));   cJSON_AddStringToObject(e, "valid_to", buf);
+            cJSON_AddBoolToObject(e, "ca", c->MBEDTLS_PRIVATE(ca_istrue));
+            cJSON_AddItemToArray(a, e);
+        }
+    }
+    cJSON_AddNumberToObject(o, "count", n);
+    cJSON *t = cJSON_AddObjectToObject(o, "tls");
+    cJSON_AddStringToObject(t, "state", rbmqtt_tls_state());
+    cJSON_AddStringToObject(t, "ca", rbmqtt_tls_custom_ca() ? "custom" : "bundle");
+    mbedtls_x509_crt_free(&chain);
+    return o;
+}
+
+esp_err_t rbwebserver_api_mqtt_ca_handler(httpd_req_t *req)
+{
+    add_cors_headers(req);
+    if (req->method == HTTP_OPTIONS) return dp_options(req);
+    if (req->method == HTTP_DELETE) {
+        if (!rbapi_require_auth(req)) return ESP_FAIL;
+        if (littlefs_raw_exists(RBMQTT_CA_FILE)) littlefs_raw_remove(RBMQTT_CA_FILE);
+        rbpower_diag_printf("mqtt: broker CA removed (public bundle after the next restart)");
+        cJSON *o = ca_info_json(NULL, 0);
+        cJSON_AddBoolToObject(o, "requires_reboot", true);
+        return dp_send_json(req, o, NULL);
+    }
+    if (req->method == HTTP_POST) {
+        if (!rbapi_require_auth(req)) return ESP_FAIL;
+        int len = req->content_len;
+        if (len <= 0 || len > RBMQTT_CA_MAX) return dp_error(req, "pem", "PEM body, 1..8192 bytes");
+        char *pem = malloc(len + 1);
+        if (!pem) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "memory"); return ESP_FAIL; }
+        int got = rbapi_recv_body(req, pem, len);
+        if (got != len) { free(pem); return dp_error(req, "pem", "body not received"); }
+        pem[len] = 0;
+        mbedtls_x509_crt chain;
+        mbedtls_x509_crt_init(&chain);
+        int r = strstr(pem, "-----BEGIN CERTIFICATE-----") ? mbedtls_x509_crt_parse(&chain, (const unsigned char *)pem, len + 1) : -1;
+        bool any_ca = false;
+        for (const mbedtls_x509_crt *c = &chain; r >= 0 && c && c->raw.len; c = c->next) any_ca |= c->MBEDTLS_PRIVATE(ca_istrue) != 0;
+        mbedtls_x509_crt_free(&chain);
+        if (r != 0) { free(pem); return dp_error(req, "pem", "not a PEM certificate (or one of them failed to parse)"); }
+        if (strstr(pem, "PRIVATE KEY")) { free(pem); return dp_error(req, "pem", "a private key must not be uploaded"); }
+        esp_err_t we = littlefs_raw_write(RBMQTT_CA_FILE, pem, len);
+        cJSON *o = ca_info_json(we == ESP_OK ? pem : NULL, len);
+        free(pem);
+        if (we != ESP_OK) { cJSON_Delete(o); httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "save failed"); return ESP_FAIL; }
+        cJSON_AddBoolToObject(o, "requires_reboot", true);
+        if (!any_ca) cJSON_AddStringToObject(o, "warning", "no CA certificate in the file: a server certificate works only as a pinned self-signed one");
+        rbpower_diag_printf("mqtt: broker CA uploaded (%d bytes); applies at the next restart", len);
+        return dp_send_json(req, o, NULL);
+    }
+    if (!rbapi_require_read(req)) return ESP_FAIL;
+    size_t sz = 0; char *pem = NULL;
+    if (littlefs_raw_size(RBMQTT_CA_FILE, &sz) == ESP_OK && sz > 0 && sz <= RBMQTT_CA_MAX && (pem = malloc(sz + 1))) {
+        size_t got = 0;
+        if (littlefs_raw_read(RBMQTT_CA_FILE, pem, sz, &got) == ESP_OK && got == sz) pem[sz] = 0; else { free(pem); pem = NULL; }
+    }
+    cJSON *o = ca_info_json(pem, pem ? sz : 0);
+    free(pem);
+    return dp_send_json(req, o, NULL);
+}
