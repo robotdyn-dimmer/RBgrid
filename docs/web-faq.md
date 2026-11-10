@@ -60,6 +60,18 @@ It's the app's own estimate at your current rates, for example the cost per hour
 **If I change the tariff, do past costs change?**
 No. The hub stores the cost of each period at the rates in force then. A new tariff applies from the moment you save it.
 
+**Can the hub use my supplier's hourly or market price?**
+Yes, from **v1.2.0**. It fetches the day-ahead price for your zone itself and prices each 15-minute period with it; your tariff plan stays as the fallback and supplies the charges. Home Assistant can push prices instead, if your supplier isn't one the hub knows. → [Where your price comes from](hub-dynamic-prices.md)
+
+**Every cost suddenly looks much too high, and the price itself looks right.**
+An all-in price is being treated as a spot one, so your plan's taxes and VAT are added on top of a price that already contained them. For a network provider the hub sets the class and you read it in the provider list (**· all-in**); for Home Assistant it is yours to set, under **What Home Assistant sends**. → [Dynamic prices](web-prices.md)
+
+**A period cost less than zero. Is that a bug?**
+No — the market price was negative and your contract passes that through, so the hub booked a negative cost. If yours doesn't pass negative prices through, set a **Lowest buy price**.
+
+**My provider failed and the hub carried on. What was I charged for those hours?**
+Whatever came next in the chain: the backup provider, or your tariff plan's zone rate. Every 15-minute period's applied price and its source are kept for 40 days on the Prices page, and the failure itself is a `FAIL price:` line in the Hub log. → [Events](web-events.md)
+
 ## Points and modules
 
 **What's a "point"?**
@@ -133,6 +145,9 @@ There's no way to reset it from the app: every change, factory reset included, n
 
 **How do I update the app?**
 At webapp.rbgrid.io it's always the latest; nothing to do. For the app installed on the hub, install the new `rbgrid-ui_<version>.zip` from the release the same way as the first time. Your settings and history are on the hub and stay. → [Opening the app](web-opening-the-app.md)
+
+**I use dynamic prices and I'm on firmware v1.2.0 — should I update?**
+Yes. On v1.2.0 the fetched prices shared the hub's small settings store with the hour being measured, so they could fill it and a restart could lose part of that hour (the Hub log shows `FAIL hour persist …`). **v1.2.1** moves the prices to the file system and frees the space on the first start. Nothing else changes. → [Where your price comes from](hub-dynamic-prices.md)
 
 **How do I update the hub's firmware?**
 In **Settings → Hub firmware**, upload `main_release.bin` from the new release (the other three files are for USB flashing only). Wi-Fi, settings, points, tariff, tokens and history are kept, and the modules keep counting during the update. If the new firmware doesn't start, the hub goes back to the previous one by itself. For about a minute after an update the hub is still confirming the new image, and a second update started in that minute is refused: the panel says "Failed: The hub is still confirming the firmware installed less than a minute ago. Try again in about a minute." Wait a minute and try again (on firmware v1.1.5 and earlier the same attempt failed with a generic error instead). Then install the release's matching `rbgrid-ui_<version>.zip`. Don't restart the hub in the first minute after an update: the new firmware isn't confirmed yet, and a restart inside that minute rolls it back to the previous one. → [Settings](web-settings.md#hub-firmware)

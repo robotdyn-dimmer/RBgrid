@@ -72,6 +72,8 @@ Nodes are managed on **Management → Points**, in the **Remote nodes (ESP-NOW)*
 2. In the app, choose the **Pairing time** (in minutes) and press **Pair a node**. The section says: "Power the node up now. It shows up below in a few seconds." and counts down: "Waiting for a node… *time* left". **Stop pairing** closes the window early.
 3. Power the node up (or reset it). It scans the Wi-Fi channels for the hub, exchanges keys with it and appears in the list, marked **new**. Its points are added at once: "Paired in this window: *n*. Their points are already added; no restart needed."
 
+![The Remote nodes section with a pairing window open: «Waiting for a node… 1:56 left» and «Stop pairing», above the two node cards](https://www.rbgrid.io/assets/img/webapp-docs/wa-nodes-pairing-window.webp)
+
 > ⚠️ **While the pairing window is open, any RBgrid node in range that asks is paired.** There is no PIN. That includes a node someone else owns whose own hub has gone quiet: a paired node that gets no answer for about 150 seconds starts asking to pair by itself. Open the window only when you are about to power a node up, keep it short, and close it with **Stop pairing** once your node is in the list; then check that the list holds only the nodes you expect.
 
 The keys are kept on the node and on the hub. After a restart, or after the radio was off, the node reconnects by itself; you pair it once.
@@ -103,6 +105,8 @@ Each paired node has a card in the section.
 
 The card has three buttons: **Settings**, **Turn off** / **Turn on**, and **Delete**.
 
+![One node's card in full: the MAC and its online badge, Last heard, Lost packets in the last minute, Clock sync, Signal, Firmware 1.5 and the 15-minute period, with the node's two channels bound to named points](https://www.rbgrid.io/assets/img/webapp-docs/wa-nodes-card-detail.webp)
+
 ## Node settings
 
 **Settings** opens "Node *mac*: settings". For every channel it shows **Channel *n* measures** (on or off) and **Current clamp**, the clamp model fitted to that channel. "Pick the clamp actually fitted to each channel: a wrong one scales its readings wrongly. A channel turned off stops measuring." At least one channel has to stay on.
@@ -125,7 +129,7 @@ The **Radio for nodes** line in the section header shows one of three states:
 - "Starts by itself when a node is paired (factory setting)." Nothing is running yet; the radio starts with the first pairing or when a node is already paired.
 - "Off. Nodes can't send data." You switched it off.
 
-Switching it off asks first: "The nodes stop sending: their points get no live values and no history until the radio is on again. The hub remembers this after a restart." Every node goes offline at once. While the radio is off, nodes keep closing their 15-minute periods and keep them until it is on again — on node firmware 1.5 about five days of them, in the node's own flash; on 1.4, eight periods, about two hours, in its memory. Older periods and the live values of that time are not kept.
+Switching it off asks first: "The nodes stop sending live values. They keep their 15-minute energy records and send them when the radio is on again (up to 2 hours on node firmware 1.4, about 5 days on 1.5). The hub remembers this after a restart." Every node goes offline at once. The live values of that time are not kept; the records are, for as long as the node's firmware can hold them.
 
 ## Removing a node
 
@@ -165,13 +169,19 @@ There is no pass mark for signal or lost packets in the firmware, and this page 
 2. Watch the card for about ten minutes: the node should stay **online**, **Lost packets, last minute** should stay at 0 and **Last heard** should stay at "now" or a few seconds.
 3. If lost packets climb above zero, or the node flips between online and offline, the link is marginal. Move the node, or the hub, a little, and watch again.
 
-Two thresholds exist in the firmware, and they are all that exists: a node is **offline** after 15 seconds without a frame (the hub logs `node_offline` and `node_online`), and a node that hears no beacon for 8 seconds starts scanning for the hub's channel again (this is how it follows a router that changes channel; no restart is needed).
+Two thresholds exist in the firmware, and they are all that exists: a node is **offline** after 15 seconds without a frame (the hub publishes `node_offline` and `node_online` on MQTT), and a node that hears no beacon for 8 seconds starts scanning for the hub's channel again (this is how it follows a router that changes channel; no restart is needed).
 
 A weak link shows up as lost packets above 0 and gaps in the live values while the records keep arriving; a worse one makes the node flap. **A node out of range and a node without power look the same** to the app and the API. Only the card's history before the drop tells them apart: a weak link drifts first (rising losses, falling signal, flapping), a power cut is clean.
 
 ### Knowing later that a node has gone quiet
 
-The five-day hold only helps if you notice inside five days, and on firmware **v1.1.8** nothing in the app comes to find you: a node that stops reporting is shown on its card and in the Nodes list, and nowhere else. There is **no** entry in the app's Journal and **no** item in **Needs attention** — the hub writes that line to its own serial log only.
+The five-day hold only helps if you notice inside five days.
+
+**From firmware v1.2.0 the hub writes it down.** A node falling silent and coming back are lines in the Hub log — `espnow: node <MAC> offline` and `… online` — so a node that went quiet while you were away leaves a trace you can find afterwards, with its time. → [Events](web-events.md)
+
+**On firmware v1.1.8 nothing in the app comes to find you:** a node that stops reporting is shown on its card and in the Nodes list, and nowhere else. There is **no** entry in the app's Journal and **no** item in **Needs attention** — on that firmware the hub writes the line to its own serial log only.
+
+On neither firmware does the app raise an alarm: the log is a record to look at, not a notification that reaches you. For that, use Home Assistant.
 
 **With Home Assistant, you have a proper alarm and it costs one automation.** The hub publishes a per-node **Online** connectivity entity by MQTT discovery, as a sub-device of the hub, and it follows the node's retained status. Automate on that entity turning off and you will be told within the minute. The same transition is published as a `node_offline` event on the hub's event topic, if you prefer to watch events.
 
@@ -189,7 +199,11 @@ The house total can't be double-counted: the system totals are taken at the grid
 
 The **unmetered** remainder on the Overview can. It is the input minus the sum of all line points, and node points are line points. If you meter a sub-panel on a node *and* a load inside that sub-panel on another channel, that load is subtracted twice, and the remainder can go negative.
 
-**From firmware v1.1.8 you can tell the hub about it:** mark the inner point as measured **inside** the outer one, and it stops being subtracted a second time. That is the right answer for a workshop or garage sub-feed metered on a node with its loads metered behind it — you keep both figures and the remainder still means something. → [Points](web-points.md)
+**From firmware v1.1.8 you can tell the hub about it:** mark the inner point as measured **inside** the outer one, and it stops being subtracted a second time. That is the right answer for a workshop or garage sub-feed metered on a node with its loads metered behind it — you keep both figures and the remainder still means something. It changes nothing in the measurement and nothing in the house total.
+
+The setting is **Management → Points** → the point → **Point setup** → **Point settings** → **Measured inside**, where **None: a line of its own** is the default. The list leaves out the input, the voltage bus, the point itself and anything already inside it; a choice the hub refuses reads *"The hub refused that choice: the point is gone, is an input, or is already inside this one. Pick another."* → [Points](web-points.md)
+
+> ⚠️ **It holds for one level.** B inside A is counted once. Where a chain goes deeper — C inside B inside A — and the middle point is not shown, some views can still count the innermost point twice.
 
 > On **v1.1.7** there was no such setting, and the advice was to meter either the sub-panel or the loads inside it, not both. The house total is unaffected either way: system totals are taken at the input.
 
@@ -197,7 +211,7 @@ The **unmetered** remainder on the Overview can. It is the input minus the sum o
 
 - **Points:** a node's channels are points like any other, with their own pages, roles and names (see [Points](web-points.md)).
 - **History and Economics:** by point, as for any point; node points share the 12 history slots (see [History](web-history.md)).
-- **Events:** the Hub log records `node_online` and `node_offline` (see [Events](web-events.md)).
+- **Events:** the Hub log records a node's pairing, the settings it confirms, and `FAIL` lines for frames or records the hub could not count. A node going offline or coming back is **not** in the log — it is published on MQTT and shown on the node card (see [Events](web-events.md)).
 - **MQTT:** the hub publishes a retained status per node on `rbgrid/<mac>/node/<NODEMAC>/status` (`online`, signal, lost packets, last heard), refreshed every minute, and node events on `rbgrid/<mac>/event`; the same node actions are available over the command channel (see [MQTT broker](hub-mqtt.md)).
 - **Home Assistant:** one device per node, with an **Online** sensor and a **Signal** sensor, by discovery. The node's points appear like local ones.
 - **The hub's API:** `GET /api/v1/espnow` lists the radio state and every node with its health; `POST /api/v1/espnow` runs the same actions as the app (see below).
@@ -268,7 +282,19 @@ Errors come back as `{ "ok": false, "error": "BAD_REQUEST" | "ESPNOW_DISABLED" |
 
 **The node's points show live values but no history**
 - The hub's 12 history slots were already in use when the node was paired: "Points beyond 12 show live values only." Remove a point you don't need, then re-pair the node, or accept live-only points.
-- On v1.1.7 a node records energy only with a module that measures voltage; a current-only module on a node gives live current but no records.
+- A node records energy only with a module that measures voltage. A current-only module gives live current **and an estimated live power** (your nominal voltage × current, 230 V if none is set) — but no periods, no history and no cost. From **v1.1.8** the hub books no energy for such an input at all rather than inventing it from the nominal voltage.
+
+**Every node reads offline although they are powered and paired**
+- `GET /api/v1/espnow` → `inject_age_ms` of `-1` means the hub's task that books node data is not running. Up to **v1.1.7** the hub could fail to start it silently when internal RAM was short at boot, and nothing said so; **v1.1.8** reserves that memory at build time. Update the hub.
+
+  From **v1.2.0** you don't have to go looking for it: the Remote nodes section shows a warning when the task has stopped, with a **Restart now** button beside it.
+
+  ![The Remote nodes section with a warning that the hub is not booking node data, and a «Restart now» button](https://www.rbgrid.io/assets/img/webapp-docs/wa-nodes-inject-stopped.webp)
+
+  Restarting clears the condition on a hub that has the memory; if it comes back after the restart, the hub is on firmware older than v1.1.8 and the fix is to update, not to restart again.
+
+**Clock sync keeps getting lost**
+- Another RBgrid hub is on the same Wi-Fi channel, and a node on firmware **1.4** accepted both hubs' time beacons. Update the node to **1.5**: it then follows only the hub it is paired to, and needs no re-pairing.
 
 **Energy is missing for a while**
 - The node was out of reach for longer than it can hold periods, or lost power. On node firmware 1.5 that is about five days, and a power cut does not lose what it holds; on 1.4 it is eight periods, about two hours, and a power cut loses both them and the period that was open.

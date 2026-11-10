@@ -131,9 +131,11 @@ It also lists any of these notes:
 | the module restarted — energy before its restart wasn't measured | the rbAmp module restarted during the period |
 | the module firmware changed | the module's firmware was updated during the period |
 | sensor reversed — consumption not metered | the current sensor seems to be fitted backwards |
-| includes energy from a break in measurement, counted in this hour | the record holds energy the hub could not place in time: it was off for more than a day, or a node delivered a period longer than 15 minutes. From firmware **v1.1.7**; the note appears with web app **1.1.8** and later |
+| includes energy from a break in measurement, counted in this hour | the record holds energy the hub could not place in time: it was off for more than a day, or a node delivered a period longer than 15 minutes. From firmware **v1.1.7**; the note appears with web app **1.1.8** and later. On web app **1.2.0** it adds that **its cost is approximate** — the kilowatt-hours are real, but the hub cannot know which price applied during the break, so that part is costed at the plan's default zone. → [How cost is calculated](web-cost-calculation.md) |
 
 > ⚠️ **The break note is the one that changes the money, not just the completeness.** Those kWh are real, but they were not used in this hour, so the hub prices them at the plan's default zone rather than at the zone that was in force during the break. If the break crossed a cheap window, the cost reads higher than it would have been. → [How cost is calculated](web-cost-calculation.md)
+
+![History as a table for one day: mostly «complete» rows, one «partial: 40 min of 1 h» row, and at the bottom an hour reading «partial: 40 min of 1 h, includes energy from a break in measurement, counted in this hour», both tinted](https://www.rbgrid.io/assets/img/webapp-docs/wa-history-quality-notes.webp)
 
 Partial rows have a soft red background. Records made before the hub's clock was set show "before sync" and are left off the charts.
 

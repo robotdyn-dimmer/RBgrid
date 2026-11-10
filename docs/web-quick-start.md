@@ -2,7 +2,7 @@
 
 This page takes the shortest path: one hub and one rbAmp **STD-UI1** energy meter on your supply (or an **STD-U3I3** for a three-phase supply). Each step links to the full description. The whole walk-through with explanations is in [Scenario: one main meter](web-scenario-main-meter.md).
 
-**You need:** an ESP32 board with PSRAM and **16 MB** flash — an ESP32-WROVER, or from v1.1.8 an ESP32-S3 (N16R8). 16 MB with PSRAM is the less common variant, so check a board you already have with `esptool.py --chip esp32 -p <PORT> flash_id` before you erase it · an rbAmp STD-UI1 or STD-U3I3 with its sensors · a USB cable · a computer with Python (for esptool) and `curl` · your home Wi-Fi name and password.
+**You need:** an ESP32 board with PSRAM and **16 MB** flash — an ESP32-WROVER, or from v1.1.8 an ESP32-S3 (N16R8). On a WROVER, 16 MB with PSRAM is the less common variant, so check a board you already have with `esptool.py -p <PORT> flash_id` before you erase it · an rbAmp STD-UI1 or STD-U3I3 with its sensors · a USB cable · a computer with Python (for esptool) and `curl` · your home Wi-Fi name and password.
 
 > For any work inside an electrical panel, call a qualified electrician.
 
@@ -21,7 +21,7 @@ Download the four files from the [latest release](https://github.com/rb-amp/RBgr
 
 ## 3. Put the hub on your Wi-Fi
 
-Join the hub's own Wi-Fi `rbgrid-xxxx` with the setup password from the release notes, open `http://192.168.4.1`, choose your home Wi-Fi (2.4 GHz) and enter its password. The hub joins your network and keeps its own Wi-Fi on.
+Join the hub's own Wi-Fi `rbgrid-xxxx` with the setup password **`RBGRID123`** — the same on every hub, so change it once you are in — open `http://192.168.4.1`, choose your home Wi-Fi (2.4 GHz) and enter its password. The hub joins your network and keeps its own Wi-Fi on.
 
 Find its new address: open `http://rbgrid-xxxx.local/` (the same four characters as its Wi-Fi name; works on Windows, macOS and iOS), or look at `http://192.168.4.1` again, or in your router's device list.
 

@@ -262,7 +262,11 @@ The panel also lists what to pick in Home Assistant's **Energy** dashboard:
 | Solar panels | RBGrid *your generation point* · Energy Out |
 | Individual devices | RBGrid *point* · Energy In, for each point |
 
-> ⚠️ **A point measured inside another needs one extra step in Home Assistant.** On firmware v1.1.8 the panel lists both the sub-panel and the point inside it, plainly and without saying they overlap — so adding both to **Individual devices** makes HA count the inner load twice. Either add only the level you want to see, or add both and set the outer one as the inner device's **upstream device** in HA's Energy dashboard, which is what stops the double count. (The hub's own figures are unaffected; this is about what you select in HA.) → [Points](web-points.md)
+> ⚠️ **A point measured inside another needs one extra step in Home Assistant.** Adding both the sub-panel and a point inside it to **Individual devices** makes HA count the inner load twice. Either add only the level you want to see, or add both and set the outer one as the inner device's **upstream device** in HA's Energy dashboard, which is what stops the double count. (The hub's own figures are unaffected; this is about what you select in HA.) → [Points](web-points.md)
+>
+> On firmware **v1.1.8** the panel listed both plainly, without saying they overlap, so the trap was invisible until the figures looked wrong. From **v1.2.0** the panel names the relationship itself — a nested point is listed with **(upstream device: …)** after it, so you can see which entry to set as the upstream before you add anything.
+
+![Settings → Home Assistant, «Individual devices», with a nested point listed as «(upstream device: RBGrid Garage sub-panel)»](https://www.rbgrid.io/assets/img/webapp-docs/wa-settings-ha-devices.webp)
 
 Topics, discovery and the command channel: see [MQTT broker](hub-mqtt.md).
 

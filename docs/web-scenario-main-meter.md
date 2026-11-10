@@ -50,7 +50,7 @@ After flashing, the hub restarts and opens its own Wi-Fi network for setup.
 
 ## Step 3. Put the hub on your Wi-Fi
 
-1. On a phone or computer, join the hub's Wi-Fi network `rbgrid-xxxx` with the setup password from the release notes. It's the same on every hub, so you'll change it in step 6.
+1. On a phone or computer, join the hub's Wi-Fi network `rbgrid-xxxx` with the setup password **`RBGRID123`**. It is the same on every hub, factory-built ones included, so you'll change it in step 6.
 2. Open `http://192.168.4.1`.
 3. Choose your home Wi-Fi, enter its password and save. The hub restarts and joins your network.
 4. Find the hub's new address, one of three ways:

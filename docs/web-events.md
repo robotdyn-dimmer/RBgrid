@@ -75,11 +75,36 @@ A point bound to a channel that the fitted module doesn't have doesn't get this 
 
 ## Hub log
 
-The **Hub log** (on the **Log** tab) is what the hub recorded itself: restarts and their causes, updates, Wi-Fi, module poll failures, and hours and days closing. The lines are technical, meant for an engineer or support. Remote nodes write `node_online` / `node_offline` here, when a node is heard again or has been silent for 15 seconds (see [Remote nodes](web-nodes.md)).
+The **Hub log** (on the **Log** tab) is what the hub recorded itself: restarts and their causes, updates, Wi-Fi, module poll failures, and hours and days closing. The lines are technical, meant for an engineer or support. Remote nodes write their pairing here, the settings they confirm, and `FAIL` lines for frames or records the hub could not count. A node going offline or coming back is **not** in this log: the hub publishes it on MQTT and shows it on the node card (see [Remote nodes](web-nodes.md)).
 
 ![Events · Log (the hub's own log)](https://www.rbgrid.io/assets/img/webapp-docs/wa-events-hub-log.webp)
 
 At the top is the hub's firmware line: the version, a short image ID and the partition it runs from.
+
+### Price lines
+
+From **v1.2.0**, when a dynamic price is on, the Hub log is where the price fetches leave their trail — and it is
+the place to look when a cost figure is not what you expected:
+
+| Line | What happened |
+|---|---|
+| `price: config …` | the price settings were changed and saved |
+| `price: <provider> <zone> stored N periods (valid until …)` | a fetch succeeded and the hub now has prices up to that time |
+| `price: state A -> B (source …)` | the price state changed — for instance the backup took over, or the primary came back |
+| `price: window '<name>' on until …` / `off, next …` | a cheap window opened or closed |
+| `FAIL price: <provider> <zone> fetch failed (<reason>), retry in N min` | a fetch failed, with the reason and when the hub will try again |
+
+![Events · Log with the price lines: a configuration change, a failed fetch, a successful fetch storing periods, a state change back to the primary provider, and a window opening](https://www.rbgrid.io/assets/img/webapp-docs/wa-events-price-lines.webp)
+
+The failure reasons are the hub's own codes — `fetch_failed`, `http_status`, `parse`, `auth`, `no_data_for_zone`,
+`rate_limited` — and which one it is decides what to do about it. The Prices page puts the same reason in plain
+words, and [Where your price comes from](hub-dynamic-prices.md) lists what each one means for you.
+
+Times in these lines are written as the hub writes them, in Unix seconds.
+
+> ⚠️ **A `FAIL price:` line is not a lost measurement.** Energy keeps being counted and costed throughout; what a
+> failed fetch changes is *which* price was applied — the backup's, or the plan's zone rate. The
+> [price log](web-prices.md) says which, for every period.
 
 ### Filter
 

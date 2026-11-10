@@ -20,6 +20,8 @@ Open it in the app: **Settings → Time**. The setup wizard shows a compact pane
 
 The time zone is a named zone with its daylight-saving rules, not a fixed UTC offset, so the clock changes on the right dates by itself.
 
+> ⚠️ **The hub's own time zone decides what "a day" means — not your phone's and not Home Assistant's.** It places your tariff zones and days, and from **v1.2.0** also the hours in a cheap window, the day a billing cycle for [import peaks](hub-peaks.md) starts on, and the day a price is "today" or "tomorrow". A hub set to the wrong zone gets all of them wrong together, by the same offset — which is why a window that opens an hour early is almost always a clock question rather than a rule one.
+
 - Pick one of the presets, for example "Central Europe — Berlin, Paris… (CET/CEST)".
 - The list includes southern-hemisphere zones, where daylight saving runs the other way round the year: Sydney/Melbourne/Canberra/Hobart, Adelaide, Brisbane, Perth, Auckland/Wellington, Santiago, São Paulo/Buenos Aires and Johannesburg.
 - If your zone isn't in the list, choose **Other (POSIX TZ)** and enter the zone as a POSIX TZ string. The string must carry its own daylight-saving rule.

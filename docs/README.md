@@ -1,16 +1,17 @@
 # RBgrid documentation
 
-Everything about RBgrid in one place: the web app you look at, the hub you flash, and the remote nodes. Current for hub firmware **v1.1.8** and web app 1.1.8 — what changed in each release is in [CHANGELOG.md](../CHANGELOG.md).
+Everything about RBgrid in one place: the web app you look at, the hub you flash, and the remote nodes. Current for hub firmware **v1.2.1** and web app 1.2.0 — what changed in each release is in [CHANGELOG.md](../CHANGELOG.md).
 
 The same pages, with search, are on [rbgrid.io](https://www.rbgrid.io/webapp/docs).
 
 ## Start here
 
-The six questions people actually arrive with:
+The seven questions people actually arrive with:
 
 | Question | Page |
 |---|---|
 | Why does this hour cost what it costs? | [How cost is calculated](web-cost-calculation.md) |
+| When is electricity cheapest today? | [Where your price comes from](hub-dynamic-prices.md) · [Dynamic prices](web-prices.md) |
 | How do I add a module and bind a point? | [Points](web-points.md) · [Sensors and modules](web-sensors.md) |
 | My node is offline — will the radio reach? | [Remote nodes](web-nodes.md) |
 | How do I get this into Home Assistant? | [MQTT broker](hub-mqtt.md) |
@@ -33,6 +34,10 @@ New hub, nothing set up yet? → [Quick start](web-quick-start.md), then [the se
 - [History](web-history.md) — this hour to this year, and the quality of each record.
 - [Economics](web-economics.md) — cost, export value, net, input against metered lines.
 - [How cost is calculated](web-cost-calculation.md) — the chain from measured energy to money.
+- [Dynamic prices](web-prices.md) — the Prices screen: the price now, today and tomorrow, windows, peaks, the log.
+- [Where your price comes from](hub-dynamic-prices.md) — the provider, the backup, your plan as the fallback.
+- [Knowing when energy is cheapest](hub-price-notification.md) — cheap windows, and what the hub publishes for automations.
+- [The highest 15 minutes of the month](hub-peaks.md) — import peaks per billing cycle.
 - [Events](web-events.md) — what the hub reports, and what to check.
 
 **Measuring**

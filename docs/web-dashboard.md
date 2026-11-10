@@ -129,6 +129,11 @@ The **Today** card shows the day so far:
 - **Month to date**: the closed days of this month from the hub's history plus today.
 - With a three-phase input **metered per phase**, these figures cover the whole input — the three phase points summed by the hub (firmware **v1.1.6** with the matching app package; on **v1.1.5** they covered one phase only).
 - The current zone and rate, for example "Zone: night · 0.18 €/kWh incl. VAT & levies". With no tariff the line isn't shown.
+- **While a dynamic price is in force** (web app **1.2.0**) that line reads **"Price now: dynamic"** with the rate actually in effect for this 15-minute period, instead of a zone name — because there is no zone doing the pricing, there is a market price.
+
+  ![The Today card's rate line reading «Price now: dynamic · €0.2446/kWh incl. VAT & levies»](https://www.rbgrid.io/assets/img/webapp-docs/wa-overview-price-dynamic.webp)
+
+  The figure is the all-in price: what a kilowatt-hour costs you right now, with your contract and charges in it. Where it came from, and what it was for every period already booked, is on [Dynamic prices](web-prices.md). A dynamic price that covers no period right now falls back to the zone, and the line goes back to naming it.
 
 "Today" means the hub's day. If the hub's clock isn't set, a note says that "today" counts from the hub's last midnight or restart, not your calendar day. Set the clock on the [Time](web-time.md) page.
 

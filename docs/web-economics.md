@@ -90,7 +90,24 @@ The unmetered part is the consumption at the input that none of your points meas
 
 From firmware **v1.1.8** that is what the **inside** setting is for: a point can be marked as measured inside another one, and then it is not added again here. The hub's own totals don't change — they are taken at the input — but this block stops double-counting. Mark the inner point, not the sub-panel. → [Points](web-points.md)
 
-> ⚠️ **A negative or implausibly small unmetered figure has two causes, and only one of them is yours.** Look first for a load counted twice — a point that sits inside another one. But **on a house with solar the figure can be negative with nothing wrong on your board**: this block compares the input's **import** against what the lines used, and lines fed partly by your panels can exceed what was imported. On firmware v1.1.8 this balance is built for a site **without** generation: it weighs import against use, so a generating site can read negative here while nothing is wrong with your metering, and the energy figures elsewhere on this page are unaffected. On a generating site, read **Generation** and the per-point totals rather than this balance.
+> ⚠️ **A negative or implausibly small unmetered figure has two causes, and only one of them is yours.** Look first for a load counted twice — a point that sits inside another one. The second cause was the app's own, and web app **1.2.0** removes it (see below).
+
+### On a site with generation (web app 1.2.0)
+
+Up to web app 1.1.8 this balance weighed the input's **import** against what the lines used. On a house with solar that is not a fair comparison: lines fed partly by your own panels can use more than was ever imported, so **Unmetered** could read negative with nothing wrong on your board.
+
+From **1.2.0** the comparison is against what was actually used on site:
+
+```
+Used on site = import + generation − export
+Unmetered    = used on site − the metered lines
+```
+
+and the share is shown as **Unmetered, % of use**.
+
+![The Balance block on a site with generation: «Used on site (import + generation − export)» 29.5 kWh, the metered lines beneath it, «Unmetered» 10.5 kWh and «Unmetered, % of use» 35 %](https://www.rbgrid.io/assets/img/webapp-docs/wa-economics-balance-solar.webp)
+
+So on a generating site the block now answers the question it always looked like it was answering: of everything the house used, how much went through circuits you measure. A site without generation is unchanged in substance — with no panels, what was used on site *is* what was imported.
 
 If any line has no records for the period, the block names those points and shows "—" for **Unmetered** and **Unmetered, % of input**: they aren't counted until every line has data. **Unmetered, % of input** also shows "—" when the input imported less than 10 Wh in the period, since a share of almost nothing is noise rather than a reading. (On app v1.1.4 and earlier the threshold was exactly nothing imported.)
 

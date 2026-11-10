@@ -6,6 +6,22 @@ The **Tariffs** page holds the hub's electricity price plan: time-of-use zones, 
 
 The hub keeps **one tariff plan**. Editing it changes the rates used from then on; costs already recorded keep the rates that applied.
 
+### When a dynamic price is on
+
+From **v1.2.0** the hub can take the price for each 15-minute period from a provider instead of from this plan. While that is on, a note at the top of this page says so, with a button **Open prices** — the only route between the two pages:
+
+![The Tariffs page with the note that a dynamic price is on and a button leading to the Prices page](https://www.rbgrid.io/assets/img/webapp-docs/wa-tariffs-dynamic-on.webp)
+
+**The plan does not stop mattering, and this is the part that surprises people.** It carries on doing three jobs:
+
+- **It is the fallback.** Any period the provider and the backup have no price for is priced by the zone in effect for it, exactly as before.
+- **It supplies the charges.** On a *spot* provider, this plan's per-kWh energy tax, grid fee and renewable levy, and its VAT, are applied on top of the market price. (On an *all-in* provider nothing of the plan is added — that is what stops the taxes being counted twice.)
+- **Its currency is the money currency.** A price zone trading in another currency is refused by the hub, which converts nothing. Set the currency here first.
+
+Export is priced by the plan too, unless you choose otherwise on the Prices page.
+
+→ [Where your price comes from](hub-dynamic-prices.md) · [Dynamic prices](web-prices.md)
+
 ![The Tariff card in Settings: the plan, zones and prices are on the Tariffs page](https://www.rbgrid.io/assets/img/webapp-docs/wa-settings-tariff.webp)
 
 > **A quick plan from the setup wizard.** The wizard's Tariff step sets a simple one- or two-zone plan from your bill price. It rebuilds the whole plan: taxes, fees, fixed payments and net metering are cleared, progressive is turned off, VAT is set to the value you enter, and the export price you enter (or 0) is written into every zone. If the hub already has a plan you set up, the wizard first asks "Replace the hub's tariff?". For anything more, use this page. → [First setup: the wizard](web-setup-wizard.md)
