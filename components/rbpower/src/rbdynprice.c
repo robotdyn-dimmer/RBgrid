@@ -173,7 +173,9 @@ static void cfg_get(dp_cfg_t *out)
 /* ============================================== stores ============================================== */
 
 typedef struct { uint32_t from, until; float price, sell; } dp_entry_t;
-typedef struct { dp_entry_t *e; int n; char provider[24]; char zone[12]; bool dirty; } dp_store_t;
+typedef struct { dp_entry_t *e; int n; char provider[24]; char zone[12]; bool dirty; uint32_t gen; } dp_store_t;
+/* gen: bumped whenever the store is handed to another provider / zone / product; a fetch started under an older
+ * gen must not write (a slow fetch across a config change). */
 
 enum { ST_HA = 0, ST_NET_P = 1, ST_NET_B = 2, ST_N = 3 };
 static dp_store_t s_st[ST_N];
@@ -302,6 +304,11 @@ bool rbdynprice_resolve_plan(uint32_t ts, float zone_buy, float zone_sell, const
         float raw, raw_sell; uint32_t until; bool mean;
         if (!st_price_at(st, ts, c.hourly_mean, &raw, &raw_sell, &until, &mean)) continue;
         const dp_provider_t *pv = provider_by_id(store_provider(&c, st));
+        if (st != ST_HA && pv) {                       /* the plan's currency may have changed since the config was set */
+            const dp_zone_t *zz = zone_of(pv, c.zone);
+            const char *cur = rbpower_tariff_currency();
+            if (!zz || (cur && cur[0] && strcmp(cur, zz->currency))) continue;
+        }
         dp_class_t cls = st == ST_HA ? (dp_class_t)c.ha_class : (pv ? pv->cls : CLS_SPOT);
         float buy;
         if (cls == CLS_ALL_IN) buy = raw;
@@ -547,6 +554,7 @@ cJSON *rbdynprice_price_log_json(uint32_t from, uint32_t until)
     uint32_t now = (uint32_t)time(NULL);
     if (!until) until = now;
     if (!from) from = until > 86400 ? until - 86400 : 0;
+    if (until > from && until - from > (uint32_t)PLOG_DAYS * 86400u) from = until - (uint32_t)PLOG_DAYS * 86400u;   /* kept span only */
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "type", "price_log");
     cJSON_AddStringToObject(o, "currency", rbpower_tariff_currency());
@@ -623,11 +631,15 @@ static int http_get(const char *url, char *buf, int cap, int *status)
 
 /* Energy-Charts: {"unix_seconds":[…],"price":[…],"unit":"EUR / MWh"} — period starts, EUR/MWh. */
 static char s_fetch_prov[24], s_fetch_zone[12];
+static uint32_t s_fetch_gen[ST_N];
+static int s_fetch_st = -1;
 static bool store_is_for_fetch_locked(int st)
 {
-    return !strcmp(s_st[st].provider, s_fetch_prov) && !strcmp(s_st[st].zone, s_fetch_zone);
+    return st == s_fetch_st && s_st[st].gen == s_fetch_gen[st] &&
+           !strcmp(s_st[st].provider, s_fetch_prov) && !strcmp(s_st[st].zone, s_fetch_zone);
 }
 
+static void put_entry(int st, uint32_t from, uint32_t until, float price, int *stored);
 static const char *fetch_energy_charts(int st, const char *zone, uint32_t start, uint32_t end, int *stored)
 {
     *stored = 0;
@@ -656,23 +668,20 @@ static const char *fetch_energy_charts(int st, const char *zone, uint32_t start,
     if (cnt < 0 || cnt != cJSON_GetArraySize(pr)) { cJSON_Delete(j); return "parse"; }
     if (cnt == 0) { cJSON_Delete(j); return "no_data_for_zone"; }
     float div = (unit && strstr(unit, "kWh")) ? 1.0f : 1000.0f;
-    portENTER_CRITICAL(&s_st_mux);
-    for (int i = 0; i < cnt; i++) {
-        const cJSON *a = cJSON_GetArrayItem(ts, i), *p = cJSON_GetArrayItem(pr, i);
+    /* walk both arrays once (cJSON_GetArrayItem is O(i)), then store in short critical sections via put_entry */
+    const cJSON *a = ts->child, *p = pr->child;
+    uint32_t prev_from = 0;
+    for (; a && p; a = a->next, p = p->next) {
         if (!cJSON_IsNumber(a) || !cJSON_IsNumber(p)) continue;      /* null = no price for the slot */
         uint32_t from = (uint32_t)a->valuedouble, until;
-        const cJSON *nx = (i + 1 < cnt) ? cJSON_GetArrayItem(ts, i + 1) : NULL;
+        const cJSON *nx = a->next;
         if (nx && cJSON_IsNumber(nx) && (uint32_t)nx->valuedouble > from && (uint32_t)nx->valuedouble - from <= 3600)
             until = (uint32_t)nx->valuedouble;
-        else if (i > 0 && cJSON_IsNumber(cJSON_GetArrayItem(ts, i - 1)))
-            until = from + (from - (uint32_t)cJSON_GetArrayItem(ts, i - 1)->valuedouble);
+        else if (prev_from && from > prev_from && from - prev_from <= 3600) until = from + (from - prev_from);
         else until = from + 900;
-        if (until - from > 3600) until = from + 900;
-        if (!store_is_for_fetch_locked(st)) break;
-        st_put_locked(&s_st[st], from, until, (float)(p->valuedouble / div), NAN);
-        (*stored)++;
+        prev_from = from;
+        put_entry(st, from, until, (float)(p->valuedouble / div), stored);
     }
-    portEXIT_CRITICAL(&s_st_mux);
     cJSON_Delete(j);
     return *stored ? NULL : "no_data_for_zone";
 }
@@ -830,9 +839,11 @@ static const char *fetch_energyzero(int st, uint32_t now, int *stored)
         const cJSON *e;
         cJSON_ArrayForEach(e, cJSON_GetObjectItem(j, "all_in_with_vat")) {
             const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(cJSON_GetObjectItem(e, "price"), "value"));
-            if (!v) continue;
+            char *endp = NULL;
+            float pv = v ? strtof(v, &endp) : NAN;
+            if (!v || endp == v || isnan(pv)) continue;   /* "" / "n/a" is no price, not 0.00 */
             put_entry(st, parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "start"))),
-                      parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "end"))), strtof(v, NULL), stored);
+                      parse_iso(cJSON_GetStringValue(cJSON_GetObjectItem(e, "end"))), pv, stored);
         }
         cJSON_Delete(j);
         if (*stored) break;                              /* tomorrow's answer had today too */
@@ -890,8 +901,11 @@ static const char *fetch_store(int st, const char *provider, const char *zone)
     const dp_provider_t *pv = provider_by_id(provider);
     const dp_zone_t *z = zone_of(pv, zone);
     dp_cfg_t c; cfg_get(&c);
+    portENTER_CRITICAL(&s_st_mux);
     snprintf(s_fetch_prov, sizeof(s_fetch_prov), "%s", provider);
     snprintf(s_fetch_zone, sizeof(s_fetch_zone), "%s", zone);
+    s_fetch_st = st; s_fetch_gen[st] = s_st[st].gen;
+    portEXIT_CRITICAL(&s_st_mux);
     if (!z) err = "no_data_for_zone";
     else if (!strcmp(provider, "energy_charts"))     err = fetch_energy_charts(st, zone, start, end, &stored);
     else if (!strcmp(provider, "nordpool"))          err = fetch_nordpool(st, z, now, &stored);
@@ -909,7 +923,8 @@ static const char *fetch_store(int st, const char *provider, const char *zone)
 }
 
 static volatile bool s_refetch = true;
-void rbdynprice_kick(void) { s_refetch = true; }
+static TaskHandle_t s_fetch_task_h = NULL;
+void rbdynprice_kick(void) { s_refetch = true; if (s_fetch_task_h) xTaskNotifyGive(s_fetch_task_h); }
 static uint32_t s_next_try[ST_N];
 
 /* Does network store st need a fetch now? today = now not covered; tomorrow = after 11:00 UTC (12:00 CET winter,
@@ -927,7 +942,7 @@ static void fetch_task(void *arg)
     uint32_t last_save = 0;
     const char *prev_err = "none";
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(s_refetch ? 2000 : 30000));
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(s_refetch ? 2000 : 30000));   /* a kick ends the wait at once */
         uint32_t now = (uint32_t)time(NULL);
         if (now - last_save >= 60) { st_save_dirty(); last_save = now; }
         if (!clock_ok()) continue;
@@ -1000,7 +1015,7 @@ void rbdynprice_init(void)
     if (strcmp(s_st[ST_NET_B].provider, c.backup) || strcmp(s_st[ST_NET_B].zone, c.zone)) st_clear(ST_NET_B);
     strncpy(s_st[ST_NET_P].provider, c.source, 23); strncpy(s_st[ST_NET_P].zone, c.zone, 11);
     strncpy(s_st[ST_NET_B].provider, c.backup, 23); strncpy(s_st[ST_NET_B].zone, c.zone, 11);
-    if (xTaskCreate(fetch_task, "rbdynprice", 8192, NULL, 3, NULL) != pdPASS) ESP_LOGE(TAG, "no fetch task");
+    if (xTaskCreate(fetch_task, "rbdynprice", 8192, NULL, 3, &s_fetch_task_h) != pdPASS) ESP_LOGE(TAG, "no fetch task");
     ESP_LOGI(TAG, "dynamic prices: %s, source %s, backup %s, zone %s", c.enabled ? "on" : "off", c.source, c.backup,
              c.zone[0] ? c.zone : "-");
 }
@@ -1153,9 +1168,11 @@ esp_err_t rbdynprice_set_config(const cJSON *d, char *ef, size_t efl, char *em, 
     cfg_save();
     /* a network store follows its provider + zone: changed → drop it and fetch again */
     bool prod_changed = strcmp(old.product, c.product) || strcmp(old.export_product, c.export_product);
-    if (strcmp(old.source, c.source) || strcmp(old.zone, c.zone) || prod_changed) st_clear(ST_NET_P);
-    if (strcmp(old.backup, c.backup) || strcmp(old.zone, c.zone) || prod_changed) st_clear(ST_NET_B);
-    portENTER_CRITICAL(&s_st_mux);
+    bool chg_p = strcmp(old.source, c.source) || strcmp(old.zone, c.zone) || prod_changed;
+    bool chg_b = strcmp(old.backup, c.backup) || strcmp(old.zone, c.zone) || prod_changed;
+    portENTER_CRITICAL(&s_st_mux);                   /* clear + hand over in one step: no fetch can land in between */
+    if (chg_p) { s_st[ST_NET_P].n = 0; s_st[ST_NET_P].dirty = true; s_st[ST_NET_P].gen++; }
+    if (chg_b) { s_st[ST_NET_B].n = 0; s_st[ST_NET_B].dirty = true; s_st[ST_NET_B].gen++; }
     strncpy(s_st[ST_NET_P].provider, c.source, 23); strncpy(s_st[ST_NET_P].zone, c.zone, 11);
     strncpy(s_st[ST_NET_B].provider, c.backup, 23); strncpy(s_st[ST_NET_B].zone, c.zone, 11);
     portEXIT_CRITICAL(&s_st_mux);

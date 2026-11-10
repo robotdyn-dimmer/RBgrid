@@ -19,11 +19,12 @@
 #include "rbgrid_core.h"   /* rbgrid_nvs_open */
 #include "rbgrid_tz.h"     /* rbgrid_localtime_r */
 
-#define PK_VER   1
+#define PK_VER   2
 #define PK_DAYS  31
 
 typedef struct {
-    uint32_t cycle_start;              /* local midnight that starts the cycle (UTC s) */
+    uint32_t cycle_start;              /* local midnight that starts the cycle (UTC s; informative) */
+    int32_t  cycle_key;                /* civil date of the cycle start, days since 1970 (DST-proof identity) */
     float    q_max_w;  uint32_t q_max_ts;   /* highest 15-min mean import, period end */
     float    h_max_w;  uint32_t h_max_ts;   /* highest hourly mean import, hour start */
     float    day_h_w[PK_DAYS];         /* highest hourly mean per day of the cycle */
@@ -65,7 +66,23 @@ static uint32_t cycle_start_of(uint32_t ts, uint8_t cycle_day)
     return midnight - (uint32_t)back * 86400u;
 }
 
-static void cycle_reset(pk_cycle_t *c, uint32_t start) { memset(c, 0, sizeof(*c)); c->cycle_start = start; }
+/* Civil date (days since 1970) of the cycle start for ts, and the local date of ts: compared as dates, so a DST
+ * change inside the cycle doesn't make it look like a new cycle. */
+static int32_t cycle_key_of(uint32_t ts, uint8_t cycle_day, int32_t *day_of_ts)
+{
+    time_t t = (time_t)ts; struct tm tm;
+    if (!rbgrid_localtime_r(&t, &tm)) { if (day_of_ts) *day_of_ts = (int32_t)(ts / 86400); return (int32_t)(ts / 86400); }
+    int y = tm.tm_year + 1900, m = tm.tm_mon + 1;
+    int32_t today = days_from_civil(y, m, tm.tm_mday);
+    if (day_of_ts) *day_of_ts = today;
+    if (tm.tm_mday < cycle_day) { if (--m == 0) { m = 12; y--; } }
+    return days_from_civil(y, m, cycle_day);
+}
+
+static void cycle_reset(pk_cycle_t *c, uint32_t start, int32_t key)
+{
+    memset(c, 0, sizeof(*c)); c->cycle_start = start; c->cycle_key = key;
+}
 
 /* Close the hour being summed (caller holds s_mux). */
 static void hour_close_locked(void)
@@ -73,10 +90,10 @@ static void hour_close_locked(void)
     if (!s.hour_start || s.hour_n == 0) return;
     float w = s.hour_wh;                            /* Wh in one hour = mean W (missing periods count as booked) */
     if (w > s.cur.h_max_w) { s.cur.h_max_w = w; s.cur.h_max_ts = s.hour_start; }
-    if (s.hour_start >= s.cur.cycle_start) {
-        uint32_t d = (s.hour_start - s.cur.cycle_start) / 86400;
-        if (d < PK_DAYS && w > s.cur.day_h_w[d]) { s.cur.day_h_w[d] = w; s.cur.day_h_ts[d] = s.hour_start; }
-    }
+    int32_t day = 0;
+    (void)cycle_key_of(s.hour_start, s.cycle_day, &day);
+    int32_t d = day - s.cur.cycle_key;                 /* day of the cycle by local date (DST-proof) */
+    if (d >= 0 && d < PK_DAYS && w > s.cur.day_h_w[d]) { s.cur.day_h_w[d] = w; s.cur.day_h_ts[d] = s.hour_start; }
     s.hour_start = 0; s.hour_wh = 0; s.hour_n = 0;
 }
 
@@ -87,11 +104,11 @@ static void period_close_locked(void)
     uint32_t q = s.pend_q; float wh = s.pend_wh;
     s.pend_q = 0; s.pend_wh = 0;
     uint32_t mid = q - 450;
-    uint32_t cs = cycle_start_of(mid, s.cycle_day);
-    if (cs != s.cur.cycle_start) {                  /* new billing cycle */
+    int32_t key = cycle_key_of(mid, s.cycle_day, NULL);
+    if (key != s.cur.cycle_key || !s.cur.cycle_start) {   /* new billing cycle (by civil date) */
         hour_close_locked();
         if (s.cur.cycle_start) s.prev = s.cur;
-        cycle_reset(&s.cur, cs);
+        cycle_reset(&s.cur, cycle_start_of(mid, s.cycle_day), key);
     }
     float w = wh * 4.0f;                            /* 15-min mean W */
     if (w > s.cur.q_max_w) { s.cur.q_max_w = w; s.cur.q_max_ts = q; }
@@ -202,8 +219,12 @@ esp_err_t rbpeak_set(const cJSON *d, char *err, size_t err_len)
         snprintf(err, err_len, "cycle_day 1..28"); return ESP_ERR_INVALID_ARG;
     }
     portENTER_CRITICAL(&s_mux);
-    if (cd) { s.cycle_day = (uint8_t)cd->valueint; s.cur.cycle_start = 0; }   /* the next period opens a cycle */
-    if (cJSON_IsTrue(cJSON_GetObjectItem(d, "reset"))) { cycle_reset(&s.cur, 0); cycle_reset(&s.prev, 0);
+    if (cd && (uint8_t)cd->valueint != s.cycle_day) {   /* the current figures become "prev"; the next period opens a cycle */
+        s.cycle_day = (uint8_t)cd->valueint;
+        if (s.cur.cycle_start) s.prev = s.cur;
+        cycle_reset(&s.cur, 0, 0);
+    }
+    if (cJSON_IsTrue(cJSON_GetObjectItem(d, "reset"))) { cycle_reset(&s.cur, 0, 0); cycle_reset(&s.prev, 0, 0);
                                                          s.hour_start = 0; s.hour_wh = 0; s.hour_n = 0; }
     s_dirty = true;
     portEXIT_CRITICAL(&s_mux);

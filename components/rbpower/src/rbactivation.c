@@ -50,6 +50,7 @@ typedef struct { bool active; uint32_t active_until, next_start, win_from, win_u
 
 static act_cfg_t s_cfg;
 static act_state_t s_st[RBACT_MAX_RULES];
+static uint32_t s_cfg_gen = 0;   /* bumped by rbact_set: a tick evaluated on an older config must not write back */
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /* ------------------------------------------------ prices ------------------------------------------------ */
@@ -69,11 +70,37 @@ static float sell_at(uint32_t period_from)
     return p.sell;
 }
 
+/* UTC instant at which the local clock reads hour h on the local day that starts at `day0` (UTC of its midnight).
+ * Adding h × 3600 is off by the DST hour after a change on that day: correct it by reading the local hour back. */
+static uint32_t local_hour_on(uint32_t day0, int h)
+{
+    uint32_t t = day0 + (uint32_t)h * 3600u;
+    for (int k = 0; k < 2; k++) {
+        time_t tt = (time_t)t; struct tm tm;
+        if (!rbgrid_localtime_r(&tt, &tm)) break;
+        int got = tm.tm_hour, want = h % 24;
+        if (got == want) break;
+        int diff = got - want;                         /* ±1 h (or ±23 across midnight) */
+        if (diff > 12) diff -= 24; else if (diff < -12) diff += 24;
+        t -= (uint32_t)(diff * 3600);
+    }
+    return t;
+}
+
+/* UTC instant of the local midnight that starts ts's local day — correct on DST days (the wall-clock seconds since
+ * midnight differ from the elapsed seconds after a change). */
 static uint32_t local_midnight(uint32_t ts)
 {
     time_t t = (time_t)ts; struct tm tm;
     if (!rbgrid_localtime_r(&t, &tm)) return ts - ts % 86400;
-    return ts - (uint32_t)(tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec);
+    uint32_t m = ts - (uint32_t)(tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec);
+    for (int k = 0; k < 2; k++) {                      /* m must read 00:xx on the same local date */
+        time_t mt = (time_t)m; struct tm tm2;
+        if (!rbgrid_localtime_r(&mt, &tm2)) break;
+        if (tm2.tm_hour == 0 && tm2.tm_mday == tm.tm_mday) break;
+        if (tm2.tm_mday != tm.tm_mday) m += 3600; else m -= (uint32_t)(tm2.tm_hour * 3600);
+    }
+    return m;
 }
 
 int rbact_rank(uint32_t ts, bool sell, int *of_n)
@@ -99,7 +126,10 @@ static void window_instance(uint32_t now, int from_h, int to_h, uint32_t *S, uin
     int len_h = to_h > from_h ? to_h - from_h : to_h + 24 - from_h;
     uint32_t m = local_midnight(now);
     for (int back = 1; back >= -1; back--) {              /* yesterday's (overnight), today's, tomorrow's */
-        uint32_t s = m - back * 86400 + from_h * 3600, e = s + len_h * 3600;
+        uint32_t d0 = local_midnight(m - back * 86400 + 43200);   /* that day's midnight (DST-safe) */
+        uint32_t s = local_hour_on(d0, from_h);
+        uint32_t e = (from_h + len_h >= 24) ? local_hour_on(local_midnight(d0 + 86400 + 43200), (from_h + len_h) - 24)
+                                            : local_hour_on(d0, from_h + len_h);
         if (now < e) { *S = s; *E = e; if (now >= s || back <= 0) return; }
     }
 }
@@ -236,10 +266,11 @@ void rbact_tick(uint32_t now)
 {
     static uint32_t last_q = 0, last_gen = 0;
     static uint8_t prev_active[RBACT_MAX_RULES];
-    act_cfg_t c;
-    portENTER_CRITICAL(&s_mux); c = s_cfg; portEXIT_CRITICAL(&s_mux);
+    act_cfg_t c; uint32_t gen0;
     act_state_t st[RBACT_MAX_RULES];
-    portENTER_CRITICAL(&s_mux); memcpy(st, s_st, sizeof(st)); portEXIT_CRITICAL(&s_mux);
+    portENTER_CRITICAL(&s_mux); c = s_cfg; memcpy(st, s_st, sizeof(st)); gen0 = s_cfg_gen; portEXIT_CRITICAL(&s_mux);
+    static uint32_t s_seen_gen = 0;
+    if (gen0 != s_seen_gen) { memset(prev_active, 0, sizeof(prev_active)); s_seen_gen = gen0; }   /* new rules: no stale edges */
     bool changed = false;
     for (int i = 0; i < c.n; i++) {
         eval_rule(&c.r[i], &st[i], now);
@@ -250,7 +281,9 @@ void rbact_tick(uint32_t now)
             else rbpower_diag_printf("price: window '%s' off, next %lu", c.r[i].name, (unsigned long)st[i].next_start);
         }
     }
-    portENTER_CRITICAL(&s_mux); memcpy(s_st, st, sizeof(st)); portEXIT_CRITICAL(&s_mux);
+    portENTER_CRITICAL(&s_mux);
+    if (s_cfg_gen == gen0) memcpy(s_st, st, sizeof(st));   /* rbact_set ran meanwhile: its states win */
+    portEXIT_CRITICAL(&s_mux);
     uint32_t q = now - now % 900, gen = rbdynprice_generation();
     if (q != last_q || gen != last_gen || changed) { publish_signal(); last_q = q; last_gen = gen; }
 }
@@ -382,7 +415,7 @@ esp_err_t rbact_set(const cJSON *d, char *ef, size_t efl, char *em, size_t eml)
     act_state_t st[RBACT_MAX_RULES]; memset(st, 0, sizeof(st));
     uint32_t now = (uint32_t)time(NULL);
     for (int i = 0; i < c.n; i++) eval_rule(&c.r[i], &st[i], now);   /* states at once (get rules right after set) */
-    portENTER_CRITICAL(&s_mux); s_cfg = c; memcpy(s_st, st, sizeof(st)); portEXIT_CRITICAL(&s_mux);
+    portENTER_CRITICAL(&s_mux); s_cfg = c; memcpy(s_st, st, sizeof(st)); s_cfg_gen++; portEXIT_CRITICAL(&s_mux);
     cfg_save();
     rbdynprice_kick();                                   /* the dynprice task re-evaluates within ~2 s */
     return ESP_OK;
