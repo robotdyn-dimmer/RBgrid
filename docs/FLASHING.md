@@ -24,11 +24,15 @@ On Windows, if `esptool.py` is not recognized, use `python -m esptool` in place 
 
 Download the latest firmware from [GitHub Releases](https://github.com/robotdyn-dimmer/RBgrid/releases).
 
-Extract the release archive (`RBgrid_vX.Y.Z.zip`) to get the following files:
+The binaries are individual assets on the release page — there is no archive to extract. For a USB flash of a blank hub, download all four:
 - `bootloader.bin`
 - `partition-table.bin`
 - `ota_data_initial.bin`
-- `main.bin`
+- `main_release.bin` — the application image; this one alone is also what an over-the-air update takes
+
+Each release lists the SHA-256 of every file, so you can check a download before flashing it.
+
+The release page also carries `rbgrid-ui_vX.Y.Z.zip`. That is the **web app** for the hub, not firmware: don't flash it. Installing it is described in the README.
 
 ### Hardware
 
@@ -78,7 +82,7 @@ esptool.py --chip esp32 --port COM3 --baud 460800 ^
   0x1000 bootloader.bin ^
   0x10000 partition-table.bin ^
   0x17000 ota_data_initial.bin ^
-  0x20000 main.bin
+  0x20000 main_release.bin
 ```
 
 **Linux/macOS:**
@@ -89,7 +93,7 @@ esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 460800 \
   0x1000 bootloader.bin \
   0x10000 partition-table.bin \
   0x17000 ota_data_initial.bin \
-  0x20000 main.bin
+  0x20000 main_release.bin
 ```
 
 `--flash_size 16MB` is not optional. If esptool reports a flash size mismatch, the board is not a 16 MB module and is not supported.
@@ -112,7 +116,7 @@ The very first boot on a blank flash takes about twenty seconds longer than late
 To replace only the application over USB (for example to return to a known image), write the OTA selector and the application; configuration, tokens and history are kept:
 
 ```bash
-esptool.py --chip esp32 --port COM3 --baud 460800 write_flash -z 0x17000 ota_data_initial.bin 0x20000 main.bin
+esptool.py --chip esp32 --port COM3 --baud 460800 write_flash -z 0x17000 ota_data_initial.bin 0x20000 main_release.bin
 ```
 
 Writing `ota_data_initial.bin` makes the bootloader start the slot you just wrote (`ota_0`) instead of the other slot. A hub that still runs the previous single-OTA-slot table (its `GET /api/system/version` names a `factory` partition) needs `partition-table.bin` at `0x10000` added to this command once; the data partitions are at the same offsets in both tables and keep their contents.
@@ -179,7 +183,7 @@ PSRAM not detected (wrong module) or a partially written flash: erase and write 
 
 ### The hub keeps booting the old firmware after an app-only reflash
 
-You wrote `main.bin` without `ota_data_initial.bin`; the bootloader still selects the other slot. Write both as shown above.
+You wrote `main_release.bin` without `ota_data_initial.bin`; the bootloader still selects the other slot. Write both as shown above.
 
 ## Monitoring Serial Output
 
@@ -200,7 +204,7 @@ Press `CTRL+]` to exit screen, or `CTRL+C` then `CTRL+]` in idf.py monitor.
 
 ## OTA Updates
 
-After the initial USB flash, updates are installed over the air (`POST /api/system/ota` with the new `main.bin`). The hub writes the image into the slot it is not running from, restarts, and confirms the new image one minute after it has joined Wi-Fi; an image that fails before that is rolled back by the bootloader. See the *Updating* page of the user documentation for the procedure and the checks (`image_md5`, event log).
+After the initial USB flash, updates are installed over the air (`POST /api/system/ota` with the new `main_release.bin`). The hub writes the image into the slot it is not running from, restarts, and confirms the new image one minute after it has joined Wi-Fi; an image that fails before that is rolled back by the bootloader. See the *Updating* page of the user documentation for the procedure and the checks (`image_md5`, event log).
 
 ## Additional Resources
 
