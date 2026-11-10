@@ -2,14 +2,14 @@
 
 This is the smallest useful RBgrid system: **one hub and one rbAmp STD meter** measuring everything your home takes from the grid. It is the best way to start. Every other setup (single circuits, solar, more modules) is this one with more points added.
 
-The short version of this page is the [Quick start](quick-start.md).
+The short version of this page is the [Quick start](web-quick-start.md).
 
 ## What you get at the end
 
 - What your home imports from the grid right now, in watts and in money per hour, at your own tariff.
-- Today, this month to date and the tariff zone in force, on the [Overview](dashboard.md).
-- Hourly, daily and monthly history of the input, with cost, in [History](history.md).
-- Optional: the same data in Home Assistant over [MQTT](mqtt.md).
+- Today, this month to date and the tariff zone in force, on the [Overview](web-dashboard.md).
+- Hourly, daily and monthly history of the input, with cost, in [History](web-history.md).
+- Optional: the same data in Home Assistant over [MQTT](hub-mqtt.md).
 
 ## Choose the meter
 
@@ -23,7 +23,7 @@ Both measure in both directions (import and export), so the input stays right if
 
 ## What you need
 
-- An ESP32-WROVER board with PSRAM and 16 MB flash: this is the hub.
+- An ESP32 board with PSRAM and 16 MB flash: this is the hub — an ESP32-WROVER, or from v1.1.8 an ESP32-S3 (N16R8). The bus pins below are the WROVER's; on an S3 they are SDA 8 / SCL 9.
 - The rbAmp STD-UI1 or STD-U3I3 with its current sensors.
 - A USB cable and a computer with Python (for `esptool`) and `curl`.
 - Your home Wi-Fi name and password. The hub uses **2.4 GHz** Wi-Fi only.
@@ -36,7 +36,7 @@ Both measure in both directions (import and export), so the input stays right if
 1. **Set the module to I²C.** The hub talks to the module over I²C. Set the module's interface switch to I²C before you power it: the module reads the switch only at power-on.
 2. **Fit the current sensors.** Clamp each sensor around the supply conductor of its channel, after the utility meter and before the main breaker. The arrow on the sensor points in the import direction (from the grid into the home). On an STD-U3I3, each current sensor must sit on the conductor whose voltage goes to the matching input: sensor 1 on L1, 2 on L2, 3 on L3. The module works out each phase's power from that pair, so a swap gives wrong per-phase power and power factor.
 3. **Connect the voltage input** through a fuse: L and N on an STD-UI1; L1, L2, L3 and N on an STD-U3I3.
-4. **Connect the module to the hub** with four wires: the module's **VIN to the board's 5 V/VIN pin** (4.5–5.5 V; not 3.3 V), GND, SDA to GPIO25, SCL to GPIO26. VIN only feeds the module's own regulator; its SDA/SCL work at 3.3 V and connect to the ESP32 directly, with no level shifter. Keep the cable up to 15 cm. Leave the module's pull-up resistors as they are: one module needs them. With four or more modules on one bus, they're cut on all but one module; see [Sensors and modules](sensors.md#cables-and-pull-ups).
+4. **Connect the module to the hub** with four wires: the module's **VIN to the board's 5 V/VIN pin** (4.5–5.5 V; not 3.3 V), GND, SDA to GPIO25, SCL to GPIO26. VIN only feeds the module's own regulator; its SDA/SCL work at 3.3 V and connect to the ESP32 directly, with no level shifter. Keep the cable up to 15 cm. Leave the module's pull-up resistors as they are: one module needs them. With four or more modules on one bus, they're cut on all but one module; see [Sensors and modules](web-sensors.md#cables-and-pull-ups).
 
 The module leaves the factory at I²C address **0x50**. Leave it there. On first start, a new hub finds the module at 0x50 and creates two points by itself: the **grid input** (the module's first channel) and the **voltage**. If the module answers at another address, no grid input is created, so keep the factory address for this scenario.
 
@@ -44,7 +44,7 @@ More: [Hardware](https://www.rbgrid.io/hardware) and the rbAmp STD wiring guide.
 
 ## Step 2. Flash the hub
 
-Download the four firmware files from the [latest release](https://github.com/robotdyn-dimmer/RBgrid/releases/latest): `bootloader.bin`, `partition-table.bin`, `ota_data_initial.bin` and `main_release.bin`. Connect the board over USB and run the `esptool` command from the release notes. It writes all four files at their addresses. → [Build & flash](https://www.rbgrid.io/source/build)
+Download the four firmware files from the [latest release](https://github.com/rb-amp/RBgrid/releases/latest): `bootloader.bin`, `partition-table.bin`, `ota_data_initial.bin` and `main_release.bin`. Connect the board over USB and run the `esptool` command from the release notes. It writes all four files at their addresses. → [Build & flash](https://www.rbgrid.io/source/build)
 
 After flashing, the hub restarts and opens its own Wi-Fi network for setup.
 
@@ -62,10 +62,10 @@ The hub keeps its own access point on as well. You'll set your own password for 
 
 ## Step 4. Open the web app
 
-The web app isn't part of the firmware file. Open it one of two ways (→ [Opening the app](opening-the-app.md)):
+The web app isn't part of the firmware file. Open it one of two ways (→ [Opening the app](web-opening-the-app.md)):
 
 - **At webapp.rbgrid.io**, nothing to install: on a computer on the same network, open [webapp.rbgrid.io](https://webapp.rbgrid.io/) in Chrome or Edge, enter the hub's address in **Device IP or URL** and choose **Connect**. When the browser asks to allow access to devices on your local network, allow it.
-- **From the hub:** install `rbgrid-ui_<version>.zip` from the same release once, as described in [Opening the app](opening-the-app.md#install-the-app-on-your-hub), then open `http://<hub address>/`.
+- **From the hub:** install `rbgrid-ui_<version>.zip` from the same release once, as described in [Opening the app](web-opening-the-app.md#install-the-app-on-your-hub), then open `http://<hub address>/`.
 
 The app opens on the Overview with a banner: *The hub still has its factory settings*. Choose **Set up →** to start the wizard. It's also in the menu under **System → Setup wizard**.
 
@@ -73,7 +73,7 @@ The app opens on the Overview with a banner: *The hub still has its factory sett
 
 ## Step 5. The setup wizard
 
-The wizard has seven steps. You can move between them in any order, skip the optional ones and come back later: nothing is blocked. A step that isn't finished shows a note, and **Done** lists what's left. → Full reference: [First setup: the wizard](setup-wizard.md)
+The wizard has seven steps. You can move between them in any order, skip the optional ones and come back later: nothing is blocked. A step that isn't finished shows a note, and **Done** lists what's left. → Full reference: [First setup: the wizard](web-setup-wizard.md)
 
 ### 5.1 Connection
 
@@ -92,7 +92,7 @@ Type a token, choose **Set** and **write it down**. The app keeps it in this bro
 - **Time:** choose your **Time zone** and **Save**. The zone applies at once.
 - Check the status chip: it must read **synchronized**. The hub sets its clock from the internet (NTP). If it doesn't sync, choose **Sync with NTP**. On a network without internet, choose **Use this device's time**: the hub's clock is set from your browser's clock.
 
-Time matters: tariff zones, "today" and "this month" all follow the hub's clock and time zone. → [Time](time.md)
+Time matters: tariff zones, "today" and "this month" all follow the hub's clock and time zone. → [Time](web-time.md)
 
 ### 5.4 Sensors
 
@@ -119,13 +119,13 @@ Without a tariff, the hub counts energy but shows money from a factory example. 
 
 Choose **Save the tariff**. With app v1.1.3 the app first asks **Replace the hub's tariff?**, because the factory example is a fuller plan than the quick form; choose **Replace**. App v1.1.4 replaces the factory example without asking. Money starts counting at your price from now.
 
-> The wizard's tariff always rebuilds the whole plan: other zones, taxes, fees and net metering are reset. Use it on a new hub. To change an existing plan, use **Tariffs**. → [Tariffs](tariffs.md)
+> The wizard's tariff always rebuilds the whole plan: other zones, taxes, fees and net metering are reset. Use it on a new hub. To change an existing plan, use **Tariffs**. → [Tariffs](web-tariffs.md)
 
 If your night hours aren't 23:00–07:00, or you have more zones, taxes or fees, set the plan in **Tariffs** instead.
 
 ### 5.6 Integrations (optional)
 
-Home Assistant and other smart-home systems get the hub's data over MQTT. If you don't use them, choose **Skip**. → [MQTT broker](mqtt.md)
+Home Assistant and other smart-home systems get the hub's data over MQTT. If you don't use them, choose **Skip**. → [MQTT broker](hub-mqtt.md)
 
 ### 5.7 Done
 
@@ -146,7 +146,7 @@ When all the required rows are green, the title reads **All set**. Otherwise it 
 
 The hub keeps its access point `rbgrid-xxxx`, still with the setup password. Until you change it, anyone nearby can join it. The Overview and Settings show a warning until you've changed this password **and** set an API token (without a token the hub doesn't tell the app the password's state).
 
-Open **Settings → Hub access point**, enter a new password (8–63 characters: Latin letters, digits and symbols) and choose **Change password**. Devices connected to the access point reconnect. → [Settings](settings.md)
+Open **Settings → Hub access point**, enter a new password (8–63 characters: Latin letters, digits and symbols) and choose **Change password**. Devices connected to the access point reconnect. → [Settings](web-settings.md)
 
 ## Step 7. Check that it works
 
@@ -158,12 +158,12 @@ Open the **Overview**:
 
 ![A flat on one 7-channel module: what the Overview shows after setup](https://www.rbgrid.io/assets/img/webapp-docs/wa-scenario-overview-live.webp)
 
-**History** starts with the first full hour. Daily and monthly views fill in as time passes. → [History](history.md)
+**History** starts with the first full hour. Daily and monthly views fill in as time passes. → [History](web-history.md)
 
 ## What next
 
-- **Measure single circuits:** add rbAmp Basic or STD modules, one at a time, from **Points → Add a module**. The hub moves modules off the factory address for you. Up to 8 modules, on hub firmware v1.1.2 and later. → [Sensors and modules](sensors.md)
-- **Bind the free channels** as points (water heater, kitchen, heat pump). Restart the hub after adding points so they start keeping history. The hub keeps history for up to 12 points; more points show live values only. → [Points](points.md)
-- **Refine the tariff:** more zones, energy tax, grid fee, VAT, a feed-in price. → [Tariffs](tariffs.md)
-- **Home Assistant:** connect a broker. → [MQTT broker](mqtt.md)
-- **Questions:** [FAQ](faq.md)
+- **Measure single circuits:** add rbAmp Basic or STD modules, one at a time, from **Points → Add a module**. The hub moves modules off the factory address for you. Up to 8 modules, on hub firmware v1.1.2 and later. → [Sensors and modules](web-sensors.md)
+- **Bind the free channels** as points (water heater, kitchen, heat pump). Restart the hub after adding points so they start keeping history. The hub keeps history for up to 12 points; more points show live values only. → [Points](web-points.md)
+- **Refine the tariff:** more zones, energy tax, grid fee, VAT, a feed-in price. → [Tariffs](web-tariffs.md)
+- **Home Assistant:** connect a broker. → [MQTT broker](hub-mqtt.md)
+- **Questions:** [FAQ](web-faq.md)

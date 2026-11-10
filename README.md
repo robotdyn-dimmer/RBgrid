@@ -2,14 +2,14 @@
 
 **See your electricity as money. Every circuit in your home, costed by your own tariff, on a hub you own.**
 
-[![Release](https://img.shields.io/github/v/release/robotdyn-dimmer/RBgrid)](https://github.com/robotdyn-dimmer/RBgrid/releases/latest)
+[![Release](https://img.shields.io/github/v/release/rb-amp/RBgrid)](https://github.com/rb-amp/RBgrid/releases/latest)
 ![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-blue.svg)
-![Platform: ESP32-WROVER](https://img.shields.io/badge/platform-ESP32--WROVER-orange.svg)
+![Platform: ESP32-WROVER | ESP32-S3](https://img.shields.io/badge/platform-ESP32--WROVER%20%7C%20ESP32--S3-orange.svg)
 ![ESP-IDF 5.5.1](https://img.shields.io/badge/ESP--IDF-5.5.1-red.svg)
 
-RBgrid is self-hosted firmware for an ESP32-WROVER hub that reads [rbAmp](https://www.rbamp.com/?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) measurement modules and shows what each circuit costs right now, today and this month, on your own tariff zones. The history stays on the hub in your fuse board. No account, no cloud, no subscription, no ads. Free for personal, non-commercial use; source-available.
+RBgrid is self-hosted firmware for an ESP32 hub that reads [rbAmp](https://www.rbamp.com/?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) measurement modules and shows what each circuit costs right now, today and this month, on your own tariff zones. The history stays on the hub in your fuse board. No account, no cloud, no subscription, no ads. Free for personal, non-commercial use; source-available.
 
-**[Try the live demo](https://demo.rbgrid.io/) · [Get started](https://www.rbgrid.io/get-started?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) · [Which modules do I need?](https://www.rbgrid.io/hardware?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) · [Documentation](https://www.rbgrid.io/webapp/docs?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) · [Questions → Discussions](https://github.com/robotdyn-dimmer/RBgrid/discussions)**
+**[Try the live demo](https://demo.rbgrid.io/) · [Get started](https://www.rbgrid.io/get-started?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) · [Which modules do I need?](https://www.rbgrid.io/hardware?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) · [Documentation](https://www.rbgrid.io/webapp/docs?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) · [Questions → Discussions](https://github.com/rb-amp/RBgrid/discussions)**
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://www.rbgrid.io/assets/img/shots/shot-overview-flat-dark-1600.webp">
@@ -23,13 +23,21 @@ RBgrid is self-hosted firmware for an ESP32-WROVER hub that reads [rbAmp](https:
 - **On your own hardware.** The hub keeps measuring and storing with the internet down. Nothing goes through our servers.
 - **Works with Home Assistant, doesn't need it.** No server to run. If you do run Home Assistant, the hub plugs into it over MQTT.
 
+## Documentation
+
+**[rbgrid.io/webapp/docs](https://www.rbgrid.io/webapp/docs?utm_source=github&utm_medium=referral&utm_campaign=rbgrid)**: tariffs, points, sensors, time, settings. Building and flashing: [rbgrid.io/source/build](https://www.rbgrid.io/source/build?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
+
+In this repository: **[`docs/`](docs/README.md)** — the same user guide (`web-*` pages), the hub's
+flashing guide [`docs/hub-flashing.md`](docs/hub-flashing.md) and the API reference
+[`docs/hub-api-schema.md`](docs/hub-api-schema.md).
+
 ## What the app shows you
 
 Open the web app two ways: from the hub itself, at its address on your home network, or at [webapp.rbgrid.io](https://webapp.rbgrid.io/), which connects to your hub on your home network (checked in Chrome and Edge; the browser asks once to allow access to local devices). Either way, your data goes straight from the browser to the hub. Every screen shows energy and money side by side.
 
 - **Overview:** cost right now per line and for the whole house; today and month to date, with yesterday for comparison; which tariff zone you are in and when the cheaper one starts; where today's money goes; the standby load.
 - **History:** from this hour to this year; energy, power, voltage, reactive power, power factor and money; chart or table; hourly for 60 days, then daily, monthly and yearly, on the hub's flash; CSV download.
-- **Economics:** cost per period and per tariff zone; import and export measured separately, export valued at your own sell rate; input against metered lines, so you see how much is unmetered.
+- **Economics:** cost per period, and a running split by tariff zone since the hub's last restart; import and export measured separately, export valued at your own sell rate; input against metered lines, so you see how much is unmetered.
 - **Tariffs:** your plan as your supplier writes it, on a weekly grid of named zones; history keeps the rates that applied.
 - **Points and events:** bind any module channel to a named point at runtime; sensor offline, clamp near its limit or clipping, with what to check.
 - **Setup and upkeep:** a seven-step setup wizard; over-the-air updates with automatic rollback; a restore point on the hub; API tokens; light and dark themes; English and Russian.
@@ -54,17 +62,17 @@ The hub announces every measurement point over MQTT discovery, and Home Assistan
   <img alt="Data flow: rbAmp modules send measurements over I²C to an ESP32-WROVER hub, which computes points, statistics, tariff costs and history, and serves the web app, the REST/WebSocket API and MQTT." src="https://www.rbgrid.io/assets/img/illus/diagram-architecture-light.png" width="720">
 </picture>
 
-rbAmp modules clip onto your existing wiring and measure each circuit. The ESP32-WROVER hub reads them over I²C, applies your tariff, keeps the history and serves the app, all on your home network.
+rbAmp modules clip onto your existing wiring and measure each circuit. The hub reads them over I²C, applies your tariff, keeps the history and serves the app, all on your home network.
 
 ## Hardware
 
 | | |
 |---|---|
-| **Hub** | An ESP32-WROVER board with PSRAM and 16 MB flash, one you have or any you buy. You flash it once over USB. |
+| **Hub** | An ESP32 board with **PSRAM and 16 MB flash**: an **ESP32-WROVER**, or, from v1.1.8, an **ESP32-S3** on the N16R8 module. Both sizes matter and 16 MB with PSRAM is the less common variant, so check a board you already own before you count on it — `esptool.py --chip esp32 -p <PORT> flash_id` prints what it has. You flash it once over USB. |
 | **Measurement** | One or more [rbAmp](https://www.rbamp.com/?utm_source=github&utm_medium=referral&utm_campaign=rbgrid) modules, up to eight per hub: **Basic** modules for your own SCT-013 clamps (one to seven channels), or **STD** energy meters for the supply (STD-UI1 single-phase, STD-U3I3 three-phase, with calibrated sensors included). |
 | **Grid** | Single-phase and three-phase supplies. A three-phase supply is measured by one STD-U3I3 (three voltages, three currents), set as the three-phase input in the app: one measurement point with per-phase readings, or from v1.1.5 one point per phase, each with its own import and export. Split-phase (two live legs sharing a neutral) is not covered. |
-| **Wiring** | I²C, four wires. Keep the module cable up to 15 cm (recommended). Pull-ups and longer cables: see the [rbAmp wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection?utm_source=github&utm_medium=referral&utm_campaign=rbgrid). |
-| **Remote nodes** | **From v1.1.7:** a second ESP32 can measure elsewhere in the building and send its readings to the hub over ESP-NOW: up to 6 nodes, 4 inputs each, paired from the app without a restart. A node closes each 15-minute period by its own clock and holds up to 8 of them while the hub is out of reach, so energy is filed by the time it was measured. Node firmware source is in [`node/`](node/); a node needs an ESP32 with 4 MB flash (no PSRAM) and rbAmp modules on I²C, and is flashed over USB — it has **no** over-the-air update. |
+| **Wiring** | I²C, four wires. Default bus pins are SDA 25 / SCL 26 on the ESP32-WROVER and SDA 8 / SCL 9 on the ESP32-S3, and you can change them in the hub's settings. Keep the module cable up to 15 cm (recommended). Pull-ups and longer cables: see the [rbAmp wiring guide](https://www.rbamp.com/docs/modules-basic-standard-hardware-connection?utm_source=github&utm_medium=referral&utm_campaign=rbgrid). |
+| **Remote nodes** | **From v1.1.7:** a second ESP32 can measure elsewhere in the building and send its readings to the hub over ESP-NOW: up to 6 nodes, 4 inputs each, paired from the app without a restart. A node closes each 15-minute period by its own clock, so energy is filed by the time it was measured and not by the time it arrived. **With v1.1.8 and node firmware 1.5** those finished periods wait in the node's own flash until the hub has them: about five days of periods, and they survive a power cut on the node. (A node still on firmware 1.4 holds eight periods in its memory, about two hours.) Node firmware source is in [`node/`](node/); a node needs an ESP32 with 4 MB flash (no PSRAM) and rbAmp modules on I²C, and is flashed over USB — it has **no** over-the-air update, and the update to 1.5 writes all three files, because 1.5 adds the flash partition the periods live in. |
 
 | | |
 |---|---|
@@ -78,24 +86,31 @@ RBgrid itself is free for personal, non-commercial use; the hardware is the only
 
 ### 1. Flash the firmware
 
-**Option A: the release image.** Download `bootloader.bin`, `partition-table.bin`, `ota_data_initial.bin` and `main_release.bin` from the [latest release](https://github.com/robotdyn-dimmer/RBgrid/releases/latest) (their SHA-256 are in the release notes) and flash them over USB:
+**Option A: the release image.** Download `bootloader.bin`, `partition-table.bin`, `ota_data_initial.bin` and `main_release.bin` from the [latest release](https://github.com/rb-amp/RBgrid/releases/latest) (their SHA-256 are in the release notes) and flash them over USB:
 
 ```bash
 python -m esptool --chip esp32 -p <PORT> -b 460800 write_flash --flash_mode dio --flash_size 16MB --flash_freq 40m \
   0x1000 bootloader.bin 0x10000 partition-table.bin 0x17000 ota_data_initial.bin 0x20000 main_release.bin
 ```
 
-To keep the hub's settings and history, flash as above; to start clean, run `python -m esptool --chip esp32 -p <PORT> erase_flash` first.
+**On an ESP32-S3** the files are different ones. Download `rbgrid-hub-s3_vX.Y.Z_full.zip` from the same release and unpack it: it holds its own boot loader, the partition table, the OTA selector and `main_release_s3.bin`, plus a `FLASH.txt` with this command. Use the boot loader from inside the zip — the one listed separately on the release page is the ESP32's and will not boot an S3.
 
-A hub already on v1.1.x can simply update over the air from the app (Settings → Hub firmware).
+```bash
+python -m esptool --chip esp32s3 -p <PORT> -b 460800 write_flash \
+  0x0 bootloader.bin 0x10000 partition-table.bin 0x17000 ota_data_initial.bin 0x20000 main_release_s3.bin
+```
+
+To keep the hub's settings and history, flash as above; to start clean, run `python -m esptool --chip esp32 -p <PORT> erase_flash` first (`--chip esp32s3` on an S3).
+
+A hub already on v1.1.x can simply update over the air from the app (Settings → Hub firmware). An S3 hub takes `main_release_s3.bin` there, never the ESP32 image.
 
 **Option B: build from source.** Requires **ESP-IDF v5.5.1** (v5.4.1 also builds) and `openssl`:
 
 ```bash
-git clone https://github.com/robotdyn-dimmer/RBgrid.git
+git clone https://github.com/rb-amp/RBgrid.git
 cd RBgrid
 components/rbpower/certs/gen_dev_cert.sh      # once, before the first build (generates the development certificate)
-idf.py set-target esp32
+idf.py set-target esp32                       # or esp32s3 for an ESP32-S3 hub
 idf.py build
 idf.py -p <PORT> flash                        # <PORT> e.g. /dev/ttyUSB0, COM3
 ```
@@ -110,7 +125,7 @@ The hub's own Wi-Fi stays on so you can always reach the hub. Once the web app i
 
 ### 3. Install the web app
 
-No install needed if you use [webapp.rbgrid.io](https://webapp.rbgrid.io/): open it on a computer on the same network as the hub and connect to the hub's address. To have the app on the hub itself, install it once. It's a separate package on the release page, `rbgrid-ui_vX.Y.Z.zip` ([latest release](https://github.com/robotdyn-dimmer/RBgrid/releases/latest)). Unpack it (it holds `kit/` and `ui-manifest.json` side by side), then upload each file and commit:
+No install needed if you use [webapp.rbgrid.io](https://webapp.rbgrid.io/): open it on a computer on the same network as the hub and connect to the hub's address. To have the app on the hub itself, install it once. It's a separate package on the release page, `rbgrid-ui_vX.Y.Z.zip` ([latest release](https://github.com/rb-amp/RBgrid/releases/latest)). Unpack it (it holds `kit/` and `ui-manifest.json` side by side), then upload each file and commit:
 
 ```bash
 HUB=http://<your-hub-address>     # e.g. http://192.168.4.1 on the hub's own Wi-Fi
@@ -149,12 +164,6 @@ Details: [`webapp/README.md`](webapp/README.md) (build the kit, install it on a 
 - **REST + WebSocket API and MQTT**, with a self-describing schema at `GET /api/v1/schema`. Sensors and measurement points are configured at runtime from the app or the API, not in code.
 - The hub firmware is an ESP-IDF application, not a library: you build and flash the whole image.
 - **Browser access** is limited to an allow-list: the hub's own pages and the RBgrid app (`https://webapp.rbgrid.io`, `https://demo.rbgrid.io`) are always allowed. To run the web app from your own address (for example `http://localhost:5173`), add it in **Settings → Browser access (CORS)** (up to 8 sites).
-
-## Documentation
-
-**[rbgrid.io/webapp/docs](https://www.rbgrid.io/webapp/docs?utm_source=github&utm_medium=referral&utm_campaign=rbgrid)**: tariffs, points, sensors, time, settings. Building and flashing: [rbgrid.io/source/build](https://www.rbgrid.io/source/build?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
-
-The same user guide is in this repository: [`webapp/docs/user/`](webapp/docs/user/README.md).
 
 ## License
 

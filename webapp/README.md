@@ -21,12 +21,12 @@ npm run build:embedded      # → build-embedded/rbgrid-ui_v<version>.zip = kit/
 ```
 
 The zip holds `kit/` (the files the hub serves, pre-compressed) and `ui-manifest.json` beside it (each
-file's SHA-256 and size, `ui_version`, `api_version`). Details: [docs/kit-format.md](docs/kit-format.md).
+file's SHA-256 and size, `ui_version`, `api_version`). Details: [docs/web-kit-format.md](../docs/web-kit-format.md).
 
 ## Install it on a hub
 
 Upload every file of `kit/` and commit the manifest, with the hub's admin token — the steps (curl and
-PowerShell) are in the release notes and in [docs/installing.md](docs/installing.md).
+PowerShell) are in the release notes and in [docs/web-installing.md](../docs/web-installing.md).
 
 ## Develop
 
@@ -43,9 +43,9 @@ REACT_APP_USE_MOCK_DATA=false
 REACT_APP_API_BASE_URL=http://<hub-ip>
 ```
 
-More: [docs/building.md](docs/building.md).
+More: [docs/web-building.md](../docs/web-building.md).
 
-User guide (how to use the app): [docs/user/](docs/user/README.md) — also on [rbgrid.io/webapp/docs](https://rbgrid.io/webapp/docs).
+User guide (how to use the app): [docs/](../docs/README.md), the `web-` pages — also on [rbgrid.io/webapp/docs](https://rbgrid.io/webapp/docs).
 
 ## Layout
 

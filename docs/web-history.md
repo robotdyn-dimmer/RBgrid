@@ -2,7 +2,7 @@
 
 **History** shows what the hub has recorded for your points: energy, power, voltage, reactive power and money, by hour, day or month. Open it from the app's left navigation: **Monitoring → History**.
 
-Everything on this page comes from the records stored on the hub. The hub keeps history for up to **12 points** (see [Points](points.md)). A three-phase input **metered per phase** is three points here, each with its own chart, table and CSV; this page never sums them. The whole input, summed, is what the Overview and Economics show from firmware **v1.1.6**.
+Everything on this page comes from the records stored on the hub. The hub keeps history for up to **12 points** (see [Points](web-points.md)); points of remote nodes count among them (see [Remote nodes](web-nodes.md)). A three-phase input **metered per phase** is three points here, each with its own chart, table and CSV; this page never sums them. The whole input, summed, is what the Overview and Economics show from firmware **v1.1.6**.
 
 ![History · 7 days · Money](https://www.rbgrid.io/assets/img/webapp-docs/wa-history-overview.webp)
 
@@ -21,9 +21,9 @@ Pick a period with the buttons at the top. There is no custom date range: you ch
 
 After you step back with **‹**, the comparison is always "the period before".
 
-- Periods follow the **hub's** clock and time zone, not your phone's or computer's (see [Time](time.md)).
+- Periods follow the **hub's** clock and time zone, not your phone's or computer's (see [Time](web-time.md)).
 - **Today** and **Yesterday** always show the full 0–24 h axis.
-- History has no week step. For a by-week view of one point, use the trend card on the point's own page (see [Points](points.md)).
+- History has no week step. For a by-week view of one point, use the trend card on the point's own page (see [Points](web-points.md)).
 - The app remembers your period, metric, view and comparison choices while the browser tab stays open.
 
 ## Metrics
@@ -38,7 +38,7 @@ After you step back with **‹**, the comparison is always "the period before".
 
 The power factor strip shows when the records carry a power factor. Its scale is at least 0.5–1.0 and widens when the data falls outside it. Its caption: "cos φ (power factor): 1 — all power is useful; below 0.9 — a noticeable reactive load".
 
-Money is shown in the currency of your tariff plan (see [Tariffs](tariffs.md)).
+Money is shown in the currency of your tariff plan (see [Tariffs](web-tariffs.md)).
 
 Hourly lines are drawn as steps; daily and monthly lines, and voltage, as smooth curves.
 
@@ -131,6 +131,9 @@ It also lists any of these notes:
 | the module restarted — energy before its restart wasn't measured | the rbAmp module restarted during the period |
 | the module firmware changed | the module's firmware was updated during the period |
 | sensor reversed — consumption not metered | the current sensor seems to be fitted backwards |
+| includes energy from a break in measurement, counted in this hour | the record holds energy the hub could not place in time: it was off for more than a day, or a node delivered a period longer than 15 minutes. From firmware **v1.1.7**; the note appears with web app **1.1.8** and later |
+
+> ⚠️ **The break note is the one that changes the money, not just the completeness.** Those kWh are real, but they were not used in this hour, so the hub prices them at the plan's default zone rather than at the zone that was in force during the break. If the break crossed a cheap window, the cost reads higher than it would have been. → [How cost is calculated](web-cost-calculation.md)
 
 Partial rows have a soft red background. Records made before the hub's clock was set show "before sync" and are left off the charts.
 
@@ -205,3 +208,37 @@ In the app at webapp.rbgrid.io the same link starts with `https://webapp.rbgrid.
 Unknown values are ignored. The app applies the parameters once, then removes them from the address, so going back or refreshing keeps your own later choices.
 
 The **As a table** link on a point's page uses this: an hourly trend opens **Today**, a daily or weekly trend opens **This month**, with the trend's metric and the table view. The Overview's energy chart has an **As a table** link too: it opens **Today**, Energy (or Money in the money view), as a table.
+
+## What to check when a record looks wrong
+
+**An hour holds energy that wasn't used then**
+- Read its **Quality**: "includes energy from a break in measurement" says the hub is telling you so on purpose. That energy is priced at the plan's default zone. → [How cost is calculated](web-cost-calculation.md)
+- A remote node that was out of reach delivers its periods late, and they land in the hours they belong to — so an hour can gain energy after you first looked at it. That is the design, not a fault. → [Remote nodes](web-nodes.md)
+
+**Hours are missing, or the day is short**
+- Partial records are marked and hatched: the value is right for the time the hub ran. The header says **incomplete periods present** when the window holds any.
+- Records made before the hub's clock was set show **before sync** and are left off the charts. → [Time](web-time.md)
+
+**A day doesn't equal the sum of its hours**
+- A day rebuilt after a restart is marked **recomputed from the hour records**: it is the sum of the records that survived, and the hub says so rather than smoothing the gap.
+
+**A point has no history at all, only live values**
+- The hub keeps history for **12** points in total, its own and its nodes' together. A point beyond that shows live values only. → [Points](web-points.md)
+
+**History opens on a node's point, and I can't find the input**
+- On a hub with remote nodes, firmware **v1.1.8** sorts the point chips by key, which puts node points ahead of the input — so History opens on a node, and with enough points the input can fall outside the six you can pick. Clear a chip you don't need to make room for it. Fixed in a later web app; the records themselves are unaffected, only which point the page opens on. → [Remote nodes](web-nodes.md)
+
+**Energy appears on one phase only**
+- A three-phase input metered **per phase** is read as one summed series from firmware **v1.1.6**; on **v1.1.5** the pages read the L1 point alone. Check the firmware before you suspect the clamps. → [Sensors and modules](web-sensors.md)
+
+**Money is 0 while energy isn't**
+- The zones carry no buy price, or the period fell to a default zone without one. → [Tariffs](web-tariffs.md)
+
+**The CSV has fewer rows than the table**
+- A record that lies inside a longer record of the same point is left out on purpose, so the same energy isn't counted twice.
+
+## Where next
+
+- [How cost is calculated](web-cost-calculation.md) — why a period costs what it costs, and what a flagged period means for the money.
+- [Economics](web-economics.md) — the same records as totals, by zone and against the input.
+- [Events](web-events.md) — what the hub reported at the time a record looks odd.

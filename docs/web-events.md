@@ -33,7 +33,7 @@ If the hub restarted in the last 7 days (and its clock was set at the time), a b
 
 > The hub restarted *day month, time* — *reason*.
 
-If it was off or down for more than a minute, the banner adds: "It was off or down for ≈ *duration*; history records for that time may be missing, but “today” counts it from the hub's counters." (see [History](history.md#incomplete-periods-restarts-and-live-only-points)).
+If it was off or down for more than a minute, the banner adds: "It was off or down for ≈ *duration*; history records for that time may be missing, but “today” counts it from the hub's counters." (see [History](web-history.md#incomplete-periods-restarts-and-live-only-points)).
 
 | Reason | What it means | What to check |
 |---|---|---|
@@ -67,15 +67,15 @@ While any sensor is silent, the app re-reads the hub log every minute.
 **What to check**
 
 1. The rbAmp module's power and the I2C cable to the hub (the card's own advice).
-2. **Points → rbAmp modules (n)**: does the module card say **not found**? Does the page show a bus warning ("A module bus line is held low…" or "The module bus is stuck…")? See [Points](points.md#bus-warnings).
+2. **Points → rbAmp modules (n)**: does the module card say **not found**? Does the page show a bus warning ("A module bus line is held low…" or "The module bus is stuck…")? See [Points](web-points.md#bus-warnings).
 3. If the hub didn't find the module at start-up, check the module's connection. The hub keeps looking for it.
 4. If that doesn't help, open the **Hub log**, press **Copy** and contact your installer or support.
 
-A point bound to a channel that the fitted module doesn't have doesn't get this card. Its own page says so instead (see [Points](points.md)).
+A point bound to a channel that the fitted module doesn't have doesn't get this card. Its own page says so instead (see [Points](web-points.md)).
 
 ## Hub log
 
-The **Hub log** (on the **Log** tab) is what the hub recorded itself: restarts and their causes, updates, Wi-Fi, module poll failures, and hours and days closing. The lines are technical, meant for an engineer or support.
+The **Hub log** (on the **Log** tab) is what the hub recorded itself: restarts and their causes, updates, Wi-Fi, module poll failures, and hours and days closing. The lines are technical, meant for an engineer or support. Remote nodes write `node_online` / `node_offline` here, when a node is heard again or has been silent for 15 seconds (see [Remote nodes](web-nodes.md)).
 
 ![Events · Log (the hub's own log)](https://www.rbgrid.io/assets/img/webapp-docs/wa-events-hub-log.webp)
 
@@ -111,4 +111,4 @@ One load reaches back a fixed stretch of the log; **Show earlier** loads more.
 | The log didn't load: the hub isn't answering or its firmware doesn't keep a log. | check the connection; firmware without a log can't show one |
 | No records. | the log is empty for this filter |
 
-A failed module firmware update has a **Hub log →** link (see [Sensors and modules](sensors.md#module-firmware-update)). It opens Events on the **Active** tab; switch to **Log** to see why.
+A failed module firmware update has a **Hub log →** link (see [Sensors and modules](web-sensors.md#module-firmware-update)). It opens Events on the **Active** tab; switch to **Log** to see why.

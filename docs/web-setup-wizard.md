@@ -24,6 +24,8 @@ The wizard has seven steps:
 
 Every setting in the wizard can also be changed later in **Settings**, **Points** or **Tariffs**.
 
+> On a hub that can run **remote nodes** the wizard has eight steps instead of seven: an optional **ESP-NOW nodes** step comes after **Sensors** and before **Tariff**, and the steps after it shift by one. The numbered sections below describe the seven-step wizard. → [Remote nodes](web-nodes.md)
+
 ## 1. Connection
 
 ![The setup wizard, step 1: Connection](https://www.rbgrid.io/assets/img/webapp-docs/wa-wizard-1-connection.webp)
@@ -44,7 +46,7 @@ Here you can set the hub's **API token**. The token is a password for changing t
 
 Once the token is set, every change to the hub needs it. The app keeps the token in this browser. Write it down: you'll need it in any other browser or device.
 
-Later: **Settings → Security** (see [Settings](settings.md#security)).
+Later: **Settings → Security** (see [Settings](web-settings.md#security)).
 
 ## 3. Site & time
 
@@ -54,7 +56,7 @@ This step has three parts. It counts as finished when the site has a name and th
 
 ### Site scenario
 
-Choose the kind of site: **Home**, **Business** or **Charging stations**. The scenario sets what the **Overview** shows, for everyone who opens this hub. It applies at once, with no restart. **Just preview** shows the scenario in this browser only, without saving it. See [Settings → Site scenario](settings.md#site-scenario).
+Choose the kind of site: **Home**, **Business** or **Charging stations**. The scenario sets what the **Overview** shows, for everyone who opens this hub. It applies at once, with no restart. **Just preview** shows the scenario in this browser only, without saving it. See [Settings → Site scenario](web-settings.md#site-scenario).
 
 ### Site
 
@@ -84,7 +86,7 @@ Two buttons set the clock:
 - **Sync with NTP** asks the hub to get the time from a time server now. This needs internet access.
 - **Use this device's time** sets the hub's clock from your browser's clock. Use it on a network without internet.
 
-The time servers and the resync interval aren't in the wizard; they're in **Settings → Time** (see [Time](time.md)).
+The time servers and the resync interval aren't in the wizard; they're in **Settings → Time** (see [Time](web-time.md)).
 
 If a change needs a restart, the panel says "Some settings take effect after a restart." and shows a restart button.
 
@@ -113,7 +115,7 @@ After you bind, the app reminds you: "Home Assistant entities for the new point 
 
 The hub keeps history for up to 12 points. If all 12 history places are taken, a new point shows live values only, and the dialog says so.
 
-Later: the **Points** page (see [Points](points.md)).
+Later: the **Points** page (see [Points](web-points.md)).
 
 ## 5. Tariff (optional)
 
@@ -131,7 +133,7 @@ A quick way to give a new hub a simple price plan: one price for the whole day, 
 | **Night price (23–7)** | empty | Shown when the night rate is on. Must be above 0. |
 | **Price as on the bill — incl. VAT** | on | Leave on if the price you entered includes VAT. The hub then stores the price without VAT and adds VAT back when it computes cost. |
 | **VAT, %** | the plan's VAT (21 % on a new hub, from the factory example) | Your VAT rate. Check it: the field is pre-filled from the hub's plan. |
-| **The grid pays per exported kWh (if any)** | empty | Only with solar panels and a feed-in contract: what you're paid per exported kWh. Otherwise leave it empty: the hub values every exported kWh at this price, even with net metering off. The Tariffs page shows every zone's sell price afterwards, so you can check what was written (on app v1.1.4 and earlier it shows them only with net metering on). → [Tariffs](tariffs.md#export-valuation) |
+| **The grid pays per exported kWh (if any)** | empty | Only with solar panels and a feed-in contract: what you're paid per exported kWh. Otherwise leave it empty: the hub values every exported kWh at this price, even with net metering off. The Tariffs page shows every zone's sell price afterwards, so you can check what was written (on app v1.1.4 and earlier it shows them only with net metering on). → [Tariffs](web-tariffs.md#export-valuation) |
 
 A total line shows the result, for example "Total: day …, night … incl. VAT." and the net price and VAT the hub will store.
 
@@ -139,7 +141,7 @@ Press **Save the tariff**. It applies at once. **Open the full tariff editor** t
 
 The step counts as finished once the hub has your own tariff instead of the factory example.
 
-Later: the **Tariffs** page (see [Tariffs](tariffs.md)).
+Later: the **Tariffs** page (see [Tariffs](web-tariffs.md)).
 
 ## 6. Integrations (optional)
 
@@ -149,7 +151,7 @@ The hub can send its data to Home Assistant and other smart-home systems over MQ
 
 **Open MQTT / Home Assistant settings** opens the **Home Assistant** panel in Settings, which holds the broker form. There are no fields in this step.
 
-See [Settings → Home Assistant](settings.md#home-assistant) and [MQTT broker](mqtt.md).
+See [Settings → Home Assistant](web-settings.md#home-assistant) and [MQTT broker](hub-mqtt.md).
 
 ## 7. Done
 

@@ -21,8 +21,8 @@ Open it in the app: **Settings → Time**. The setup wizard shows a compact pane
 The time zone is a named zone with its daylight-saving rules, not a fixed UTC offset, so the clock changes on the right dates by itself.
 
 - Pick one of the presets, for example "Central Europe — Berlin, Paris… (CET/CEST)".
-- If your zone isn't in the list, choose **Other (POSIX TZ)** and enter the zone as a POSIX TZ string. The string must carry its own daylight-saving rule.
 - The list includes southern-hemisphere zones, where daylight saving runs the other way round the year: Sydney/Melbourne/Canberra/Hobart, Adelaide, Brisbane, Perth, Auckland/Wellington, Santiago, São Paulo/Buenos Aires and Johannesburg.
+- If your zone isn't in the list, choose **Other (POSIX TZ)** and enter the zone as a POSIX TZ string. The string must carry its own daylight-saving rule.
 - The app suggests the zone of the browser you're using ("This browser's zone: … **Use it**"). The suggestion appears only when the app knows the browser's zone and it differs from the hub's. On app v1.1.4 and earlier, southern-hemisphere zones with daylight saving are not offered as presets and get no suggestion: pick a POSIX TZ string, or update the hub.
 
 ### Saving and when changes apply
@@ -69,7 +69,7 @@ The hub has no battery-backed clock. Its clock survives a restart, but not a pow
 - **Live values** keep coming. The app tells you the clock isn't set: on the Overview, **Imported today** reads "hub clock not set", and the **Today** card says that "today" counts from the hub's own last midnight or restart, not your calendar day. The wizard's last step shows "not synced".
 - **The clock stays "not set".** The hub doesn't make up a date. It uses a manual time saved earlier only if that time is recent.
 - **History** records made before the first sync wait in the hub's memory. At the first sync they get their real time stamps. If the wait is very long, the oldest of them are dropped. Records that still have no real date are flagged "clock not synced": the History chart and the CSV export leave them out, and the History table shows them marked "before sync".
-- **Cost:** until the hub's clock is set, cost **may be priced in the wrong tariff zone** — the hub prices energy with whatever clock it has rather than waiting, and those costs are stored like any other. Set the time before relying on cost.
+- **Cost:** until the hub's clock is set, periods are priced at the plan's **default zone**. From firmware **v1.1.7** that is a deliberate fallback rather than a guess: without a clock there is no way to know which zone an hour belongs to, so the hub uses the one zone that doesn't depend on time, and stores those costs like any other. On **v1.1.6 and earlier** the energy was priced with whatever zone the unset clock fell into, which could be any of them. Either way, set the time before relying on cost. → [How cost is calculated](web-cost-calculation.md)
 
 ## The rbAmp modules' clocks
 
