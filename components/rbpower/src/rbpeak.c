@@ -218,14 +218,20 @@ esp_err_t rbpeak_set(const cJSON *d, char *err, size_t err_len)
     if (cd && (!cJSON_IsNumber(cd) || cd->valueint < 1 || cd->valueint > 28)) {
         snprintf(err, err_len, "cycle_day 1..28"); return ESP_ERR_INVALID_ARG;
     }
+    /* With the clock known the new cycle opens at once (its start shown right away); without it the next booked
+     * period opens it. Local-time maths stays outside the spinlock. */
+    const bool reset = cJSON_IsTrue(cJSON_GetObjectItem(d, "reset"));
+    uint8_t new_day = cd ? (uint8_t)cd->valueint : s.cycle_day;
+    uint32_t now = (uint32_t)time(NULL), start = 0; int32_t key = 0;
+    if (now > 1600000000u) { start = cycle_start_of(now, new_day); key = cycle_key_of(now, new_day, NULL); }
     portENTER_CRITICAL(&s_mux);
-    if (cd && (uint8_t)cd->valueint != s.cycle_day) {   /* the current figures become "prev"; the next period opens a cycle */
-        s.cycle_day = (uint8_t)cd->valueint;
-        if (s.cur.cycle_start) s.prev = s.cur;
-        cycle_reset(&s.cur, 0, 0);
+    if (cd && new_day != s.cycle_day) {   /* the current figures become "prev" (an empty cycle doesn't replace them) */
+        s.cycle_day = new_day;
+        if (s.cur.cycle_start && (s.cur.q_max_ts || s.cur.h_max_ts)) s.prev = s.cur;
+        cycle_reset(&s.cur, start, key);
     }
-    if (cJSON_IsTrue(cJSON_GetObjectItem(d, "reset"))) { cycle_reset(&s.cur, 0, 0); cycle_reset(&s.prev, 0, 0);
-                                                         s.hour_start = 0; s.hour_wh = 0; s.hour_n = 0; }
+    if (reset) { cycle_reset(&s.cur, start, key); cycle_reset(&s.prev, 0, 0);
+                 s.hour_start = 0; s.hour_wh = 0; s.hour_n = 0; }
     s_dirty = true;
     portEXIT_CRITICAL(&s_mux);
     save();

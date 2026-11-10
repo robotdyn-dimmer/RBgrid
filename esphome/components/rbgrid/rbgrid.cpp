@@ -384,9 +384,15 @@ void RBgridComponent::run_command(const std::string &json) {
     const char *m = d ? cJSON_GetStringValue(cJSON_GetObjectItem(d, "message")) : nullptr;
     if (m == nullptr) m = cJSON_GetStringValue(cJSON_GetObjectItem(r, "message"));
     this->last_error_ = m ? m : "command failed";
-    // a rejection that names a field: "[field=zone] message" — HA only receives the error text
+    // HA only receives the error text, so the machine-readable parts go in front of it:
+    // "[field=zone][code=ZONE_NOT_OFFERED] message" (each prefix only when the reply has it; code = string codes only)
     const char *f = d ? cJSON_GetStringValue(cJSON_GetObjectItem(d, "field")) : nullptr;
-    if (f != nullptr && f[0]) this->last_error_ = std::string("[field=") + f + "] " + this->last_error_;
+    const char *c = d ? cJSON_GetStringValue(cJSON_GetObjectItem(d, "code")) : nullptr;
+    if (c == nullptr) c = cJSON_GetStringValue(cJSON_GetObjectItem(r, "code"));
+    std::string pre;
+    if (f != nullptr && f[0]) pre += std::string("[field=") + f + "]";
+    if (c != nullptr && c[0]) pre += std::string("[code=") + c + "]";
+    if (!pre.empty()) this->last_error_ = pre + " " + this->last_error_;
   }
   cJSON_Delete(r);
 }
