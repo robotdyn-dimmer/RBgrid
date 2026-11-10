@@ -71,39 +71,26 @@ if(CONFIG_RBGRID_IF_HTTP OR CONFIG_RBGRID_IF_MQTT)
     list(APPEND RBPOWER_SRCS "src/rbtelemetry.c")   # 3 s JSON fan-out to WebSocket / MQTT
 endif()
 
-# Component registration
+# Component registration. The web server's development certificate is embedded only when the web server is built,
+# so a host build without it (ESPHome) doesn't carry it.
+# (REQUIRES can't depend on sdkconfig: it is resolved before the config is loaded. The certificate embed can.)
+set(RBPOWER_REQ driver esp_common log nvs_flash freertos esp_timer json esp_wifi esp_netif esp_http_server
+                esp_http_client esp_https_server esp_event mqtt esp_partition app_update mbedtls spi_flash
+                wear_levelling joltwallet__littlefs)
+set(RBPOWER_EMBED)
+if(CONFIG_RBGRID_IF_HTTP)
+    list(APPEND RBPOWER_EMBED "certs/rbgrid_dev_cert.pem" "certs/rbgrid_dev_key.pem")
+endif()
 idf_component_register(
     SRCS ${RBPOWER_SRCS}
     INCLUDE_DIRS "include"
-    REQUIRES
-        driver
-        esp_common
-        log
-        nvs_flash
-        freertos
-        esp_timer
-        json
-        esp_wifi
-        esp_netif
-        esp_http_server
-        esp_http_client
-        esp_https_server
-        esp_event
-        mqtt
-        esp_partition
-        app_update
-        mbedtls
-        spi_flash
-        wear_levelling
-        joltwallet__littlefs
+    REQUIRES ${RBPOWER_REQ}
     PRIV_REQUIRES
         heap
         soc
         hal
         rbamp        # rbamp_sensor_models.h — CT model registry for the schema / ct_code check
-    EMBED_TXTFILES
-        "certs/rbgrid_dev_cert.pem"
-        "certs/rbgrid_dev_key.pem"
+    EMBED_TXTFILES ${RBPOWER_EMBED}
 )
 
 # littlefs internals (raw lfs API in littlefs_raw.c): taken from wherever the build placed the managed component,

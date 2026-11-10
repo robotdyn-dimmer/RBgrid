@@ -1,6 +1,6 @@
 # `rbgrid_cmd`: the RBgrid command action (ESPHome build)
 
-**Status:** 1.2.0-dev, branch `dev/esphome`, 2026-11-08. Owner: rbgrid-dev:root. Checked on the ESP32-S3 test board over the native API.
+**Status:** 1.2.0-dev, branch `dev/esphome`, 2026-11-10. Owner: rbgrid-dev:root. Checked on the ESP32-S3 test board over the native API.
 
 The ESPHome build has no RBgrid web server. Everything the web app does through HTTP goes through one API action:
 
@@ -24,6 +24,13 @@ The command format is the same as RBgrid's MQTT `cmd` channel (`rbgrid_command_d
   - an HTTP-style code ≥ 400 from a point operation.
 
   The reply body still carries `ok: false` and the device reply.
+
+  HA receives only the error text, so the machine-readable parts go in front of it:
+  `[field=<field>][code=<CODE>] <message>`. Each prefix appears only when the device reply has it, with no space
+  between the prefixes and one space before the message. `field` names the rejected input (`zone`, `off_above` …).
+  `code` is a string code from a point operation: `POINT_TOMBSTONED` (pass `reuse: true`), `POINT_TAKEN`,
+  `SENSOR_BOUND`, `ROLE_SUPPLY_LOCKED`, `NOT_PHASE_MODULE`. Strip the prefixes for display; switch on them, not on
+  the wording.
 - **Large replies come in parts.** ESPHome's JSON builder caps an action response at 5119 bytes (`components/json/json_util.cpp`, 2026.5.3); a longer reply arrived cut off. A device reply over 4000 bytes therefore goes out in base64 parts of 3072 bytes:
 
   ```json
@@ -320,7 +327,8 @@ Every line of the device's event log, except the periodic trace, is sent to HA a
 | `kind` | `reverse_flow`, `module_absent`, `module_restored`, `module_poll_fail`, `bus_stuck`, `node_online`, `node_offline`, `boot`, `tariff`, `firmware`, `node_disabled`, `price` (dynamic price state change or fetch failure), `diag` (reboot-gap / period reconciliation detail); otherwise `fail` or `event` |
 | `level` | `fail` (an invariant / error line, "FAIL …"), `debug` (a `diag` line that is not a failure: hide by default) or `event` |
 | `message` | The log line as the device wrote it |
+| `seq` | The line's event-log sequence, the same number as `seq` in `get events` (string; parse as an integer) |
 
-HA receives events only while it is connected; after a reconnect read the missed lines with `get events` (`since` = the last `seq` seen). `node_disabled` (a record from a node the user switched off, not counted) comes with level `event`.
+HA receives events only while it is connected; after a reconnect read the missed lines with `get events` (`since` = the highest `seq` seen, live or replayed: the replay then returns only the gap). `node_disabled` (a record from a node the user switched off, not counted) comes with level `event`.
 
 Blueprints trigger on `event_type: esphome.rbgrid_event` with `event_data: {kind: …}`. Events from the device are not gated by the integration's "allow service calls" option. The device never calls HA actions.
