@@ -19,9 +19,11 @@ RBgrid is self-hosted firmware for an ESP32 hub that reads [rbAmp](https://www.r
 ## Why RBgrid
 
 - **Your real tariff, not an average price.** Time-of-use zones, weekend rates, per-kWh taxes and fees, VAT and a sell price for export are all entered separately and all included in the cost. The tariff engine runs on the device, and its code is in this repository.
+- **Market prices too, and the price it used is kept.** The hub fetches the day-ahead price for your zone itself, applies your contract on top, and prices every 15-minute period with the price of that period. It keeps the price it applied beside the kilowatt-hours it applied it to, for 40 days, with the source of each one — so a cost figure can be traced back to the price that produced it instead of taken on trust.
 - **Every circuit, not just the whole house.** Up to 8 rbAmp modules on one hub (up to 56 current channels), with history kept for up to 12 measurement points.
+- **And circuits that are not in the same room.** A sub-panel in the garage, a workshop, an outbuilding: a second ESP32 measures there and sends its readings to the hub over ESP-NOW, with no cable run and without joining your Wi-Fi. Each node closes its own 15-minute periods by its own clock and, from node firmware 1.5, holds about five days of them in flash — so a node out of reach for a weekend loses nothing.
 - **On your own hardware.** The hub keeps measuring and storing with the internet down. Nothing goes through our servers.
-- **Works with Home Assistant, doesn't need it.** No server to run. If you do run Home Assistant, the hub plugs into it over MQTT.
+- **Works with Home Assistant, doesn't need it.** No server to run. If you do run Home Assistant, the hub plugs into it over MQTT — or you can run the same metering core inside it as an ESPHome device (below).
 
 ## Documentation
 
@@ -39,6 +41,7 @@ Open the web app two ways: from the hub itself, at its address on your home netw
 - **History:** from this hour to this year; energy, power, voltage, reactive power, power factor and money; chart or table; hourly for 60 days, then daily, monthly and yearly, on the hub's flash; CSV download.
 - **Economics:** cost per period, and a running split by tariff zone since the hub's last restart; import and export measured separately, export valued at your own sell rate; input against metered lines, so you see how much is unmetered.
 - **Tariffs:** your plan as your supplier writes it, on a weekly grid of named zones; history keeps the rates that applied.
+- **Prices:** the price now and its source, today and tomorrow on a chart, the contract applied to it, cheap windows the hub publishes for your automations, the highest import of the billing cycle, and the log of what every closed period was actually booked at.
 - **Points and events:** bind any module channel to a named point at runtime; sensor offline, clamp near its limit or clipping, with what to check.
 - **Setup and upkeep:** a seven-step setup wizard; over-the-air updates with automatic rollback; a restore point on the hub; API tokens; light and dark themes; English and Russian.
 
@@ -51,9 +54,49 @@ Open the web app two ways: from the hub itself, at its address on your home netw
 
 Try it with sample data, no hardware needed: the [live demo](https://demo.rbgrid.io/) switches between a flat, a house with a heat pump and an EV, a house that exports, a workshop and a car park.
 
+## Market prices
+
+The hub can take the price of every 15-minute period from a day-ahead source for your zone instead of from a
+fixed schedule — Energy-Charts (Fraunhofer ISE), Nord Pool, Elpriset just nu, Hva koster strømmen, EnergyZero
+or Octopus Agile — or from Home Assistant, which can push prices in for a supplier none of those covers. Each
+source carries the attribution its licence asks for, and the hub serves that text with the price
+(`attribution` and `terms_url` in `/api/v1/dynprice`). The app credits it on its Prices page; if you build your
+own dashboard, showing it is yours to do.
+
+Your contract is applied on top: a factor and a markup, then the per-kWh taxes and fees of your own tariff
+plan, then VAT. A source that already publishes the retail price is taken as it is, so nothing is counted
+twice. Your plan does not stop mattering — it is the fallback for any period no price covers.
+
+**The price the hub used is kept beside the energy it was used on**, with the source of each 15-minute period,
+for 40 days, downloadable as CSV. That is the part worth having: a cost figure you can trace back to the price
+that produced it rather than take on trust.
+
+The hub also works out when energy is cheap under rules you set, and **publishes** that — a retained MQTT
+message, and a line in its own log. It switches nothing itself: an automation, a diverter or a charger reads
+the notification and decides. And for tariffs that charge for the hardest you pulled, it keeps the highest
+15-minute and hourly import of each billing cycle — measured, never billed.
+
+Details: [Where your price comes from](docs/hub-dynamic-prices.md) · [Dynamic prices](docs/web-prices.md) ·
+[Import peaks](docs/hub-peaks.md).
+
 ## Home Assistant
 
 The hub announces every measurement point over MQTT discovery, and Home Assistant creates the sensors itself. Each point appears as a device with power, current, reactive power, power factor, and energy in and out. The hub adds net power, frequency and a bus-voltage device. The energy sensors go straight into the Energy dashboard: no templates, no `utility_meter`. Tariff editing, long-term history and sensor setup stay in the RBgrid app. Details: [Integrations](https://www.rbgrid.io/integrations?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
+
+## Or run it inside Home Assistant
+
+There is a second way to run the same metering core: as an **ESPHome device**, with Home Assistant as the
+interface instead of the hub's own web app. Same measurements, same points, same tariffs, same dynamic prices,
+same remote nodes — set up from the RBgrid panel in Home Assistant, with no web app and no broker to run.
+
+- **[rb-amp/rbgrid-esphome](https://github.com/rb-amp/rbgrid-esphome)** — the ESPHome component and factory
+  images. MIT.
+- **[rb-amp/rbgrid-ha](https://github.com/rb-amp/rbgrid-ha)** — the Home Assistant integration, added through
+  HACS as a custom repository. MIT.
+- Installation, and which of the two suits you: the package's own README and release page.
+
+That package has **no web app, no MQTT, no REST and no WebSocket** — ESPHome owns the network side there. The
+firmware in *this* repository is the standalone hub, and it is what the rest of this README describes.
 
 ## How it fits together
 
