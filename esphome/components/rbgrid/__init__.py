@@ -253,7 +253,8 @@ async def to_code(config):
     root = config[CONF_RBGRID_PATH]
     comps = os.path.join(root, "components")
     for name in ("rbpower", "rbgrid_app", "esp_driver_i2c", "rbbench", "bench_kit"):
-        esp32.add_idf_component(name=name, path=os.path.join(comps, name))
+        if os.path.isdir(os.path.join(comps, name)):   # the release package carries no bench stubs
+            esp32.add_idf_component(name=name, path=os.path.join(comps, name))
 
     # RBgrid interfaces off: ESPHome owns Wi-Fi, the API, OTA, mDNS and time.
     for key in ("RBGRID_IF_WIFI", "RBGRID_IF_HTTP", "RBGRID_IF_MQTT", "RBGRID_IF_MDNS", "RBGRID_IF_SNTP"):

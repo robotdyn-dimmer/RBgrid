@@ -121,17 +121,21 @@ extern "C" void esp_task_wdt_isr_user_handler(void)
 #include "freertos/semphr.h"   // ha_discovery task + signal semaphore
 #include "driver/i2c_master.h"   /* test-rig load-bank relay fail-safe OFF at boot */
 #include "rbjson.h"
+#if CONFIG_RBGRID_IF_WIFI
 #include "rbwifi.h"
+#endif
 #include "nvs_flash.h"   /* debug-bridge build inits NVS here (rbwifi_init is gated out) */
 #include "nvs.h"
 #include "esp_random.h"
 #include "esp_event.h"
+#if CONFIG_RBGRID_IF_HTTP
 #include "rbwebserver.h"
 /*  @brief Add the web server's CORS headers to a response (rbwebserver CORS policy; its header is component-private).
  *  @param[in] req  HTTP request. */
 extern "C" void add_cors_headers(httpd_req_t *req);  // rbwebserver CORS policy (internal header is component-private)
 #include "rbwebsocket.h"
 #include "rbwebsocket_telemetry.h"
+#endif
 #include "rbgrid.h"
 #include "rbgrid_config_api.h"  // rbgrid_config_create and related config API
 #include "rbgrid_config_storage.h"  // For config storage on external Flash

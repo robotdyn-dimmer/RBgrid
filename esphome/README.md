@@ -10,10 +10,8 @@ the hub, as in the standalone RBgrid firmware:
 
 Home Assistant is the interface.
 
-**Status:** 1.2.0-dev. Licence: PolyForm Noncommercial 1.0.0, © Zhuhai RobotDyn Technology Co., Ltd.
-
-> Placeholders: `<repo>` (where this package is published) and `<org>/rbgrid-ha` (the Home Assistant integration)
-> are filled in at release.
+**Status:** 1.2.0-dev. Repository: https://github.com/rb-amp/rbgrid-esphome. Licence: MIT,
+© Zhuhai RobotDyn Technology Co., Ltd. Home Assistant integration: https://github.com/rb-amp/rbgrid-ha.
 
 ## How it differs from the standalone firmware
 
@@ -41,18 +39,32 @@ the bench tools.
 
 ## Install
 
-1. **Get the package** (`<repo>`) and copy one of the example configurations next to your ESPHome configs:
+1. **Copy one of the example configurations** from `esphome/` in this repository next to your ESPHome configs:
    - `rbgrid-hub-c14.yaml`: ESP32-WROVER;
    - `rbgrid-hub-s3.yaml`: ESP32-S3 N16R8;
    - `rbgrid-hub-3p.yaml`: ESP32-S3 with a three-phase STD-U3I3 module.
 2. **`secrets.yaml`:** `wifi_ssid`, `wifi_password`, and, optionally, an API encryption key and an OTA password.
-3. **Point `external_components` at the package** (local path or the git source) and keep
-   `partitions_rbgrid_esphome.csv` beside the YAML.
+3. **Point `external_components` at this repository** and keep `partitions_rbgrid_esphome.csv` beside the YAML:
+
+   ```yaml
+   external_components:
+     - source:
+         type: git
+         url: https://github.com/rb-amp/rbgrid-esphome
+         ref: v1.2.0
+         path: esphome/components
+       components: [rbgrid]
+   ```
+
+   The component builds the metering core from `components/` of the same checkout. For a local copy use
+   `type: local` with `path: <checkout>/esphome/components`.
 4. **First flash over USB:** `esphome run rbgrid-hub-s3.yaml`. After that, updates go over the air.
 5. **In Home Assistant:**
    - the hub appears as an ESPHome device; add it with its encryption key if you set one;
-   - then install the **RBgrid** integration via HACS: custom repository `<org>/rbgrid-ha`, category Integration;
-   - then Settings → Devices & services → Add → RBgrid. The hub is also found automatically.
+   - then install **RBgrid** via HACS: custom repository `https://github.com/rb-amp/rbgrid-ha` (category
+     Integration);
+   - then Settings → Devices & services → Add integration → RBgrid. A hub on this component is also found
+     automatically. Issues: https://github.com/rb-amp/rbgrid-ha/issues.
    - The integration sets the time zone and the currency and opens the RBgrid panel. Its own README covers the wizard,
      the Energy dashboard and prices from HA.
 
@@ -173,3 +185,6 @@ They sit at the same addresses as on the standalone hub.
 - A point slot freed and taken by a new point continues that slot's lifetime entities. HA statistics can show a step
   there; prefer the per-point series the integration imports.
 - The ESPHome build has no web app. To use the RBgrid web app, run the standalone firmware instead.
+- The "factory" image (one file, ESPHome Dashboard → Manual download → Factory format) is not produced yet: the app
+  sits at 0x20000 in this partition table, and ESPHome's merge step assumes 0x10000. Use `esphome run` (USB) for the
+  first flash, then OTA.
