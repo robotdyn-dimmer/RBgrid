@@ -45,6 +45,12 @@ missing from a response, the primary simply has no price for those periods. With
 which is correct, but it is a *different* price, and your costs for that stretch will not match the market. A
 backup from a second provider covering the same zone keeps the market price in place.
 
+**Not every zone has a second source.** Twelve areas are covered twice or more by the list below: SE1-4 and
+NO1-5 (Nord Pool alongside the national source), DK1-2 and NL (Energy-Charts alongside a second), with SE4
+and NO2 covered three times. For AT, BE, CH, CZ, DE-LU, EE, FI, FR, HU, IT-North, LT, LV, PL, SI and the UK
+regions there is no second provider here - so either a push from Home Assistant serves as the backup, or
+those periods fall through to the plan's zone rate.
+
 ---
 
 ## The sources
@@ -63,7 +69,7 @@ No source needs a token or an account in this release.
 
 **Resolution is not the billing step.** A 30-minute or hourly price applies to each 15-minute period inside it, so
 your costs are still computed per 15-minute period — four of them simply share one price. The step at which you are
-*billed* is a separate setting; see [Hourly mean](#hourly-mean-when-your-contract-settles-by-the-hour).
+*billed* is a separate setting; see [Bill at the hourly mean](#bill-at-the-hourly-mean-when-your-contract-settles-by-the-hour).
 
 **Spot or all-in is the single most important thing to get right**, and it is explained below, because getting it
 wrong is the most common way a cost figure comes out too high.
@@ -80,7 +86,9 @@ on which the data may be used, and it tells you what you are looking at. Energy-
 published under CC BY 4.0.
 
 **Nord Pool is reached through an unofficial data portal**, and the hub says so where it names the source. There is
-no service agreement behind it: it can change or stop without notice. Use it knowingly, and give it a backup.
+no service agreement behind it: it can change or stop without notice. Use it knowingly, and give it a backup
+where one exists: SE1-4, NO1-5 and DK1-2 are also covered by another source in this list, but for FI, EE, LV
+and LT Nord Pool is the only one - there a push from Home Assistant is the only backup available.
 
 ---
 
@@ -295,7 +303,7 @@ stopped serving it. Switch the zone, or switch the source.
 
 **`FAIL price: … parse` or `http_status`, repeatedly.**
 The source changed or is down. This is the case a backup source exists for; set one from a different provider
-covering the same zone.
+covering the same zone - if the list has one for your zone; see **Why a backup is worth setting** above.
 
 **`FAIL price: … rate_limited`.**
 Too many requests reached the provider from your address. The hub backs off on its own — every 15 minutes until
@@ -313,7 +321,7 @@ the moment it is saved, and energy already measured keeps the price it was coste
 
 **My numbers differ from my supplier's by a small, steady amount.**
 Check **hourly mean** against your contract: if you are settled per hour and the hub is pricing per 15-minute
-period, every hour will be slightly off in both directions. Turn it on and the hub bills the hour's mean instead.
+period, every hour will be slightly off in both directions. Turn it on and the hub prices every period of the hour at that hour's mean instead.
 
 **A period cost less than zero.**
 The market price was negative and your contract passes that through, so the hub booked a negative cost. If your

@@ -4,6 +4,18 @@ Everything about RBgrid in one place: the web app you look at, the hub you flash
 
 The same pages, with search, are on [rbgrid.io](https://www.rbgrid.io/webapp/docs).
 
+> **Which RBgrid these pages describe.** There are two ways to run RBgrid, and this set documents the first:
+> the **standalone hub firmware**, which serves its own web app and speaks MQTT, REST and WebSocket.
+>
+> The other way is the **ESPHome package**, where the hub is an ESPHome device and Home Assistant is the
+> interface. It runs the same metering core and measures identically — points, history, tariffs, dynamic
+> prices and remote nodes all work the same — but it has **no web app, no MQTT, no REST and no WebSocket**,
+> and it is set up from the RBgrid panel in Home Assistant rather than from the app these pages show you.
+> If that is the one you have, start at
+> [rbgrid.io/integrations/esphome](https://www.rbgrid.io/integrations/esphome) and at the package's own
+> documentation; the pages here on points, history, prices and nodes still describe what your hub does, and
+> only the screens and the APIs are someone else's.
+
 ## Start here
 
 The seven questions people actually arrive with:
