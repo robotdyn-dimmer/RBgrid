@@ -102,8 +102,8 @@ firmware in *this* repository is the standalone hub, and it is what the rest of 
 ## How it fits together
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://www.rbgrid.io/assets/img/illus/diagram-architecture-dark.png">
-  <img alt="Data flow: rbAmp modules send measurements over I²C to an ESP32-WROVER hub, which computes points, statistics, tariff costs and history, and serves the web app, the REST/WebSocket API and MQTT." src="https://www.rbgrid.io/assets/img/illus/diagram-architecture-light.png" width="720">
+  <source media="(prefers-color-scheme: dark)" srcset="https://www.rbgrid.io/assets/img/illus/diagram-architecture-dark.png?v=2">
+  <img alt="Data flow in three steps. Modules measure: an rbAmp STD-U3I3 for a three-phase input and an rbAmp Basic for up to seven circuits, on one I²C bus of four wires into an ESP32 hub — and, away from the house, a remote node with its own ESP32 and its own I²C bus carrying its own modules, joined to the hub by a radio link. The hub computes and stores: points, statistics, a tariff engine and storage, with live values now and history kept on the hub. Then, over Wi-Fi: the web app in a browser, Home Assistant with sensors over MQTT, and your own code over the REST and WebSocket API." src="https://www.rbgrid.io/assets/img/illus/diagram-architecture-light.png?v=2" width="720">
 </picture>
 
 rbAmp modules clip onto your existing wiring and measure each circuit. The hub reads them over I²C, applies your tariff, keeps the history and serves the app, all on your home network.
