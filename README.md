@@ -93,7 +93,8 @@ same remote nodes — set up from the RBgrid panel in Home Assistant, with no we
   images. MIT.
 - **[rb-amp/rbgrid-ha](https://github.com/rb-amp/rbgrid-ha)** — the Home Assistant integration, added through
   HACS as a custom repository. MIT.
-- Installation, and which of the two suits you: the package's own README and release page.
+- Which of the two suits you, and how to install either:
+  [rbgrid.io/integrations/esphome](https://www.rbgrid.io/integrations/esphome?utm_source=github&utm_medium=referral&utm_campaign=rbgrid).
 
 That package has **no web app, no MQTT, no REST and no WebSocket** — ESPHome owns the network side there. The
 firmware in *this* repository is the standalone hub, and it is what the rest of this README describes.
